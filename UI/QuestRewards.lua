@@ -1175,7 +1175,6 @@ local function OnTooltipSetRewardItem(tooltip)
                 added = true
             end
 
-            end
             break
         end
     end

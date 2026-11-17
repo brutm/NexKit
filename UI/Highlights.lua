@@ -68,32 +68,90 @@ local STOP_WORDS = {
     ["with"] = true, ["from"] = true,
 }
 
+local CROSS_LANG_STEMS = {
+    ["lupo"] = "wolf", ["wolf"] = "lupo",
+    ["drago"] = "dragon", ["draghetto"] = "whelp", ["whelp"] = "draghetto",
+    ["dragon"] = "drago",
+    ["ragno"] = "spider", ["spider"] = "ragno",
+    ["tarantola"] = "tarantula", ["tarantula"] = "tarantola",
+    ["cinghiale"] = "boar", ["boar"] = "cinghiale",
+    ["orso"] = "bear", ["bear"] = "orso",
+    ["avvoltoio"] = "vulture", ["vulture"] = "avvoltoio",
+    ["condor"] = "condor",
+    ["aquila"] = "eagle", ["eagle"] = "aquila",
+    ["coboldo"] = "kobold", ["kobold"] = "coboldo",
+    ["scaglia"] = "scale", ["scale"] = "scaglia",
+    ["scaglie"] = "scale",
+    ["pelle"] = "pelt", ["pelli"] = "pelts", ["pelt"] = "pelle",
+    ["carne"] = "meat", ["meat"] = "carne",
+    ["osso"] = "bone", ["ossa"] = "bones", ["bone"] = "osso",
+    ["dente"] = "tooth", ["denti"] = "teeth", ["tooth"] = "dente",
+    ["pinna"] = "fin", ["pinne"] = "fins", ["fin"] = "pinna",
+    ["artiglio"] = "claw", ["artigli"] = "claws", ["claw"] = "artiglio",
+    ["nero"] = "black", ["black"] = "nero",
+    ["rosso"] = "red", ["red"] = "rosso",
+    ["verde"] = "green", ["green"] = "verde",
+    ["blu"] = "blue", ["blue"] = "blu",
+    ["sotterraneo"] = "underbelly", ["sotterranei"] = "underbelly", ["underbelly"] = "sotterraneo",
+    ["gnoll"] = "gnoll", ["murloc"] = "murloc", ["orco"] = "orc", ["orc"] = "orco",
+    ["uccidi"] = "kill", ["ucciso"] = "kill", ["uccisi"] = "kill",
+    ["raccogli"] = "collect", ["trova"] = "find",
+}
+
 local function UnitMatchesObjective(lowerName, obj)
     if not Plain(lowerName) or lowerName == "" or not obj or not Plain(obj.text) then
         return false
     end
     local objLower = obj.text
 
-    -- 1. Exact substring match: e.g. "kobold vermin" in "kobold vermin slain: 0/10"
-    if objLower:find(lowerName, 1, true) then
+    -- 1. Exact substring match in either direction: e.g. "black dragon whelp" in "black dragon whelp slain: 0/10"
+    if objLower:find(lowerName, 1, true) or lowerName:find(objLower, 1, true) then
         return true
     end
 
-    -- 2. Word & stem matching
+    -- Clean objective text of numbers, progress like "0/6", and punctuation
+    local cleanObj = objLower:gsub("%d+%s*/%s*%d+", " "):gsub("%d+", " "):gsub("[%p%c]", " ")
+
+    -- 2. Forward matching: check each significant word of lowerName in cleanObj
     local matchCount = 0
     local totalSigWords = 0
     for word in lowerName:gmatch("%S+") do
-        if #word >= 4 and not STOP_WORDS[word] then
+        if #word >= 3 and not STOP_WORDS[word] then
             totalSigWords = totalSigWords + 1
-            local stem = (#word >= 6) and word:sub(1, #word - 2) or word:sub(1, math.max(3, #word - 1))
-            if objLower:find(stem, 1, true) then
+            local stem4 = word:sub(1, math.min(#word, 4))
+            local stem5 = (#word >= 5) and word:sub(1, math.min(#word, 5)) or stem4
+            local trans = CROSS_LANG_STEMS[word] or CROSS_LANG_STEMS[stem5] or CROSS_LANG_STEMS[stem4]
+            if cleanObj:find(word, 1, true) or cleanObj:find(stem4, 1, true)
+                or (trans and (cleanObj:find(trans, 1, true) or cleanObj:find(trans:sub(1, math.min(#trans, 4)), 1, true))) then
                 matchCount = matchCount + 1
             end
         end
     end
 
     if totalSigWords > 0 and matchCount > 0 then
-        if matchCount >= totalSigWords or (totalSigWords >= 2 and matchCount >= 1 and #lowerName >= 6) then
+        if matchCount >= totalSigWords or (totalSigWords >= 2 and matchCount >= 1 and #lowerName >= 4) then
+            return true
+        end
+    end
+
+    -- 3. Reverse matching: check each significant word of cleanObj in lowerName
+    local revMatch = 0
+    local revSig = 0
+    for word in cleanObj:gmatch("%S+") do
+        if #word >= 3 and not STOP_WORDS[word] then
+            revSig = revSig + 1
+            local stem4 = word:sub(1, math.min(#word, 4))
+            local stem5 = (#word >= 5) and word:sub(1, math.min(#word, 5)) or stem4
+            local trans = CROSS_LANG_STEMS[word] or CROSS_LANG_STEMS[stem5] or CROSS_LANG_STEMS[stem4]
+            if lowerName:find(word, 1, true) or lowerName:find(stem4, 1, true)
+                or (trans and (lowerName:find(trans, 1, true) or lowerName:find(trans:sub(1, math.min(#trans, 4)), 1, true))) then
+                revMatch = revMatch + 1
+            end
+        end
+    end
+
+    if revSig > 0 and revMatch > 0 then
+        if revMatch >= revSig or (revSig >= 2 and revMatch >= 1) then
             return true
         end
     end
@@ -137,42 +195,41 @@ local function RebuildQuestLookup()
     end
 
     local readyIds = {}
-
-    -- Scan quest log: supports both C_QuestLog and classic GetNumQuestLogEntries
-    local numEntries = (C_QuestLog and C_QuestLog.GetNumQuestLogEntries and SafeCall(C_QuestLog.GetNumQuestLogEntries))
-        or (GetNumQuestLogEntries and SafeCall(GetNumQuestLogEntries)) or 0
+    local origSelection = GetQuestLogSelection and SafeCall(GetQuestLogSelection)
+    local numEntries = (GetNumQuestLogEntries and SafeCall(GetNumQuestLogEntries))
+        or (C_QuestLog and C_QuestLog.GetNumQuestLogEntries and SafeCall(C_QuestLog.GetNumQuestLogEntries)) or 0
 
     for i = 1, numEntries do
-        local qid, title, isHeader, isComplete, readyForTurnIn
-        if C_QuestLog and C_QuestLog.GetInfo then
+        if SelectQuestLogEntry then
+            SafeCall(SelectQuestLogEntry, i)
+        end
+
+        local title, _, _, isHeader, _, isComplete, _, qid
+        if GetQuestLogTitle then
+            title, _, _, isHeader, _, isComplete, _, qid = SafeCall(GetQuestLogTitle, i)
+        end
+        if (not qid or qid <= 0) and C_QuestLog and C_QuestLog.GetInfo then
             local info = SafeCall(C_QuestLog.GetInfo, i)
             if type(info) == "table" then
                 qid = info.questID
                 title = info.title
                 isHeader = info.isHeader
-                readyForTurnIn = (info.readyForTurnIn == true)
-                if not readyForTurnIn and C_QuestLog.ReadyForTurnIn and qid and qid > 0 then
-                    readyForTurnIn = SafeCall(C_QuestLog.ReadyForTurnIn, qid) == true
-                end
-                if not readyForTurnIn and C_QuestLog.IsComplete and not C_QuestLog.ReadyForTurnIn and qid and qid > 0 then
-                    readyForTurnIn = SafeCall(C_QuestLog.IsComplete, qid) == true
-                end
+                isComplete = (info.readyForTurnIn == true)
             end
         end
-        if not qid and GetQuestLogTitle then
-            local qTitle, _, _, qIsHeader, _, qIsComplete, _, qQuestId = SafeCall(GetQuestLogTitle, i)
-            title = qTitle
-            isHeader = qIsHeader
-            qid = qQuestId
-            isComplete = qIsComplete
-        end
 
-        if not isHeader and qid and qid > 0 then
-            local isReady
-            if FP.IsQuestReadyForTurnIn then
-                isReady = FP:IsQuestReadyForTurnIn(qid, readyForTurnIn or isComplete == 1 or isComplete == true)
-            else
-                isReady = (readyForTurnIn == true or isComplete == 1 or isComplete == true)
+        local link = GetQuestLink and SafeCall(GetQuestLink, i)
+        local linkQid = link and link:match("quest:(%d+)")
+
+        if not isHeader and Plain(title) and title ~= "" then
+            qid = (type(qid) == "number" and qid > 0 and qid) or (linkQid and tonumber(linkQid)) or i
+
+            local isReady = (isComplete == 1 or isComplete == true)
+            if not isReady and C_QuestLog and C_QuestLog.ReadyForTurnIn then
+                isReady = SafeCall(C_QuestLog.ReadyForTurnIn, qid) == true
+            end
+            if not isReady and C_QuestLog and C_QuestLog.IsComplete and not C_QuestLog.ReadyForTurnIn then
+                isReady = SafeCall(C_QuestLog.IsComplete, qid) == true
             end
 
             local titleKey = CleanTitle(title)
@@ -192,43 +249,17 @@ local function RebuildQuestLookup()
                 hasAnyIncompleteQuest = true
             end
 
-            -- Objectives scanning: try C_QuestLog.GetQuestObjectives, fallback to GetQuestLogLeaderBoard
-            local objs = nil
-            if C_QuestLog and C_QuestLog.GetQuestObjectives then
-                objs = SafeCall(C_QuestLog.GetQuestObjectives, qid)
+            local numLeader = (GetNumQuestLeaderBoards and SafeCall(GetNumQuestLeaderBoards)) or 0
+            if numLeader == 0 and GetNumQuestLeaderBoards then
+                numLeader = SafeCall(GetNumQuestLeaderBoards, i) or 0
             end
 
-            local hasModernObjs = type(objs) == "table" and #objs > 0
-            if hasModernObjs then
-                for _, obj in ipairs(objs) do
-                    if type(obj) == "table" and Plain(obj.text) and obj.text ~= "" then
-                        local objLower = string.lower(obj.text)
-                        local objDone = isReady or (obj.finished == true)
-                            or (type(obj.numRequired) == "number" and obj.numRequired > 0
-                                and type(obj.numFulfilled) == "number" and obj.numFulfilled >= obj.numRequired)
-                        local role = (obj.type == "item" and "LOOT") or "KILL"
-                        if objDone then
-                            finishedObjectives[#finishedObjectives + 1] = {
-                                questId = qid,
-                                text = objLower,
-                                role = role,
-                            }
-                        else
-                            unfinishedObjectives[#unfinishedObjectives + 1] = {
-                                questId = qid,
-                                text = objLower,
-                                role = role,
-                            }
-                        end
-                    end
-                end
-            end
-
-            -- Classic leaderboards fallback (or when C_QuestLog returns empty objectives)
-            if not hasModernObjs and GetNumQuestLeaderBoards and GetQuestLogLeaderBoard then
-                local numLeader = SafeCall(GetNumQuestLeaderBoards, i) or 0
+            if numLeader > 0 and GetQuestLogLeaderBoard then
                 for j = 1, numLeader do
-                    local desc, objType, done = SafeCall(GetQuestLogLeaderBoard, j, i)
+                    local desc, objType, done = SafeCall(GetQuestLogLeaderBoard, j)
+                    if not desc then
+                        desc, objType, done = SafeCall(GetQuestLogLeaderBoard, j, i)
+                    end
                     if Plain(desc) and desc ~= "" then
                         local descLower = string.lower(desc)
                         local objDone = isReady or done == true or done == 1
@@ -248,8 +279,38 @@ local function RebuildQuestLookup()
                         end
                     end
                 end
+            elseif C_QuestLog and C_QuestLog.GetQuestObjectives then
+                local objs = SafeCall(C_QuestLog.GetQuestObjectives, qid)
+                if type(objs) == "table" then
+                    for _, obj in ipairs(objs) do
+                        if type(obj) == "table" and Plain(obj.text) and obj.text ~= "" then
+                            local objLower = string.lower(obj.text)
+                            local objDone = isReady or (obj.finished == true)
+                                or (type(obj.numRequired) == "number" and obj.numRequired > 0
+                                    and type(obj.numFulfilled) == "number" and obj.numFulfilled >= obj.numRequired)
+                            local role = (obj.type == "item" and "LOOT") or "KILL"
+                            if objDone then
+                                finishedObjectives[#finishedObjectives + 1] = {
+                                    questId = qid,
+                                    text = objLower,
+                                    role = role,
+                                }
+                            else
+                                unfinishedObjectives[#unfinishedObjectives + 1] = {
+                                    questId = qid,
+                                    text = objLower,
+                                    role = role,
+                                }
+                            end
+                        end
+                    end
+                end
             end
         end
+    end
+
+    if origSelection and origSelection > 0 and SelectQuestLogEntry then
+        SafeCall(SelectQuestLogEntry, origSelection)
     end
 
     if FP.routes then
@@ -316,10 +377,29 @@ local function GetScanTooltip()
 end
 
 local function InspectUnitTooltip(unit, lowerName)
-    if not Plain(unit) then return false, false, false, nil end
+    if not Plain(unit) or not (UnitExists and SafeCall(UnitExists, unit)) then
+        return false, false, false, nil
+    end
 
     local lines = {}
-    if C_TooltipInfo and C_TooltipInfo.GetUnit then
+    local tip = GetScanTooltip()
+    tip:SetOwner(WorldFrame, "ANCHOR_NONE")
+    tip:ClearLines()
+    local ok = SafeCall(tip.SetUnit, tip, unit)
+    if ok then
+        local numLines = tip:NumLines() or 0
+        for i = 2, numLines do
+            local fontString = _G["NexusKitScanTooltipTextLeft" .. i]
+            local txt = fontString and fontString:GetText()
+            if Plain(txt) and txt ~= "" then
+                lines[#lines + 1] = {
+                    text = txt,
+                }
+            end
+        end
+    end
+
+    if #lines == 0 and C_TooltipInfo and C_TooltipInfo.GetUnit then
         local data = SafeCall(C_TooltipInfo.GetUnit, unit)
         if type(data) == "table" and type(data.lines) == "table" and #data.lines > 0 then
             for lineIdx, line in ipairs(data.lines) do
@@ -329,25 +409,6 @@ local function InspectUnitTooltip(unit, lowerName)
                         lineType = line.type,
                         lineQid = (type(line.id) == "number" and line.id > 0) and line.id or nil,
                         completed = (line.completed == true),
-                    }
-                end
-            end
-        end
-    end
-
-    if #lines == 0 then
-        local tip = GetScanTooltip()
-        tip:SetOwner(WorldFrame, "ANCHOR_NONE")
-        tip:ClearLines()
-        local ok = SafeCall(tip.SetUnit, tip, unit)
-        if ok then
-            local numLines = tip:NumLines() or 0
-            for i = 2, numLines do
-                local fontString = _G["NexusKitScanTooltipTextLeft" .. i]
-                local txt = fontString and fontString:GetText()
-                if Plain(txt) and txt ~= "" then
-                    lines[#lines + 1] = {
-                        text = txt,
                     }
                 end
             end
@@ -684,35 +745,6 @@ local function HidePlateBadge(plate)
     end
 end
 
-local function RepositionPlateBadge(badge, plate, unit)
-    if not badge or not plate or IsForbiddenObj(plate) or not (plate.IsVisible and plate:IsVisible()) then
-        if badge and badge.anim then badge.anim:Stop() end
-        if badge then badge:Hide() end
-        return false
-    end
-    local left = plate.GetLeft and plate:GetLeft()
-    local right = plate.GetRight and plate:GetRight()
-    local top = plate.GetTop and plate:GetTop()
-    if not IsSafeNum(left) or not IsSafeNum(right) or not IsSafeNum(top) then
-        if badge.anim then badge.anim:Stop() end
-        badge:Hide()
-        return false
-    end
-    local hScale = (UIParent and UIParent.GetEffectiveScale and UIParent:GetEffectiveScale()) or 1
-    local pScale = (plate.GetEffectiveScale and plate:GetEffectiveScale()) or hScale
-    local cx = (((left + right) * 0.5) * pScale) / hScale
-    local ty = (top * pScale) / hScale
-
-    local raidIdx = unit and GetRaidTargetIndex and SafeCall(GetRaidTargetIndex, unit)
-    badge:ClearAllPoints()
-    if IsAccessible(raidIdx) and tonumber(raidIdx) and tonumber(raidIdx) > 0 then
-        badge:SetPoint("CENTER", UIParent, "BOTTOMLEFT", cx - 36, ty + 6)
-    else
-        badge:SetPoint("CENTER", UIParent, "BOTTOMLEFT", cx, ty + 16)
-    end
-    return true
-end
-
 local function UpdatePlateForUnit(unit)
     if not Plain(unit) or not (C_NamePlate and C_NamePlate.GetNamePlateForUnit) then return end
     local plate = SafeCall(C_NamePlate.GetNamePlateForUnit, unit)
@@ -728,33 +760,33 @@ local function UpdatePlateForUnit(unit)
         return
     end
 
-    -- Parent badge to UIParent using screen coordinates (never anchor to Blizzard NamePlate) so secure frame tree remains 100% untainted
+    local host = (plate.UnitFrame and not IsForbiddenObj(plate.UnitFrame) and plate.UnitFrame) or plate
+    if IsForbiddenObj(host) then return end
+
     local badge = plateBadges[plate]
     if not badge then
-        badge = CreatePulsingBadge(UIParent, 26, true)
+        badge = CreatePulsingBadge(host, 28, true)
         badge:EnableMouse(false)
-        badge.accum = 0
-        badge:SetScript("OnUpdate", function(self, elapsed)
-            self.accum = (self.accum or 0) + elapsed
-            if self.accum < 0.04 then return end
-            self.accum = 0
-            local p = self.hostPlate
-            if not RepositionPlateBadge(self, p, self.unit) then
-                self:Hide()
-            end
-        end)
         plateBadges[plate] = badge
+    else
+        if badge:GetParent() ~= host then
+            badge:SetParent(host)
+        end
     end
+
     badge.hostPlate = plate
     badge.unit = unit
 
-    badge:SetFrameStrata("HIGH")
-    badge:SetFrameLevel(math.max(50, (plate.GetFrameLevel and plate:GetFrameLevel() or 2) + 20))
-
-    if not RepositionPlateBadge(badge, plate, unit) then
-        HidePlateBadge(plate)
-        return
+    badge:ClearAllPoints()
+    local raidIdx = unit and GetRaidTargetIndex and SafeCall(GetRaidTargetIndex, unit)
+    if IsAccessible(raidIdx) and tonumber(raidIdx) and tonumber(raidIdx) > 0 then
+        badge:SetPoint("BOTTOM", host, "TOP", 0, 22)
+    else
+        badge:SetPoint("BOTTOM", host, "TOP", 0, 8)
     end
+
+    badge:SetFrameStrata("HIGH")
+    badge:SetFrameLevel(math.max(100, (host.GetFrameLevel and host:GetFrameLevel() or 2) + 25))
 
     -- Show text tag above Turn-In / Accept NPCs; keep enemy objectives clean icon + glow
     local showText = (role == "TURNIN" or role == "ACCEPT")
@@ -813,34 +845,30 @@ local function UpdateTargetBadge()
     end
 
     if not targetBadge then
-        targetBadge = CreatePulsingBadge(UIParent, 24, true)
+        targetBadge = CreatePulsingBadge(UIParent, 26, true)
         targetBadge:EnableMouse(false)
     end
 
     targetBadge:ClearAllPoints()
     if TargetFrame and not IsForbiddenObj(TargetFrame) and TargetFrame:IsVisible() then
+        if targetBadge:GetParent() ~= TargetFrame then
+            targetBadge:SetParent(TargetFrame)
+        end
+        targetBadge:SetPoint("TOPRIGHT", TargetFrame, "TOPRIGHT", -15, -15)
         local tfStrata = (TargetFrame.GetFrameStrata and TargetFrame:GetFrameStrata()) or "MEDIUM"
         local tfLevel = (TargetFrame.GetFrameLevel and TargetFrame:GetFrameLevel()) or 10
         targetBadge:SetFrameStrata(tfStrata == "BACKGROUND" and "LOW" or tfStrata)
-        targetBadge:SetFrameLevel(math.max(20, tfLevel + 12))
-
-        local tfRight = TargetFrame.GetRight and TargetFrame:GetRight()
-        local tfTop = TargetFrame.GetTop and TargetFrame:GetTop()
-        if IsSafeNum(tfRight) and IsSafeNum(tfTop) then
-            local tfScale = (TargetFrame.GetEffectiveScale and TargetFrame:GetEffectiveScale()) or 1
-            local uiScale = (UIParent.GetEffectiveScale and UIParent:GetEffectiveScale()) or 1
-            local x = (tfRight * tfScale) / uiScale
-            local y = (tfTop * tfScale) / uiScale
-            targetBadge:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", x - 10, y - 26)
-        else
-            targetBadge:SetPoint("TOP", UIParent, "TOP", 0, -110)
-        end
+        targetBadge:SetFrameLevel(math.max(50, tfLevel + 25))
     else
+        if targetBadge:GetParent() ~= UIParent then
+            targetBadge:SetParent(UIParent)
+        end
         targetBadge:SetFrameStrata("HIGH")
         targetBadge:SetPoint("TOP", UIParent, "TOP", 0, -110)
     end
 
     ApplyBadgeStyle(targetBadge, role, true)
+    targetBadge:Show()
 end
 
 -------------------------------------------------------------------------------
@@ -918,4 +946,40 @@ if FP.RegisterStepChangedCallback then
     FP:RegisterStepChangedCallback(function()
         pcall(function() FP:RefreshHighlights() end)
     end)
+end
+
+-------------------------------------------------------------------------------
+-- Diagnostic slash command: /nkmark or /nkdebug
+-------------------------------------------------------------------------------
+SLASH_NKMARK1 = "/nkmark"
+SLASH_NKMARK2 = "/nkdebug"
+SlashCmdList["NKMARK"] = function(msg)
+    local targetExists = UnitExists and SafeCall(UnitExists, "target")
+    print("|cff00ff96[NexKit Highlights]|r Diagnostica:")
+    print(" - EnableHighlights:", IsHighlightsEnabled() and "|cff00ff00SI|r" or "|cffff4444NO|r")
+    local countIncomplete = 0
+    for _ in pairs(incompleteQuestTitles) do countIncomplete = countIncomplete + 1 end
+    print(string.format(" - Missioni attive: %d | Obiettivi incompleti: %d | Obiettivi completati: %d",
+        countIncomplete, #unfinishedObjectives, #finishedObjectives))
+    for idx, obj in ipairs(unfinishedObjectives) do
+        if idx <= 6 then
+            print(string.format("   [%d] Q%s: %s (%s)", idx, tostring(obj.questId), tostring(obj.text), tostring(obj.role)))
+        end
+    end
+    if targetExists then
+        local name = UnitName("target")
+        local role = ClassifyUnit("target")
+        local canAttack = UnitCanAttack and SafeCall(UnitCanAttack, "player", "target")
+        local plate = C_NamePlate and C_NamePlate.GetNamePlateForUnit and SafeCall(C_NamePlate.GetNamePlateForUnit, "target")
+        local badge = plate and plateBadges[plate]
+        print(string.format(" - Target: '%s' (Nemico/Attaccabile: %s)", tostring(name), canAttack and "|cffff4444SI|r" or "|cff00ff00NO|r"))
+        print(" - Ruolo identificato:", role and ("|cff00ff00" .. role .. "|r") or "|cffff4444NIL (Non riconosciuto)|r")
+        print(" - NamePlate presente:", plate and "|cff00ff00SI|r" or "|cffff4444NO|r")
+        if plate then
+            print(" - Badge Nameplate:", (badge and badge:IsShown()) and "|cff00ff00VISIBILE (SOPRA LA TESTA)|r" or "|cffff4444NASCOSTO|r")
+        end
+    else
+        print(" - Target: Nessun bersaglio selezionato (seleziona un mob/PNG e ripeti /nkmark)")
+    end
+    FP:RefreshHighlights()
 end
