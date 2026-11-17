@@ -262,7 +262,10 @@ local function RebuildQuestLookup()
                     end
                     if Plain(desc) and desc ~= "" then
                         local descLower = string.lower(desc)
-                        local objDone = isReady or done == true or done == 1
+                        local cur, max = desc:match("(%d+)%s*/%s*(%d+)")
+                        local isCompleteText = desc:find("%(Complete%)") or desc:find("%(Completata%)") or desc:find("%(Fertig%)") or desc:find("%(Terminée%)")
+                        local counterDone = (cur and max and tonumber(cur) and tonumber(max) and tonumber(cur) >= tonumber(max))
+                        local objDone = isReady or done == true or done == 1 or counterDone or (isCompleteText ~= nil)
                         local role = (objType == "item" and "LOOT") or "KILL"
                         if objDone then
                             finishedObjectives[#finishedObjectives + 1] = {
@@ -285,7 +288,9 @@ local function RebuildQuestLookup()
                     for _, obj in ipairs(objs) do
                         if type(obj) == "table" and Plain(obj.text) and obj.text ~= "" then
                             local objLower = string.lower(obj.text)
-                            local objDone = isReady or (obj.finished == true)
+                            local cur, max = objLower:match("(%d+)%s*/%s*(%d+)")
+                            local counterDone = (cur and max and tonumber(cur) and tonumber(max) and tonumber(cur) >= tonumber(max))
+                            local objDone = isReady or (obj.finished == true) or counterDone
                                 or (type(obj.numRequired) == "number" and obj.numRequired > 0
                                     and type(obj.numFulfilled) == "number" and obj.numFulfilled >= obj.numRequired)
                             local role = (obj.type == "item" and "LOOT") or "KILL"
@@ -462,15 +467,6 @@ local function InspectUnitTooltip(unit, lowerName)
         end
     end
 
-    if not hasIncompleteObj and sawIncompleteTitle and not sawObjLine and not hasReadyTitle then
-        hasIncompleteObj = true
-        detectedRole = detectedRole or "KILL"
-    end
-
-    if hasIncompleteObj and lowerName and detectedRole then
-        runtimeMobRoleCache[lowerName] = detectedRole
-    end
-
     local hasCompletedOnlyObj = (not hasIncompleteObj) and (sawObjLine or (hasReadyTitle and not sawIncompleteTitle))
     return hasReadyTitle, hasIncompleteObj, hasCompletedOnlyObj, detectedRole
 end
@@ -500,43 +496,56 @@ local function ClassifyUnit(unit)
         return "TURNIN"
     end
 
-    -- 3. Tooltip inspection (both C_TooltipInfo and GameTooltip scan)
-    local hasReadyTitle, hasIncompleteObj, hasCompletedOnlyObj, tipRole = InspectUnitTooltip(unit, lowerName)
-
+    -- 3. Friendly NPC Tooltip inspection
     if not canAttack then
+        local hasReadyTitle, hasIncompleteObj = InspectUnitTooltip(unit, lowerName)
         if hasReadyTitle then
             return "TURNIN"
         elseif hasIncompleteObj then
             return "OBJECTIVE"
         end
-    else
-        -- Attackable unit (kill / loot quest target)
-        if hasIncompleteObj then
-            return tipRole or "KILL"
-        elseif hasCompletedOnlyObj then
-            return nil
-        end
+        return nil
+    end
 
-        -- Check runtime cache
-        if lowerName and runtimeMobRoleCache[lowerName] then
-            return runtimeMobRoleCache[lowerName]
-        end
+    -- 4. Attackable unit (kill / loot quest target)
+    local isUnfinished, unfinRole = false, nil
+    local isFinished, finRole = false, nil
+    if lowerName then
+        isUnfinished, unfinRole = MatchesObjTable(lowerName, unfinishedObjectives)
+        isFinished, finRole = MatchesObjTable(lowerName, finishedObjectives)
+    end
 
-        -- Direct Quest Log Objective matching
-        if lowerName and #unfinishedObjectives > 0 then
-            local isFinished = MatchesObjTable(lowerName, finishedObjectives)
-            local isUnfinished, matchedRole = MatchesObjTable(lowerName, unfinishedObjectives)
-            if isUnfinished then
-                return matchedRole or "KILL"
-            elseif isFinished then
-                return nil
-            end
-        end
+    -- If this mob type matches a COMPLETED quest objective, and NO OTHER unfinished objective requires it:
+    -- IT IS 100% COMPLETE! Never show any icon.
+    if isFinished and not isUnfinished then
+        return nil
+    end
 
-        -- Active Route Step matching (e.g. "Kill 10 Kobold Vermin", "Kill Timber Wolves for 8 Tough Wolf Meat")
-        if FP.activeRoute and FP.currentStepIndex and FP.activeRoute.steps and lowerName then
-            local step = FP.activeRoute.steps[FP.currentStepIndex]
-            if step and step.action == "COMPLETE" and Plain(step.text) then
+    -- Direct Quest Log active objective match
+    if isUnfinished then
+        return unfinRole or "KILL"
+    end
+
+    -- Live Tooltip inspection
+    local hasReadyTitle, hasIncompleteObj, hasCompletedOnlyObj, tipRole = InspectUnitTooltip(unit, lowerName)
+    if hasCompletedOnlyObj and not hasIncompleteObj then
+        return nil
+    end
+    if hasIncompleteObj then
+        return tipRole or "KILL"
+    end
+
+    -- If finished in quest log or tooltip, definitely return nil
+    if isFinished then
+        return nil
+    end
+
+    -- Active Route Step matching (ONLY if step quest is not complete, and mob is not already finished)
+    if FP.activeRoute and FP.currentStepIndex and FP.activeRoute.steps and lowerName then
+        local step = FP.activeRoute.steps[FP.currentStepIndex]
+        if step and step.action == "COMPLETE" and Plain(step.text) then
+            local stepQuestDone = step.questId and (readyQuestIds[step.questId] or readyIds[step.questId])
+            if not stepQuestDone then
                 local stepLower = string.lower(step.text)
                 local dummyObj = { text = stepLower }
                 if UnitMatchesObjective(lowerName, dummyObj) then
@@ -544,13 +553,6 @@ local function ClassifyUnit(unit)
                     return isKill and "KILL" or "LOOT"
                 end
             end
-        end
-
-        -- Fallback for modern engine UnitIsRelatedToActiveQuest
-        local related = (type(UnitIsRelatedToActiveQuest) == "function")
-            and (SafeCall(UnitIsRelatedToActiveQuest, unit) == true)
-        if related and hasAnyIncompleteQuest then
-            return "KILL"
         end
     end
 
@@ -877,6 +879,11 @@ SafeRegister(eventFrame, "QUEST_LOG_UPDATE")
 SafeRegister(eventFrame, "UNIT_QUEST_LOG_CHANGED")
 SafeRegister(eventFrame, "QUEST_TURNED_IN")
 SafeRegister(eventFrame, "QUEST_ACCEPTED")
+SafeRegister(eventFrame, "QUEST_WATCH_UPDATE")
+SafeRegister(eventFrame, "BAG_UPDATE_DELAYED")
+SafeRegister(eventFrame, "BAG_UPDATE")
+SafeRegister(eventFrame, "CHAT_MSG_LOOT")
+SafeRegister(eventFrame, "UNIT_INVENTORY_CHANGED")
 SafeRegister(eventFrame, "NAME_PLATE_UNIT_ADDED")
 SafeRegister(eventFrame, "NAME_PLATE_UNIT_REMOVED")
 SafeRegister(eventFrame, "PLAYER_TARGET_CHANGED")
@@ -900,6 +907,10 @@ eventFrame:SetScript("OnEvent", function(_, event, unit)
         pcall(UpdateTargetBadge)
         pcall(InspectInteractiveUnit, "target")
         pcall(UpdateAllNameplates)
+    elseif event == "BAG_UPDATE_DELAYED" or event == "BAG_UPDATE" or event == "QUEST_WATCH_UPDATE"
+        or event == "CHAT_MSG_LOOT" or event == "UNIT_INVENTORY_CHANGED"
+    then
+        pcall(function() FP:RefreshHighlights() end)
     elseif event == "PLAYER_REGEN_ENABLED" then
         pcall(function() FP:RefreshHighlights() end)
     elseif event == "PLAYER_SOFT_INTERACT_CHANGED" then
