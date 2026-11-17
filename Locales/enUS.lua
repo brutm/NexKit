@@ -322,12 +322,16 @@ local enUS = {
     TODO_TAB_GLOBAL         = "Account",
     TODO_FILTER_ALL         = "All",
     TODO_FILTER_ACTIVE      = "To-Do",
-    TODO_FILTER_DONE        = "Done",
+    TODO_FILTER_DONE        = "Archive",
     TODO_INPUT_HINT         = "Type a task or note and press Enter...",
     TODO_ADD                = "Add",
     TODO_EMPTY              = "No tasks yet.\nType a task above to get started!",
     TODO_SHOW_HUD           = "On-screen HUD",
-    TODO_CLEAR_DONE         = "Clear done",
+    TODO_CLEAR_DONE         = "Clear Archive",
+    TODO_CLEAR_DONE_TIP     = "Permanently deletes completed tasks from archive.",
+    TODO_MOVE_UP            = "Move up (Higher priority)",
+    TODO_MOVE_DOWN          = "Move down",
+    TODO_DEL_TIP            = "Delete task",
     TODO_HUD_TITLE          = "To-Do Notes",
 
     -- Color Themes

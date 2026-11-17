@@ -1,6 +1,6 @@
 -- NexusKit - UI/TodoList.lua
 -- In-game player personal To-Do list, goals, and reminders module.
--- Allows players to create, organize, check off, and optionally track their tasks on screen.
+-- Allows players to create, organize, check off, reopen from archive, and track tasks on screen.
 local addonName, FP = ...
 
 local ACCENT = { r = 0, g = 1, b = 0.59 }
@@ -47,7 +47,7 @@ end
 -- Main UI Frame
 -------------------------------------------------------------------------------
 local todoFrame = CreateFrame("Frame", "NexusKitTodoFrame", UIParent, "BackdropTemplate")
-todoFrame:SetSize(420, 500)
+todoFrame:SetSize(430, 500)
 todoFrame:SetPoint("CENTER", UIParent, "CENTER", 0, 40)
 todoFrame:SetBackdrop({
     bgFile   = "Interface\\Buttons\\WHITE8x8",
@@ -90,7 +90,7 @@ headerDiv:SetColorTexture(ACCENT.r, ACCENT.g, ACCENT.b, 0.40)
 
 local titleFs = todoFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
 titleFs:SetPoint("TOPLEFT", 12, -10)
-titleFs:SetText("|cff00ff96NexusKit|r — " .. ((FP.L and FP.L["TODO_TITLE"]) or "To-Do List"))
+titleFs:SetText("|cff00ff96NexusKit|r — " .. ((FP.L and FP.L["TODO_TITLE"]) or "To-Do List & Goals"))
 titleFs:SetTextColor(1, 1, 1, 1)
 
 local closeBtn = CreateFrame("Button", nil, todoFrame, "UIPanelCloseButton")
@@ -139,7 +139,7 @@ local function CreateScopeTab(btn, text, isFirst)
     end)
 end
 
-CreateScopeTab(tabChar, (FP.L and FP.L["TODO_TAB_CHAR"]) or "Personaggio", true)
+CreateScopeTab(tabChar, (FP.L and FP.L["TODO_TAB_CHAR"]) or "Character", true)
 tabChar:SetPoint("TOPLEFT", 12, -40)
 tabChar:SetScript("OnClick", function()
     currentScope = "char"
@@ -154,12 +154,12 @@ tabGlobal:SetScript("OnClick", function()
 end)
 
 -------------------------------------------------------------------------------
--- Filter Buttons (Tutte | Attive | Completate)
+-- Filter Buttons (Tutte | Attive | Archivio / Fatte)
 -------------------------------------------------------------------------------
 local filterBtns = {}
 local function CreateFilterBtn(key, label, pointTo, xOff)
     local btn = CreateFrame("Button", nil, todoFrame, "BackdropTemplate")
-    btn:SetSize(75, 20)
+    btn:SetSize(80, 20)
     btn:SetPoint("LEFT", pointTo, "RIGHT", xOff or 4, 0)
     btn:SetBackdrop({
         bgFile   = "Interface\\Buttons\\WHITE8x8",
@@ -178,9 +178,9 @@ local function CreateFilterBtn(key, label, pointTo, xOff)
     return btn
 end
 
-local fAll = CreateFilterBtn("all", (FP.L and FP.L["TODO_FILTER_ALL"]) or "Tutte", tabGlobal, 16)
-local fActive = CreateFilterBtn("active", (FP.L and FP.L["TODO_FILTER_ACTIVE"]) or "Da Fare", fAll, 4)
-local fDone = CreateFilterBtn("done", (FP.L and FP.L["TODO_FILTER_DONE"]) or "Fatte", fActive, 4)
+local fAll = CreateFilterBtn("all", (FP.L and FP.L["TODO_FILTER_ALL"]) or "All", tabGlobal, 12)
+local fActive = CreateFilterBtn("active", (FP.L and FP.L["TODO_FILTER_ACTIVE"]) or "To-Do", fAll, 4)
+local fDone = CreateFilterBtn("done", (FP.L and FP.L["TODO_FILTER_DONE"]) or "Archive", fActive, 4)
 
 local function UpdateFilterButtonsVisual()
     for k, btn in pairs(filterBtns) do
@@ -213,7 +213,7 @@ inputBar:SetBackdropColor(0.04, 0.05, 0.07, 0.95)
 inputBar:SetBackdropBorderColor(0.22, 0.25, 0.32, 0.85)
 
 local addBtn = CreateFrame("Button", nil, inputBar, "BackdropTemplate")
-addBtn:SetSize(70, 22)
+addBtn:SetSize(72, 22)
 addBtn:SetPoint("RIGHT", -3, 0)
 addBtn:SetBackdrop({
     bgFile   = "Interface\\Buttons\\WHITE8x8",
@@ -225,7 +225,7 @@ addBtn:SetBackdropBorderColor(ACCENT.r, ACCENT.g, ACCENT.b, 0.85)
 
 local addBtnTxt = addBtn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
 addBtnTxt:SetPoint("CENTER", 0, 0)
-addBtnTxt:SetText("+ " .. ((FP.L and FP.L["TODO_ADD"]) or "Aggiungi"))
+addBtnTxt:SetText("+ " .. ((FP.L and FP.L["TODO_ADD"]) or "Add"))
 addBtnTxt:SetTextColor(1, 1, 1, 1)
 
 addBtn:SetScript("OnEnter", function(self)
@@ -247,7 +247,7 @@ editBox:SetMaxLetters(120)
 
 local placeholder = editBox:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
 placeholder:SetPoint("LEFT", editBox, "LEFT", 0, 0)
-placeholder:SetText((FP.L and FP.L["TODO_INPUT_HINT"]) or "Scrivi un promemoria e premi Invio...")
+placeholder:SetText((FP.L and FP.L["TODO_INPUT_HINT"]) or "Type a task or note and press Enter...")
 placeholder:SetTextColor(0.50, 0.55, 0.60, 0.85)
 
 editBox:SetScript("OnTextChanged", function(self)
@@ -284,12 +284,12 @@ scrollFrame:SetPoint("TOPLEFT", 12, -104)
 scrollFrame:SetPoint("BOTTOMRIGHT", -32, 42)
 
 local scrollChild = CreateFrame("Frame", nil, scrollFrame)
-scrollChild:SetSize(scrollFrame:GetWidth() or 376, 1)
+scrollChild:SetSize(scrollFrame:GetWidth() or 386, 1)
 scrollFrame:SetScrollChild(scrollChild)
 
 local emptyFs = scrollFrame:CreateFontString(nil, "OVERLAY", "GameFontDisable")
 emptyFs:SetPoint("CENTER", scrollFrame, "CENTER", 0, 0)
-emptyFs:SetText((FP.L and FP.L["TODO_EMPTY"]) or "Nessun promemoria presente.\nScrivi un'attivita qui sopra per iniziare!")
+emptyFs:SetText((FP.L and FP.L["TODO_EMPTY"]) or "No tasks yet.\nType a task above to get started!")
 emptyFs:SetJustifyH("CENTER")
 emptyFs:Hide()
 
@@ -312,7 +312,7 @@ local function GetOrCreateTaskRow(index)
     row:SetBackdropBorderColor(0.18, 0.22, 0.28, 0.70)
     row:EnableMouse(true)
 
-    -- Checkbox
+    -- Checkbox Button
     local checkBtn = CreateFrame("Button", nil, row, "BackdropTemplate")
     checkBtn:SetSize(16, 16)
     checkBtn:SetPoint("LEFT", 6, 0)
@@ -324,34 +324,39 @@ local function GetOrCreateTaskRow(index)
     checkBtn:SetBackdropColor(0.04, 0.05, 0.08, 0.95)
     checkBtn:SetBackdropBorderColor(0.35, 0.40, 0.50, 0.85)
 
-    local checkMark = checkBtn:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    -- Native Blizzard Glowing Checkmark texture
+    local checkMark = checkBtn:CreateTexture(nil, "OVERLAY")
+    checkMark:SetTexture("Interface\\Buttons\\UI-CheckBox-Check")
+    checkMark:SetSize(18, 18)
     checkMark:SetPoint("CENTER", 0, 0)
-    checkMark:SetText("✓")
-    checkMark:SetTextColor(0, 1, 0.59, 1)
     checkMark:Hide()
     row.checkMark = checkMark
     row.checkBtn = checkBtn
 
     -- Delete ("x") button
     local delBtn = CreateFrame("Button", nil, row)
-    delBtn:SetSize(18, 18)
+    delBtn:SetSize(16, 16)
     delBtn:SetPoint("RIGHT", -4, 0)
     local delTxt = delBtn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     delTxt:SetPoint("CENTER", 0, 0)
     delTxt:SetText("x")
-    delTxt:SetTextColor(0.65, 0.35, 0.35, 1)
+    delTxt:SetTextColor(0.70, 0.40, 0.40, 1)
     delBtn.txt = delTxt
-    delBtn:SetScript("OnEnter", function()
+    delBtn:SetScript("OnEnter", function(self)
         delTxt:SetTextColor(1, 0.2, 0.2, 1)
         row:SetBackdropColor(0.16, 0.08, 0.10, 0.90)
+        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        GameTooltip:SetText((FP.L and FP.L["TODO_DEL_TIP"]) or "Elimina promemoria")
+        GameTooltip:Show()
     end)
     delBtn:SetScript("OnLeave", function()
-        delTxt:SetTextColor(0.65, 0.35, 0.35, 1)
+        delTxt:SetTextColor(0.70, 0.40, 0.40, 1)
         if row.task and row.task.done then
-            row:SetBackdropColor(0.06, 0.09, 0.08, 0.75)
+            row:SetBackdropColor(0.06, 0.08, 0.07, 0.75)
         else
             row:SetBackdropColor(0.09, 0.11, 0.15, 0.85)
         end
+        GameTooltip:Hide()
     end)
     delBtn:SetScript("OnClick", function()
         if row.task then
@@ -360,17 +365,19 @@ local function GetOrCreateTaskRow(index)
     end)
     row.delBtn = delBtn
 
-    -- Move Up Button
+    -- Move Up Button (Blizzard ScrollBar Up Arrow texture)
     local upBtn = CreateFrame("Button", nil, row)
-    upBtn:SetSize(14, 14)
+    upBtn:SetSize(16, 16)
     upBtn:SetPoint("RIGHT", delBtn, "LEFT", -2, 0)
-    local upTxt = upBtn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    upTxt:SetPoint("CENTER", 0, 0)
-    upTxt:SetText("▲")
-    upTxt:SetTextColor(0.6, 0.7, 0.8, 0.8)
-    upBtn.txt = upTxt
-    upBtn:SetScript("OnEnter", function() upTxt:SetTextColor(1, 1, 1, 1) end)
-    upBtn:SetScript("OnLeave", function() upTxt:SetTextColor(0.6, 0.7, 0.8, 0.8) end)
+    upBtn:SetNormalTexture("Interface\\Buttons\\UI-ScrollBar-ScrollUpButton-Up")
+    upBtn:SetPushedTexture("Interface\\Buttons\\UI-ScrollBar-ScrollUpButton-Down")
+    upBtn:SetHighlightTexture("Interface\\Buttons\\UI-ScrollBar-ScrollUpButton-Highlight")
+    upBtn:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        GameTooltip:SetText((FP.L and FP.L["TODO_MOVE_UP"]) or "Sposta su (Priorita piu alta)")
+        GameTooltip:Show()
+    end)
+    upBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
     upBtn:SetScript("OnClick", function()
         if row.task then
             FP:MoveTodoTask(row.task.id, currentScope, -1)
@@ -378,17 +385,19 @@ local function GetOrCreateTaskRow(index)
     end)
     row.upBtn = upBtn
 
-    -- Move Down Button
+    -- Move Down Button (Blizzard ScrollBar Down Arrow texture)
     local dnBtn = CreateFrame("Button", nil, row)
-    dnBtn:SetSize(14, 14)
+    dnBtn:SetSize(16, 16)
     dnBtn:SetPoint("RIGHT", upBtn, "LEFT", -1, 0)
-    local dnTxt = dnBtn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    dnTxt:SetPoint("CENTER", 0, 0)
-    dnTxt:SetText("▼")
-    dnTxt:SetTextColor(0.6, 0.7, 0.8, 0.8)
-    dnBtn.txt = dnTxt
-    dnBtn:SetScript("OnEnter", function() dnTxt:SetTextColor(1, 1, 1, 1) end)
-    dnBtn:SetScript("OnLeave", function() dnTxt:SetTextColor(0.6, 0.7, 0.8, 0.8) end)
+    dnBtn:SetNormalTexture("Interface\\Buttons\\UI-ScrollBar-ScrollDownButton-Up")
+    dnBtn:SetPushedTexture("Interface\\Buttons\\UI-ScrollBar-ScrollDownButton-Down")
+    dnBtn:SetHighlightTexture("Interface\\Buttons\\UI-ScrollBar-ScrollDownButton-Highlight")
+    dnBtn:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        GameTooltip:SetText((FP.L and FP.L["TODO_MOVE_DOWN"]) or "Sposta giu")
+        GameTooltip:Show()
+    end)
+    dnBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
     dnBtn:SetScript("OnClick", function()
         if row.task then
             FP:MoveTodoTask(row.task.id, currentScope, 1)
@@ -403,6 +412,13 @@ local function GetOrCreateTaskRow(index)
     textFs:SetJustifyH("LEFT")
     textFs:SetWordWrap(false)
     row.textFs = textFs
+
+    -- Strikethrough horizontal line across completed tasks
+    local strikeLine = row:CreateTexture(nil, "OVERLAY", nil, 3)
+    strikeLine:SetHeight(1)
+    strikeLine:SetColorTexture(0.55, 0.60, 0.65, 0.90)
+    strikeLine:Hide()
+    row.strikeLine = strikeLine
 
     local function ToggleDone()
         if row.task then
@@ -423,17 +439,18 @@ local function GetOrCreateTaskRow(index)
             GameTooltip:SetText(self.task.text or "Promemoria", 1, 1, 1, 1, true)
             GameTooltip:AddLine(string.format("Creato: %s", self.task.created), 0.65, 0.65, 0.65)
             if self.task.done then
-                GameTooltip:AddLine("Stato: |cff00ff00Completato|r", 0.7, 0.7, 0.7)
+                GameTooltip:AddLine("Stato: |cff00ff00Completato (Tagliato)|r", 0.7, 0.7, 0.7)
+                GameTooltip:AddLine("|cff40e0ffClicca per riprendere il task|r (rimuovi la spunta).", 0.5, 0.8, 0.9)
             else
                 GameTooltip:AddLine("Stato: |cff40e0ffIn corso (Da fare)|r", 0.7, 0.7, 0.7)
+                GameTooltip:AddLine("Clicca per spuntare / completare.", 0.5, 0.8, 0.9)
             end
-            GameTooltip:AddLine("Clicca per spuntare / completare.", 0.5, 0.8, 0.9)
             GameTooltip:Show()
         end
     end)
     row:SetScript("OnLeave", function(self)
         if self.task and self.task.done then
-            self:SetBackdropColor(0.06, 0.09, 0.08, 0.75)
+            self:SetBackdropColor(0.06, 0.08, 0.07, 0.75)
         else
             self:SetBackdropColor(0.09, 0.11, 0.15, 0.85)
         end
@@ -464,7 +481,7 @@ hudCheckBtn:SetSize(20, 20)
 hudCheckBtn:SetPoint("LEFT", statusFs, "RIGHT", 16, 0)
 local hudCheckLbl = hudCheckBtn:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 hudCheckLbl:SetPoint("LEFT", hudCheckBtn, "RIGHT", 2, 0)
-hudCheckLbl:SetText((FP.L and FP.L["TODO_SHOW_HUD"]) or "HUD a schermo")
+hudCheckLbl:SetText((FP.L and FP.L["TODO_SHOW_HUD"]) or "On-screen HUD")
 
 hudCheckBtn:SetScript("OnClick", function(self)
     local s = GetSettings()
@@ -473,7 +490,7 @@ hudCheckBtn:SetScript("OnClick", function(self)
 end)
 
 local clearDoneBtn = CreateFrame("Button", nil, todoFrame, "BackdropTemplate")
-clearDoneBtn:SetSize(115, 20)
+clearDoneBtn:SetSize(120, 20)
 clearDoneBtn:SetPoint("BOTTOMRIGHT", -12, 10)
 clearDoneBtn:SetBackdrop({
     bgFile   = "Interface\\Buttons\\WHITE8x8",
@@ -484,26 +501,30 @@ clearDoneBtn:SetBackdropColor(0.14, 0.08, 0.10, 0.85)
 clearDoneBtn:SetBackdropBorderColor(0.50, 0.30, 0.35, 0.80)
 local clearDoneTxt = clearDoneBtn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
 clearDoneTxt:SetPoint("CENTER", 0, 0)
-clearDoneTxt:SetText((FP.L and FP.L["TODO_CLEAR_DONE"]) or "Pulisci fatte")
+clearDoneTxt:SetText((FP.L and FP.L["TODO_CLEAR_DONE"]) or "Svuota archivio")
 clearDoneTxt:SetTextColor(0.9, 0.8, 0.85, 1)
 
 clearDoneBtn:SetScript("OnEnter", function(self)
     self:SetBackdropColor(0.25, 0.10, 0.12, 0.95)
     clearDoneTxt:SetTextColor(1, 1, 1, 1)
+    GameTooltip:SetOwner(self, "ANCHOR_TOP")
+    GameTooltip:SetText((FP.L and FP.L["TODO_CLEAR_DONE_TIP"]) or "Elimina definitivamente i promemoria completati dall'archivio.")
+    GameTooltip:Show()
 end)
 clearDoneBtn:SetScript("OnLeave", function(self)
     self:SetBackdropColor(0.14, 0.08, 0.10, 0.85)
     clearDoneTxt:SetTextColor(0.9, 0.8, 0.85, 1)
+    GameTooltip:Hide()
 end)
 clearDoneBtn:SetScript("OnClick", function()
     FP:ClearDoneTodoTasks(currentScope)
 end)
 
 -------------------------------------------------------------------------------
--- Floating Mini-HUD (Promemoria a Schermo)
+-- Floating Mini-HUD (Promemoria a Schermo / To-Do Notes)
 -------------------------------------------------------------------------------
 local todoHud = CreateFrame("Frame", "NexusKitTodoHUD", UIParent, "BackdropTemplate")
-todoHud:SetSize(220, 48)
+todoHud:SetSize(236, 48)
 todoHud:SetPoint("TOPLEFT", UIParent, "TOPLEFT", 18, -320)
 if todoHud.SetDontSavePosition then todoHud:SetDontSavePosition(true) end
 todoHud:SetBackdrop({
@@ -517,25 +538,28 @@ todoHud:SetBackdropBorderColor(ACCENT.r, ACCENT.g, ACCENT.b, 0.70)
 todoHud:SetMovable(true)
 todoHud:EnableMouse(true)
 todoHud:SetClampedToScreen(true)
+
+local function SaveHudPosition()
+    if NexusKitDB and NexusKitDB.settings then
+        local ux, uy = UIParent:GetCenter()
+        local fx, fy = todoHud:GetCenter()
+        if ux and uy and fx and fy then
+            NexusKitDB.settings.todoHudPos = { x = fx - ux, y = fy - uy }
+        end
+    end
+end
+
 todoHud:RegisterForDrag("LeftButton")
 todoHud:SetScript("OnDragStart", function(self)
     local s = GetSettings()
-    local locked = s.todoHudLocked
-    if locked == nil then locked = s.locked ~= false end
-    if locked then return end
+    if s.todoHudLocked == true then return end
     self.isDragging = true
     self:StartMoving()
 end)
 todoHud:SetScript("OnDragStop", function(self)
     self.isDragging = false
     self:StopMovingOrSizing()
-    if NexusKitDB and NexusKitDB.settings then
-        local ux, uy = UIParent:GetCenter()
-        local fx, fy = self:GetCenter()
-        if ux and uy and fx and fy then
-            NexusKitDB.settings.todoHudPos = { x = fx - ux, y = fy - uy }
-        end
-    end
+    SaveHudPosition()
 end)
 todoHud:Hide()
 
@@ -547,19 +571,65 @@ todoHud.headerBg:SetColorTexture(ACCENT.r * 0.18, ACCENT.g * 0.18, ACCENT.b * 0.
 
 local hudTitle = todoHud:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
 hudTitle:SetPoint("TOPLEFT", 8, -4)
-hudTitle:SetText((FP.L and FP.L["TODO_HUD_TITLE"]) or "Promemoria To-Do")
+hudTitle:SetText((FP.L and FP.L["TODO_HUD_TITLE"]) or "To-Do Notes")
 hudTitle:SetTextColor(ACCENT.r, ACCENT.g, ACCENT.b, 1)
 
+-- Options Button (Native Blizzard UI-OptionsButton cog)
 local hudOpenBtn = CreateFrame("Button", nil, todoHud)
-hudOpenBtn:SetSize(16, 16)
-hudOpenBtn:SetPoint("TOPRIGHT", -4, -2)
-local hudOpenTxt = hudOpenBtn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-hudOpenTxt:SetPoint("CENTER", 0, 0)
-hudOpenTxt:SetText("⚙")
-hudOpenTxt:SetTextColor(0.8, 0.8, 0.8, 1)
+hudOpenBtn:SetSize(14, 14)
+hudOpenBtn:SetPoint("TOPRIGHT", -4, -3)
+hudOpenBtn:SetNormalTexture("Interface\\Buttons\\UI-OptionsButton")
+hudOpenBtn:SetHighlightTexture("Interface\\Buttons\\UI-Common-MouseHilight")
 hudOpenBtn:SetScript("OnClick", function()
     FP:ToggleTodoList()
 end)
+hudOpenBtn:SetScript("OnEnter", function(self)
+    GameTooltip:SetOwner(self, "ANCHOR_TOP")
+    GameTooltip:SetText("Apri To-Do List")
+    GameTooltip:Show()
+end)
+hudOpenBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+
+-- Lock/Unlock Padlock Button
+local hudLockBtn = CreateFrame("Button", nil, todoHud)
+hudLockBtn:SetSize(14, 14)
+hudLockBtn:SetPoint("TOPRIGHT", hudOpenBtn, "TOPLEFT", -3, 0)
+hudLockBtn:SetHighlightTexture("Interface\\Buttons\\LockButton-Highlight")
+if FP.CropButtonTextures then FP:CropButtonTextures(hudLockBtn, 0.15) end
+
+local function UpdateHudLockVisual()
+    local s = GetSettings()
+    local locked = s.todoHudLocked == true
+    if locked then
+        hudLockBtn:SetNormalTexture("Interface\\Buttons\\LockButton-Locked-Up")
+    else
+        hudLockBtn:SetNormalTexture("Interface\\Buttons\\LockButton-Unlocked-Up")
+    end
+end
+
+hudLockBtn:SetScript("OnClick", function()
+    local s = GetSettings()
+    s.todoHudLocked = not (s.todoHudLocked == true)
+    UpdateHudLockVisual()
+    if s.todoHudLocked then
+        FP:Print("NexusKit: Finestra Promemoria To-Do bloccata.")
+    else
+        FP:Print("NexusKit: Finestra Promemoria To-Do sbloccata (trascinala con il tasto sinistro per spostarla).")
+    end
+end)
+hudLockBtn:SetScript("OnEnter", function(self)
+    GameTooltip:SetOwner(self, "ANCHOR_TOP")
+    local s = GetSettings()
+    if s.todoHudLocked == true then
+        GameTooltip:SetText("Finestra To-Do Notes: Bloccata", 1, 0.82, 0)
+        GameTooltip:AddLine("Clicca per sbloccare e trascinare la finestra.", 0.85, 0.85, 0.85, true)
+    else
+        GameTooltip:SetText("Finestra To-Do Notes: Sbloccata", 0.4, 0.9, 1)
+        GameTooltip:AddLine("Trascina con il tasto sinistro per spostare.\nClicca per bloccare la posizione.", 0.85, 0.85, 0.85, true)
+    end
+    GameTooltip:Show()
+end)
+hudLockBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
 local hudRows = {}
 local function GetOrCreateHudRow(idx)
@@ -571,14 +641,30 @@ local function GetOrCreateHudRow(idx)
     r:SetPoint("TOPLEFT", 6, -24 - ((idx - 1) * 19))
     r:SetPoint("TOPRIGHT", -6, -24 - ((idx - 1) * 19))
     r:EnableMouse(true)
+    r:RegisterForDrag("LeftButton")
 
-    local bullet = r:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    bullet:SetPoint("LEFT", 2, 0)
-    bullet:SetText("•")
-    bullet:SetTextColor(0, 1, 0.59, 1)
+    -- Drag support on rows so user can move the HUD by clicking and dragging anywhere
+    r:SetScript("OnDragStart", function()
+        local s = GetSettings()
+        if s.todoHudLocked == true then return end
+        todoHud.isDragging = true
+        todoHud:StartMoving()
+    end)
+    r:SetScript("OnDragStop", function()
+        todoHud.isDragging = false
+        todoHud:StopMovingOrSizing()
+        SaveHudPosition()
+    end)
+
+    -- Bullet as a solid colored 4x4 square dot
+    local bullet = r:CreateTexture(nil, "ARTWORK")
+    bullet:SetSize(4, 4)
+    bullet:SetPoint("LEFT", 3, 0)
+    bullet:SetColorTexture(ACCENT.r, ACCENT.g, ACCENT.b, 0.95)
+    r.bullet = bullet
 
     local txt = r:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    txt:SetPoint("LEFT", bullet, "RIGHT", 4, 0)
+    txt:SetPoint("LEFT", bullet, "RIGHT", 6, 0)
     txt:SetPoint("RIGHT", r, "RIGHT", -2, 0)
     txt:SetJustifyH("LEFT")
     txt:SetWordWrap(false)
@@ -593,7 +679,8 @@ local function GetOrCreateHudRow(idx)
         if self.task then
             GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
             GameTooltip:SetText(self.task.text or "Promemoria", 1, 1, 1, 1, true)
-            GameTooltip:AddLine("Clicca per contrassegnare come completato.", 0, 1, 0.59)
+            GameTooltip:AddLine("Clicca per contrassegnare come completato (spostato in archivio).", 0, 1, 0.59)
+            GameTooltip:AddLine("Trascina per spostare la finestra.", 0.6, 0.6, 0.6)
             GameTooltip:Show()
         end
     end)
@@ -606,6 +693,7 @@ local function GetOrCreateHudRow(idx)
 end
 
 function FP:RefreshTodoHUD()
+    UpdateHudLockVisual()
     if not todoHud.isDragging then
         local pos = GetSettings().todoHudPos
         if type(pos) == "table" and pos.x and pos.y then
@@ -622,7 +710,6 @@ function FP:RefreshTodoHUD()
 
     EnsureTodoTables()
     local activeTasks = {}
-    -- Collect active tasks from character and global
     for _, t in ipairs(NexusKitCharDB.todoList or {}) do
         if not t.done then
             activeTasks[#activeTasks + 1] = { id = t.id, text = t.text, scope = "char" }
@@ -660,7 +747,7 @@ end
 -------------------------------------------------------------------------------
 function FP:RefreshTodoListUI()
     EnsureTodoTables()
-    StyleScopeTab(tabChar, (self.L and self.L["TODO_TAB_CHAR"]) or "Personaggio", currentScope == "char")
+    StyleScopeTab(tabChar, (self.L and self.L["TODO_TAB_CHAR"]) or "Character", currentScope == "char")
     StyleScopeTab(tabGlobal, (self.L and self.L["TODO_TAB_GLOBAL"]) or "Account", currentScope == "global")
     UpdateFilterButtonsVisual()
 
@@ -710,14 +797,28 @@ function FP:RefreshTodoListUI()
             row.checkMark:Show()
             row.checkBtn:SetBackdropBorderColor(0, 1, 0.59, 1)
             row.checkBtn:SetBackdropColor(0, 0.35, 0.18, 0.9)
-            row.textFs:SetTextColor(0.55, 0.60, 0.65, 0.85)
-            row:SetBackdropColor(0.06, 0.09, 0.08, 0.75)
+            row.textFs:SetTextColor(0.55, 0.58, 0.62, 0.85)
+            row:SetBackdropColor(0.06, 0.08, 0.07, 0.75)
+
+            -- Strikethrough horizontal line across completed task
+            row.strikeLine:ClearAllPoints()
+            row.strikeLine:SetPoint("LEFT", row.textFs, "LEFT", 0, 0)
+            local strWidth = row.textFs:GetStringWidth() or 0
+            local maxW = (row.textFs:GetWidth() or 200)
+            local w = math.min(strWidth, maxW)
+            if w > 0 then
+                row.strikeLine:SetWidth(w)
+                row.strikeLine:Show()
+            else
+                row.strikeLine:Hide()
+            end
         else
             row.checkMark:Hide()
             row.checkBtn:SetBackdropBorderColor(0.35, 0.40, 0.50, 0.85)
             row.checkBtn:SetBackdropColor(0.04, 0.05, 0.08, 0.95)
             row.textFs:SetTextColor(0.95, 0.96, 0.98, 1)
             row:SetBackdropColor(0.09, 0.11, 0.15, 0.85)
+            row.strikeLine:Hide()
         end
         row:Show()
     end

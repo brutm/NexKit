@@ -312,12 +312,16 @@ FP.Locales["itIT"] = {
     TODO_TAB_GLOBAL         = "Account",
     TODO_FILTER_ALL         = "Tutte",
     TODO_FILTER_ACTIVE      = "Da Fare",
-    TODO_FILTER_DONE        = "Fatte",
+    TODO_FILTER_DONE        = "Archivio",
     TODO_INPUT_HINT         = "Scrivi un promemoria e premi Invio...",
     TODO_ADD                = "Aggiungi",
     TODO_EMPTY              = "Nessun promemoria presente.\nScrivi un'attivita qui sopra per iniziare!",
     TODO_SHOW_HUD           = "HUD a schermo",
-    TODO_CLEAR_DONE         = "Pulisci fatte",
+    TODO_CLEAR_DONE         = "Svuota Archivio",
+    TODO_CLEAR_DONE_TIP     = "Elimina definitivamente i promemoria completati dall'archivio.",
+    TODO_MOVE_UP            = "Sposta su (Priorita piu alta)",
+    TODO_MOVE_DOWN          = "Sposta giu",
+    TODO_DEL_TIP            = "Elimina promemoria",
     TODO_HUD_TITLE          = "Promemoria To-Do",
 
     -- Temi Colore
