@@ -1,0 +1,15 @@
+# Scratch & Temp
+scratch/
+*.zip
+*.bak
+*.tmp
+
+# Python
+__pycache__/
+*.pyc
+
+# IDE & OS
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store

@@ -1,0 +1,46 @@
+## Interface: 11505, 16001
+## Title: NexKit |cff00ff96[All-in-One Utility Suite]|r
+## Notes: Smart leveling routes (1-60 Horde & Alliance), 3D waypoint navigation, dungeon boss tactics, profession advisor & reagent tracker.
+## Author: NexKit Team
+## Version: 0.2
+## IconTexture: Interface\AddOns\NexKit\Media\Logo.tga
+## Category: Quests & Leveling
+## SavedVariables: NexKitDB, NexusKitDB
+## SavedVariablesPerCharacter: NexKitCharDB, NexusKitCharDB
+## X-License: GNU General Public License v3.0 (GPLv3)
+## X-Category: Quests & Leveling, Map & Minimap, Professions, Combat & Boss Guides
+## X-Website: https://github.com/brutm/NexKit
+## X-Discord: https://discord.gg/wowforever
+## X-Donations: https://ko-fi.com/kh4dgar
+
+Locales/enUS.lua
+Locales/itIT.lua
+Locales/esES.lua
+Locales/ruRU.lua
+Locales/deDE.lua
+Locales/frFR.lua
+Core/Init.lua
+Core/Parser.lua
+Core/AutoSync.lua
+Core/QuestSync.lua
+Data/QuestKeepItems.lua
+Data/DungeonBosses.lua
+Data/ZonePOIs.lua
+Data/HiddenQuestPOIs.lua
+Data/ClassTrainers.lua
+UI/Waypoints.lua
+UI/ZonePOIs.lua
+UI/Highlights.lua
+UI/Professions.lua
+UI/ReagentTracker.lua
+UI/BuffAdvisor.lua
+UI/DungeonGuide.lua
+UI/QuestHelper.lua
+UI/QuestRewards.lua
+UI/TrackerFrame.lua
+UI/MinimapButton.lua
+UI/ImporterFrame.lua
+UI/WelcomeFrame.lua
+Routes/BuiltIn_1_20.lua
+Routes/BuiltIn_20_40.lua
+Routes/BuiltIn_40_60.lua
