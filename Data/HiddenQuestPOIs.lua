@@ -364,20 +364,20 @@ FP.HIDDEN_QUEST_POIS = {
     -- Redridge Mountains
     ---------------------------------------------------------------------------
     [3741] = { -- Hilary's Necklace
-        mapID = 1433, x = 25.9, y = 54.2,
+        mapID = 1433, x = 32.99, y = 54.66,
         target = "Glinting Mud (Hilary's Necklace)",
         targetIt = "Fango Luccicante (Collana di Hilary)",
-        descEn = "At the bottom of Lake Everstill just south-east of the Lakeshire docks (25.9, 54.2 / 23.0, 54.0).",
-        descIt = "Sul fondale del Lago Placidus a sud-est del molo di Borgolago (25.9, 54.2 / 23.0, 54.0).",
-        hint = "Redridge Mountains (25.9, 54.2)",
+        descEn = "At the bottom of Lake Everstill in Lakeshire (32.99, 54.66).",
+        descIt = "Sul fondale del Lago Placidus a Borgolago (32.99, 54.66).",
+        hint = "Redridge Mountains (32.99, 54.66)",
     },
     [123] = { -- Hilary's Necklace (Legacy alias)
-        mapID = 1433, x = 25.9, y = 54.2,
+        mapID = 1433, x = 32.99, y = 54.66,
         target = "Glinting Mud (Hilary's Necklace)",
         targetIt = "Fango Luccicante (Collana di Hilary)",
-        descEn = "At the bottom of Lake Everstill just south-east of the Lakeshire docks (25.9, 54.2 / 23.0, 54.0).",
-        descIt = "Sul fondale del Lago Placidus a sud-est del molo di Borgolago (25.9, 54.2 / 23.0, 54.0).",
-        hint = "Redridge Mountains (25.9, 54.2)",
+        descEn = "At the bottom of Lake Everstill in Lakeshire (32.99, 54.66).",
+        descIt = "Sul fondale del Lago Placidus a Borgolago (32.99, 54.66).",
+        hint = "Redridge Mountains (32.99, 54.66)",
     },
     [125] = { -- The Lost Tools (Foreman Oslow)
         mapID = 1433, x = 41.5, y = 54.7,
