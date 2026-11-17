@@ -410,13 +410,34 @@ function FP:IsReagentTracked(itemID, itemName)
     return entry ~= nil
 end
 
-function FP:ToggleTrackReagent(itemID, itemName, icon, itemLink, silent)
+function FP:ToggleTrackReagent(itemID, itemName, icon, itemLink, silent, targetCount)
     local db = EnsureCharTables()
     if not db then return false end
 
     local existingKey, existing = FindTrackedEntry(itemID, itemName)
     local L = self.L or {}
     if existingKey then
+        if targetCount ~= nil then
+            if targetCount > 0 then
+                existing.target = targetCount
+                local bags = existing.itemID and GetItemCountCompat(existing.itemID, false) or 0
+                existing.alerted = (bags >= targetCount)
+                if not silent then
+                    local itemDisp = existing.link or (existing.name and ("[" .. existing.name .. "]")) or tostring(existingKey)
+                    self:Print(string.format(L["REAGENT_TARGET_SET"] or "Obiettivo per %s impostato a %d.", itemDisp, targetCount))
+                end
+            else
+                existing.target = nil
+                existing.alerted = nil
+                if not silent then
+                    local itemDisp = existing.link or (existing.name and ("[" .. existing.name .. "]")) or tostring(existingKey)
+                    self:Print(string.format(L["REAGENT_TARGET_REMOVED"] or "Obiettivo per %s rimosso.", itemDisp))
+                end
+            end
+            self:RefreshReagentTrackerUI()
+            return true
+        end
+
         local removedName = (existing and existing.name) or itemName or tostring(existingKey)
         db.trackedReagents[existingKey] = nil
         if not silent then
@@ -444,18 +465,30 @@ function FP:ToggleTrackReagent(itemID, itemName, icon, itemLink, silent)
     local key = MakeTrackKey(resolvedID, resolvedName)
     if not key then return false end
 
+    local hasTarget = (targetCount and targetCount > 0)
     db.trackedReagents[key] = {
-        key    = key,
-        itemID = resolvedID,
-        name   = resolvedName or ("Item #" .. tostring(resolvedID or key)),
-        icon   = resolvedIcon or "Interface\\Icons\\INV_Misc_QuestionMark",
-        link   = resolvedLink,
+        key     = key,
+        itemID  = resolvedID,
+        name    = resolvedName or ("Item #" .. tostring(resolvedID or key)),
+        icon    = resolvedIcon or "Interface\\Icons\\INV_Misc_QuestionMark",
+        link    = resolvedLink,
+        target  = hasTarget and targetCount or nil,
+        alerted = false,
     }
     if resolvedID then
-        lastBagSnapshot[key] = GetItemCountCompat(resolvedID, false)
+        local curBags = GetItemCountCompat(resolvedID, false)
+        lastBagSnapshot[key] = curBags
+        if hasTarget and curBags >= targetCount then
+            db.trackedReagents[key].alerted = true
+        end
     end
     if not silent then
-        self:Print(string.format(L["REAGENT_TRACKED"] or "Now tracking reagent: %s", db.trackedReagents[key].link or db.trackedReagents[key].name))
+        local itemDisp = db.trackedReagents[key].link or db.trackedReagents[key].name
+        if hasTarget then
+            self:Print(string.format(L["REAGENT_TRACKED_WITH_TARGET"] or "Now tracking reagent: %s (Target: %d)", itemDisp, targetCount))
+        else
+            self:Print(string.format(L["REAGENT_TRACKED"] or "Now tracking reagent: %s", itemDisp))
+        end
     end
     self:RefreshReagentTrackerUI()
     return true
@@ -470,7 +503,11 @@ function FP:SetTrackReagentFromInput(input)
         for _, rec in pairs(tracked) do
             if type(rec) == "table" then
                 local cnt = rec.itemID and GetItemCountCompat(rec.itemID, false) or 0
-                names[#names + 1] = string.format("%s (%d)", rec.name or "?", cnt)
+                if rec.target and rec.target > 0 then
+                    names[#names + 1] = string.format("%s (%d/%d)", rec.name or "?", cnt, rec.target)
+                else
+                    names[#names + 1] = string.format("%s (%d)", rec.name or "?", cnt)
+                end
             end
         end
         if #names > 0 then
@@ -502,15 +539,26 @@ function FP:SetTrackReagentFromInput(input)
         return
     end
 
+    -- Parse trailing target number if provided: e.g. "Light Feather 20", "[Piuma Leggera] 10", "17056 50"
+    local targetCount = nil
+    local itemPart, countPart = raw:match("^(.-)%s+(%d+)$")
+    if itemPart and countPart then
+        local trimmedItem = itemPart:match("^%s*(.-)%s*$")
+        if trimmedItem and trimmedItem ~= "" then
+            raw = trimmedItem
+            targetCount = tonumber(countPart)
+        end
+    end
+
     local linkID = ExtractItemIDFromLink(raw)
     if linkID then
-        self:ToggleTrackReagent(linkID, nil, nil, raw)
+        self:ToggleTrackReagent(linkID, nil, nil, raw, false, targetCount)
         return
     end
 
     local numID = tonumber(raw)
     if IsSafeNum(numID) and numID > 0 then
-        self:ToggleTrackReagent(numID, nil, nil, nil)
+        self:ToggleTrackReagent(numID, nil, nil, nil, false, targetCount)
         return
     end
 
@@ -571,7 +619,7 @@ function FP:SetTrackReagentFromInput(input)
         end
     end
 
-    self:ToggleTrackReagent(foundID, raw, nil, nil)
+    self:ToggleTrackReagent(foundID, raw, nil, nil, false, targetCount)
 end
 
 -------------------------------------------------------------------------------
@@ -2565,7 +2613,7 @@ end
 -- 5. Floating Tracked Reagents HUD
 -------------------------------------------------------------------------------
 local hud = CreateFrame("Frame", "NexusKitReagentHUD", UIParent, "BackdropTemplate")
-hud:SetSize(236, 54)
+hud:SetSize(256, 54)
 hud:SetPoint("TOPLEFT", UIParent, "TOPLEFT", 18, -220)
 if hud.SetDontSavePosition then hud:SetDontSavePosition(true) end
 hud:SetBackdrop({
@@ -2700,6 +2748,93 @@ hudLockBtn:SetScript("OnLeave", function()
 end)
 
 local hudRows = {}
+
+StaticPopupDialogs["NEXUSKIT_SET_REAGENT_TARGET"] = {
+    text = "Imposta quantita desiderata per %s:\n(Inserisci 0 per disattivare l'obiettivo)",
+    button1 = ACCEPT or "Accetta",
+    button2 = CANCEL or "Annulla",
+    hasEditBox = 1,
+    maxLetters = 5,
+    OnShow = function(self)
+        local name = (self.GetName and self:GetName()) or ""
+        local eb = self.editBox or (name ~= "" and _G[name .. "EditBox"])
+        if eb then
+            local data = self.data
+            local cur = (data and data.target) or 0
+            eb:SetText(cur > 0 and tostring(cur) or "")
+            eb:SetFocus()
+            eb:HighlightText()
+        end
+    end,
+    OnAccept = function(self)
+        local name = (self.GetName and self:GetName()) or ""
+        local eb = self.editBox or (name ~= "" and _G[name .. "EditBox"])
+        local text = (eb and eb:GetText()) or ""
+        local num = tonumber(text:match("(%d+)")) or 0
+        local data = self.data
+        if data then
+            local L = FP.L or {}
+            local itemDisp = data.link or (data.name and ("[" .. data.name .. "]")) or "Reagente"
+            if num > 0 then
+                data.target = num
+                local bags = data.itemID and GetItemCountCompat(data.itemID, false) or 0
+                data.alerted = (bags >= num)
+                FP:Print(string.format(L["REAGENT_TARGET_SET"] or "Obiettivo per %s impostato a %d.", itemDisp, num))
+            else
+                data.target = nil
+                data.alerted = nil
+                FP:Print(string.format(L["REAGENT_TARGET_REMOVED"] or "Obiettivo per %s rimosso.", itemDisp))
+            end
+            FP:RefreshTrackedReagentsHUD()
+        end
+    end,
+    EditBoxOnEnterPressed = function(self)
+        local parent = self:GetParent()
+        local name = (parent.GetName and parent:GetName()) or ""
+        local btn = parent.button1 or (name ~= "" and _G[name .. "Button1"])
+        if btn and btn:IsEnabled() then
+            btn:Click()
+        else
+            parent:Hide()
+        end
+    end,
+    EditBoxOnEscapePressed = function(self)
+        self:GetParent():Hide()
+    end,
+    timeout = 0,
+    whileDead = 1,
+    hideOnEscape = 1,
+    preferredIndex = 3,
+}
+
+function FP:TriggerReagentTargetReachedAlert(rec, bags)
+    if not rec or not rec.target then return end
+    local L = self.L or {}
+
+    -- 1. Chime / Alert Sound
+    local played = false
+    if SOUNDKIT and SOUNDKIT.UI_QUEST_COMPLETE then
+        played = pcall(PlaySound, SOUNDKIT.UI_QUEST_COMPLETE, "Master")
+    end
+    if not played then
+        pcall(PlaySound, 878, "Master")
+    end
+
+    -- 2. Screen warning banner
+    local itemName = rec.name or "Reagente"
+    local bannerHeader = L["REAGENT_TARGET_REACHED_BANNER"] or "Obiettivo Reagenti Raggiunto!"
+    local bannerMsg = string.format("|cff00ff00%s|r\n%s: %d / %d", bannerHeader, itemName, bags, rec.target)
+    if RaidNotice_AddMessage and RaidWarningFrame then
+        pcall(RaidNotice_AddMessage, RaidWarningFrame, bannerMsg, ChatTypeInfo and ChatTypeInfo["RAID_WARNING"] or { r = 0, g = 1, b = 0.59 })
+    elseif UIErrorsFrame and UIErrorsFrame.AddMessage then
+        pcall(UIErrorsFrame.AddMessage, UIErrorsFrame, string.format("%s %s (%d/%d)", bannerHeader, itemName, bags, rec.target), 0, 1, 0.59, 1, 4)
+    end
+
+    -- 3. Chat notification
+    local itemDisp = rec.link or (rec.name and ("[" .. rec.name .. "]")) or itemName
+    self:Print(string.format(L["REAGENT_TARGET_REACHED_CHAT"] or "|cff00ff00[NexKit Reagenti]|r Obiettivo completato! Hai raccolto %d/%d di %s!", bags, rec.target, itemDisp))
+end
+
 local function GetOrCreateHudRow(index)
     local row = hudRows[index]
     if row then return row end
@@ -2709,6 +2844,7 @@ local function GetOrCreateHudRow(index)
     row:SetPoint("TOPLEFT", 6, -28 - ((index - 1) * 21))
     row:SetPoint("TOPRIGHT", -6, -28 - ((index - 1) * 21))
     row:EnableMouse(true)
+    row:EnableMouseWheel(true)
     row:RegisterForDrag("LeftButton")
     row:SetScript("OnDragStart", function()
         local s = GetSettings()
@@ -2728,6 +2864,48 @@ local function GetOrCreateHudRow(index)
             if ux and uy and fx and fy then
                 NexusKitDB.settings.reagentHudPos = { x = fx - ux, y = fy - uy }
             end
+        end
+    end)
+
+    row:SetScript("OnMouseUp", function(self, button)
+        if button == "RightButton" and self.entry then
+            local rec = self.entry
+            if FP.L and FP.L["REAGENT_TARGET_POPUP_TEXT"] then
+                StaticPopupDialogs["NEXUSKIT_SET_REAGENT_TARGET"].text = FP.L["REAGENT_TARGET_POPUP_TEXT"]
+            end
+            local popup = StaticPopup_Show("NEXUSKIT_SET_REAGENT_TARGET", rec.name or "Reagente", nil, rec)
+            if popup then
+                popup.data = rec
+                local name = (popup.GetName and popup:GetName()) or ""
+                local eb = popup.editBox or (name ~= "" and _G[name .. "EditBox"])
+                if eb then
+                    local cur = rec.target or 0
+                    eb:SetText(cur > 0 and tostring(cur) or "")
+                    eb:SetFocus()
+                    eb:HighlightText()
+                end
+            end
+        end
+    end)
+
+    row:SetScript("OnMouseWheel", function(self, delta)
+        if not self.entry then return end
+        local rec = self.entry
+        local step = IsShiftKeyDown() and 5 or 1
+        local cur = rec.target or 0
+        local nextVal = cur + (delta > 0 and step or -step)
+        if nextVal <= 0 then
+            rec.target = nil
+            rec.alerted = nil
+        else
+            rec.target = nextVal
+            local bags = rec.itemID and GetItemCountCompat(rec.itemID, false) or 0
+            rec.alerted = (bags >= nextVal)
+        end
+        FP:RefreshTrackedReagentsHUD()
+        if GameTooltip and GameTooltip:IsOwned(self) then
+            local onEnter = self:GetScript("OnEnter")
+            if onEnter then onEnter(self) end
         end
     end)
 
@@ -2766,7 +2944,9 @@ local function GetOrCreateHudRow(index)
     end)
     rem:SetScript("OnLeave", function()
         remTxt:SetTextColor(0.85, 0.45, 0.45, 1)
-        row.bg:Hide()
+        if not row.isComplete then
+            row.bg:Hide()
+        end
     end)
     rem:SetScript("OnClick", function()
         if row.entry then
@@ -2789,23 +2969,48 @@ local function GetOrCreateHudRow(index)
     row.name = nameFs
 
     row:SetScript("OnEnter", function(self)
+        if self.isComplete then
+            self.bg:SetColorTexture(0, 0.9, 0.4, 0.28)
+        else
+            self.bg:SetColorTexture(TRACKED.r, TRACKED.g, TRACKED.b, 0.15)
+        end
         self.bg:Show()
+
         if not self.entry then return end
+        local rec = self.entry
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
         local okTip = false
-        if self.entry.link and GameTooltip.SetHyperlink then
-            okTip = pcall(GameTooltip.SetHyperlink, GameTooltip, self.entry.link)
+        if rec.link and GameTooltip.SetHyperlink then
+            okTip = pcall(GameTooltip.SetHyperlink, GameTooltip, rec.link)
         end
-        if not okTip and self.entry.itemID and GameTooltip.SetItemByID then
-            okTip = pcall(GameTooltip.SetItemByID, GameTooltip, self.entry.itemID)
+        if not okTip and rec.itemID and GameTooltip.SetItemByID then
+            okTip = pcall(GameTooltip.SetItemByID, GameTooltip, rec.itemID)
         end
         if not okTip then
-            GameTooltip:SetText(self.entry.name or "?")
+            GameTooltip:SetText(rec.name or "?")
         end
+
+        local L = FP.L or {}
+        GameTooltip:AddLine(" ")
+        local bags = rec.itemID and GetItemCountCompat(rec.itemID, false) or 0
+        if rec.target and rec.target > 0 then
+            local statusStr = (bags >= rec.target) and "|cff00ff00[COMPLETO]|r" or string.format("|cff40e0ff(%d mancanti)|r", rec.target - bags)
+            GameTooltip:AddDoubleLine(L["REAGENT_HUD_TIP_TARGET"] or "Obiettivo:", string.format("%d  %s", rec.target, statusStr), 0.75, 0.75, 0.75, 1, 1, 1)
+        else
+            GameTooltip:AddDoubleLine(L["REAGENT_HUD_TIP_TARGET"] or "Obiettivo:", "|cff8899aa" .. (L["REAGENT_HUD_TIP_NONE"] or "Nessuno") .. "|r", 0.75, 0.75, 0.75, 0.7, 0.7, 0.7)
+        end
+        GameTooltip:AddLine("|cff00ff96" .. (L["REAGENT_HUD_TIP_RCLICK"] or "Click destro: Imposta quantita desiderata") .. "|r", 0.9, 0.9, 0.9)
+        GameTooltip:AddLine("|cff40e0ff" .. (L["REAGENT_HUD_TIP_WHEEL"] or "Rotellina: Modifica obiettivo (+1 / -1, Shift: +5)") .. "|r", 0.8, 0.8, 0.8)
         GameTooltip:Show()
     end)
+
     row:SetScript("OnLeave", function(self)
-        self.bg:Hide()
+        if not self.isComplete then
+            self.bg:Hide()
+        else
+            self.bg:SetColorTexture(0, 0.8, 0.35, 0.14)
+            self.bg:Show()
+        end
         if GameTooltip and GameTooltip:IsOwned(self) then
             GameTooltip:Hide()
         end
@@ -2858,23 +3063,64 @@ function FP:RefreshTrackedReagentsHUD()
         row.name:SetText(rec.name or "?")
         local bags = rec.itemID and GetItemCountCompat(rec.itemID, false) or 0
         local total = rec.itemID and GetItemCountCompat(rec.itemID, true) or bags
-        if total > bags then
-            row.count:SetText(string.format("|cff40e0ff%d|r |cff8899aa(+%d)|r", bags, total - bags))
-        elseif bags > 0 then
-            row.count:SetText("|cff40e0ff" .. bags .. "|r")
+
+        local hasTarget = (rec.target and rec.target > 0)
+        local isComplete = hasTarget and (bags >= rec.target)
+        row.isComplete = isComplete
+
+        if hasTarget then
+            if isComplete then
+                if not rec.alerted then
+                    rec.alerted = true
+                    FP:TriggerReagentTargetReachedAlert(rec, bags)
+                end
+            else
+                rec.alerted = false
+            end
         else
-            row.count:SetText("|cff8899aa0|r")
+            rec.alerted = nil
         end
-        if bags > 0 then
-            row.iconFrame:SetBackdropBorderColor(TRACKED.r, TRACKED.g, TRACKED.b, 0.85)
+
+        if hasTarget then
+            if isComplete then
+                if total > bags then
+                    row.count:SetText(string.format("|cff00ff00%d/%d|r |cff8899aa(+%d)|r |cff00ff00(OK)|r", bags, rec.target, total - bags))
+                else
+                    row.count:SetText(string.format("|cff00ff00%d/%d (OK)|r", bags, rec.target))
+                end
+                row.iconFrame:SetBackdropBorderColor(0, 1, 0.45, 0.95)
+                row.bg:SetColorTexture(0, 0.8, 0.35, 0.14)
+                row.bg:Show()
+            else
+                if total > bags then
+                    row.count:SetText(string.format("|cff40e0ff%d|r|cff8899aa/%d (+%d)|r", bags, rec.target, total - bags))
+                else
+                    row.count:SetText(string.format("|cff40e0ff%d|r|cff8899aa/%d|r", bags, rec.target))
+                end
+                row.iconFrame:SetBackdropBorderColor(TRACKED.r, TRACKED.g, TRACKED.b, 0.85)
+                row.bg:Hide()
+            end
         else
-            row.iconFrame:SetBackdropBorderColor(0.35, 0.40, 0.48, 0.60)
+            if total > bags then
+                row.count:SetText(string.format("|cff40e0ff%d|r |cff8899aa(+%d)|r", bags, total - bags))
+            elseif bags > 0 then
+                row.count:SetText("|cff40e0ff" .. bags .. "|r")
+            else
+                row.count:SetText("|cff8899aa0|r")
+            end
+            if bags > 0 then
+                row.iconFrame:SetBackdropBorderColor(TRACKED.r, TRACKED.g, TRACKED.b, 0.85)
+            else
+                row.iconFrame:SetBackdropBorderColor(0.35, 0.40, 0.48, 0.60)
+            end
+            row.bg:Hide()
         end
         row:Show()
     end
 
     for i = #list + 1, #hudRows do
         hudRows[i].entry = nil
+        hudRows[i].isComplete = false
         hudRows[i]:Hide()
     end
 
@@ -3273,6 +3519,7 @@ SafeRegisterReagentEvent("LOOT_CLOSED")
 SafeRegisterReagentEvent("BAG_UPDATE")
 SafeRegisterReagentEvent("BAG_UPDATE_DELAYED")
 SafeRegisterReagentEvent("BAG_CONTAINER_UPDATE")
+SafeRegisterReagentEvent("CHAT_MSG_LOOT")
 SafeRegisterReagentEvent("BAG_SLOT_FLAGS_UPDATED")
 SafeRegisterReagentEvent("BAG_OPEN")
 SafeRegisterReagentEvent("BAG_CLOSED")
@@ -3318,8 +3565,15 @@ evFrame:SetScript("OnEvent", function(_, event, arg1)
         ScheduleBagShowRefreshes()
     elseif event == "BAG_UPDATE" or event == "BAG_CONTAINER_UPDATE" or event == "BAG_SLOT_FLAGS_UPDATED" or event == "UI_SCALE_CHANGED" or event == "DISPLAY_SIZE_CHANGED" or event == "CINEMATIC_STOP" or event == "UNIT_EXITED_VEHICLE" or event == "PLAYER_REGEN_ENABLED" then
         FP:RefreshBackpackFreeSlots()
+        if FP.RefreshTrackedReagentsHUD then
+            FP:RefreshTrackedReagentsHUD()
+        end
         if IsAnyBagFrameVisible() then
             ScheduleBagShowRefreshes()
+        end
+    elseif event == "CHAT_MSG_LOOT" then
+        if FP.RefreshTrackedReagentsHUD then
+            FP:RefreshTrackedReagentsHUD()
         end
     elseif event == "TRADE_SKILL_SHOW" or event == "TRADE_SKILL_LIST_UPDATE" or event == "TRADE_SKILL_DATA_SOURCE_CHANGED" or event == "NEW_RECIPE_LEARNED"
         or event == "CRAFT_SHOW" or event == "CRAFT_UPDATE" then

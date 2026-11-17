@@ -554,7 +554,7 @@ local function HandleSlashCommand(input)
         if FP.ToggleProfessionAdvisor then
             FP:ToggleProfessionAdvisor()
         end
-    elseif cmd == "track" or cmd == "reagent" then
+    elseif cmd == "track" or cmd == "reagent" or cmd == "target" or cmd == "goal" or cmd == "desiderata" then
         if FP.SetTrackReagentFromInput then
             FP:SetTrackReagentFromInput(rest)
         else
