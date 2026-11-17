@@ -27,6 +27,10 @@ local function SafeCall(fn, ...)
     return nil
 end
 
+local function IsSafeNum(v)
+    return type(v) == "number" and v == v and v > -1e9 and v < 1e9
+end
+
 local function IsHighlightsEnabled()
     if NexusKitDB and NexusKitDB.settings and NexusKitDB.settings.enableHighlights == false then
         return false
@@ -49,40 +53,64 @@ local readyQuestIds = {}
 local incompleteQuestTitles = {}
 local incompleteQuestIds = {}
 local readyNpcNames = {}
-local finishedObjTexts = {}
-local unfinishedObjTexts = {}
+local finishedObjectives = {}
+local unfinishedObjectives = {}
+local runtimeMobRoleCache = {}
 local hasAnyIncompleteQuest = false
 local stepAction = nil
 local stepNpcLower = nil
 
-local function UnitMatchesObjectiveText(lowerName, objText)
-    if not Plain(lowerName) or lowerName == "" or not Plain(objText) or objText == "" then
+local STOP_WORDS = {
+    ["slain"] = true, ["killed"] = true, ["kill"] = true,
+    ["collected"] = true, ["gather"] = true, ["destroy"] = true,
+    ["ucciso"] = true, ["uccisi"] = true, ["raccogli"] = true, ["trova"] = true,
+    ["level"] = true, ["the"] = true, ["and"] = true, ["for"] = true,
+    ["with"] = true, ["from"] = true,
+}
+
+local function UnitMatchesObjective(lowerName, obj)
+    if not Plain(lowerName) or lowerName == "" or not obj or not Plain(obj.text) then
         return false
     end
-    if objText:find(lowerName, 1, true) then
+    local objLower = obj.text
+
+    -- 1. Exact substring match: e.g. "kobold vermin" in "kobold vermin slain: 0/10"
+    if objLower:find(lowerName, 1, true) then
         return true
     end
-    local matchedWords = 0
+
+    -- 2. Word & stem matching
+    local matchCount = 0
+    local totalSigWords = 0
     for word in lowerName:gmatch("%S+") do
-        if #word >= 4 then
+        if #word >= 4 and not STOP_WORDS[word] then
+            totalSigWords = totalSigWords + 1
             local stem = (#word >= 6) and word:sub(1, #word - 2) or word:sub(1, math.max(3, #word - 1))
-            if not objText:find(stem, 1, true) then
-                return false
+            if objLower:find(stem, 1, true) then
+                matchCount = matchCount + 1
             end
-            matchedWords = matchedWords + 1
         end
     end
-    return matchedWords > 0
-end
 
-local function UnitMatchesObjList(lowerName, list)
-    if not Plain(lowerName) or lowerName == "" or type(list) ~= "table" then return false end
-    for _, objText in ipairs(list) do
-        if UnitMatchesObjectiveText(lowerName, objText) then
+    if totalSigWords > 0 and matchCount > 0 then
+        if matchCount >= totalSigWords or (totalSigWords >= 2 and matchCount >= 1 and #lowerName >= 6) then
             return true
         end
     end
+
     return false
+end
+
+local function MatchesObjTable(lowerName, list)
+    if not Plain(lowerName) or lowerName == "" or type(list) ~= "table" then
+        return false, nil
+    end
+    for _, item in ipairs(list) do
+        if UnitMatchesObjective(lowerName, item) then
+            return true, item.role
+        end
+    end
+    return false, nil
 end
 
 local function RebuildQuestLookup()
@@ -91,8 +119,9 @@ local function RebuildQuestLookup()
     for k in pairs(incompleteQuestTitles) do incompleteQuestTitles[k] = nil end
     for k in pairs(incompleteQuestIds) do incompleteQuestIds[k] = nil end
     for k in pairs(readyNpcNames) do readyNpcNames[k] = nil end
-    for i = #finishedObjTexts, 1, -1 do finishedObjTexts[i] = nil end
-    for i = #unfinishedObjTexts, 1, -1 do unfinishedObjTexts[i] = nil end
+    for i = #finishedObjectives, 1, -1 do finishedObjectives[i] = nil end
+    for i = #unfinishedObjectives, 1, -1 do unfinishedObjectives[i] = nil end
+    for k in pairs(runtimeMobRoleCache) do runtimeMobRoleCache[k] = nil end
     hasAnyIncompleteQuest = false
 
     stepAction = nil
@@ -108,98 +137,114 @@ local function RebuildQuestLookup()
     end
 
     local readyIds = {}
-    if C_QuestLog and C_QuestLog.GetNumQuestLogEntries and C_QuestLog.GetInfo then
-        local count = SafeCall(C_QuestLog.GetNumQuestLogEntries) or 0
-        for i = 1, count do
-            local info = SafeCall(C_QuestLog.GetInfo, i)
-            if type(info) == "table" and not info.isHeader and info.questID and info.questID > 0 then
-                local qid = info.questID
-                local isReady
-                if FP.IsQuestReadyForTurnIn then
-                    isReady = FP:IsQuestReadyForTurnIn(qid, info.readyForTurnIn == true)
-                else
-                    isReady = (info.readyForTurnIn == true)
-                    if not isReady and C_QuestLog.ReadyForTurnIn then
-                        isReady = SafeCall(C_QuestLog.ReadyForTurnIn, qid) == true
-                    end
-                    if not isReady and C_QuestLog.IsComplete and not C_QuestLog.ReadyForTurnIn then
-                        isReady = SafeCall(C_QuestLog.IsComplete, qid) == true
-                    end
-                end
-                local titleKey = CleanTitle(info.title)
-                if titleKey ~= "" and #titleKey >= 3 then
-                    if isReady then
-                        readyQuestTitles[titleKey] = true
-                    else
-                        incompleteQuestTitles[titleKey] = true
-                    end
-                end
-                if isReady then
-                    readyIds[qid] = true
-                    readyQuestIds[qid] = true
-                else
-                    incompleteQuestIds[qid] = true
-                    hasAnyIncompleteQuest = true
-                end
 
-                if C_QuestLog.GetQuestObjectives then
-                    local objs = SafeCall(C_QuestLog.GetQuestObjectives, qid)
-                    if type(objs) == "table" then
-                        for _, obj in ipairs(objs) do
-                            if type(obj) == "table" and Plain(obj.text) and obj.text ~= "" then
-                                local objLower = string.lower(obj.text)
-                                local objDone = isReady or (obj.finished == true)
-                                    or (type(obj.numRequired) == "number" and obj.numRequired > 0
-                                        and type(obj.numFulfilled) == "number" and obj.numFulfilled >= obj.numRequired)
-                                if objDone then
-                                    finishedObjTexts[#finishedObjTexts + 1] = objLower
-                                else
-                                    unfinishedObjTexts[#unfinishedObjTexts + 1] = objLower
-                                end
-                            end
+    -- Scan quest log: supports both C_QuestLog and classic GetNumQuestLogEntries
+    local numEntries = (C_QuestLog and C_QuestLog.GetNumQuestLogEntries and SafeCall(C_QuestLog.GetNumQuestLogEntries))
+        or (GetNumQuestLogEntries and SafeCall(GetNumQuestLogEntries)) or 0
+
+    for i = 1, numEntries do
+        local qid, title, isHeader, isComplete, readyForTurnIn
+        if C_QuestLog and C_QuestLog.GetInfo then
+            local info = SafeCall(C_QuestLog.GetInfo, i)
+            if type(info) == "table" then
+                qid = info.questID
+                title = info.title
+                isHeader = info.isHeader
+                readyForTurnIn = (info.readyForTurnIn == true)
+                if not readyForTurnIn and C_QuestLog.ReadyForTurnIn and qid and qid > 0 then
+                    readyForTurnIn = SafeCall(C_QuestLog.ReadyForTurnIn, qid) == true
+                end
+                if not readyForTurnIn and C_QuestLog.IsComplete and not C_QuestLog.ReadyForTurnIn and qid and qid > 0 then
+                    readyForTurnIn = SafeCall(C_QuestLog.IsComplete, qid) == true
+                end
+            end
+        end
+        if not qid and GetQuestLogTitle then
+            local qTitle, _, _, qIsHeader, _, qIsComplete, _, qQuestId = SafeCall(GetQuestLogTitle, i)
+            title = qTitle
+            isHeader = qIsHeader
+            qid = qQuestId
+            isComplete = qIsComplete
+        end
+
+        if not isHeader and qid and qid > 0 then
+            local isReady
+            if FP.IsQuestReadyForTurnIn then
+                isReady = FP:IsQuestReadyForTurnIn(qid, readyForTurnIn or isComplete == 1 or isComplete == true)
+            else
+                isReady = (readyForTurnIn == true or isComplete == 1 or isComplete == true)
+            end
+
+            local titleKey = CleanTitle(title)
+            if titleKey ~= "" and #titleKey >= 3 then
+                if isReady then
+                    readyQuestTitles[titleKey] = true
+                else
+                    incompleteQuestTitles[titleKey] = true
+                end
+            end
+
+            if isReady then
+                readyIds[qid] = true
+                readyQuestIds[qid] = true
+            else
+                incompleteQuestIds[qid] = true
+                hasAnyIncompleteQuest = true
+            end
+
+            -- Objectives scanning: try C_QuestLog.GetQuestObjectives, fallback to GetQuestLogLeaderBoard
+            local objs = nil
+            if C_QuestLog and C_QuestLog.GetQuestObjectives then
+                objs = SafeCall(C_QuestLog.GetQuestObjectives, qid)
+            end
+
+            local hasModernObjs = type(objs) == "table" and #objs > 0
+            if hasModernObjs then
+                for _, obj in ipairs(objs) do
+                    if type(obj) == "table" and Plain(obj.text) and obj.text ~= "" then
+                        local objLower = string.lower(obj.text)
+                        local objDone = isReady or (obj.finished == true)
+                            or (type(obj.numRequired) == "number" and obj.numRequired > 0
+                                and type(obj.numFulfilled) == "number" and obj.numFulfilled >= obj.numRequired)
+                        local role = (obj.type == "item" and "LOOT") or "KILL"
+                        if objDone then
+                            finishedObjectives[#finishedObjectives + 1] = {
+                                questId = qid,
+                                text = objLower,
+                                role = role,
+                            }
+                        else
+                            unfinishedObjectives[#unfinishedObjectives + 1] = {
+                                questId = qid,
+                                text = objLower,
+                                role = role,
+                            }
                         end
                     end
                 end
             end
-        end
-    elseif GetNumQuestLogEntries and GetQuestLogTitle then
-        local count = GetNumQuestLogEntries() or 0
-        for i = 1, count do
-            local title, _, _, isHeader, _, isComplete, _, qid = GetQuestLogTitle(i)
-            if not isHeader and qid and qid > 0 then
-                local isReady
-                if FP.IsQuestReadyForTurnIn then
-                    isReady = FP:IsQuestReadyForTurnIn(qid, isComplete == 1 or isComplete == true)
-                else
-                    isReady = (isComplete == 1 or isComplete == true)
-                end
-                local titleKey = CleanTitle(title)
-                if titleKey ~= "" and #titleKey >= 3 then
-                    if isReady then
-                        readyQuestTitles[titleKey] = true
-                    else
-                        incompleteQuestTitles[titleKey] = true
-                    end
-                end
-                if isReady then
-                    readyIds[qid] = true
-                    readyQuestIds[qid] = true
-                else
-                    incompleteQuestIds[qid] = true
-                    hasAnyIncompleteQuest = true
-                end
 
-                if GetNumQuestLeaderBoards and GetQuestLogLeaderBoard then
-                    local numLeader = GetNumQuestLeaderBoards(i) or 0
-                    for j = 1, numLeader do
-                        local desc, _, done = GetQuestLogLeaderBoard(j, i)
-                        if Plain(desc) and desc ~= "" then
-                            local descLower = string.lower(desc)
-                            if isReady or done == true or done == 1 then
-                                finishedObjTexts[#finishedObjTexts + 1] = descLower
-                            else
-                                unfinishedObjTexts[#unfinishedObjTexts + 1] = descLower
-                            end
+            -- Classic leaderboards fallback (or when C_QuestLog returns empty objectives)
+            if not hasModernObjs and GetNumQuestLeaderBoards and GetQuestLogLeaderBoard then
+                local numLeader = SafeCall(GetNumQuestLeaderBoards, i) or 0
+                for j = 1, numLeader do
+                    local desc, objType, done = SafeCall(GetQuestLogLeaderBoard, j, i)
+                    if Plain(desc) and desc ~= "" then
+                        local descLower = string.lower(desc)
+                        local objDone = isReady or done == true or done == 1
+                        local role = (objType == "item" and "LOOT") or "KILL"
+                        if objDone then
+                            finishedObjectives[#finishedObjectives + 1] = {
+                                questId = qid,
+                                text = descLower,
+                                role = role,
+                            }
+                        else
+                            unfinishedObjectives[#unfinishedObjectives + 1] = {
+                                questId = qid,
+                                text = descLower,
+                                role = role,
+                            }
                         end
                     end
                 end
@@ -221,9 +266,19 @@ local function RebuildQuestLookup()
 end
 
 -------------------------------------------------------------------------------
--- Unit classification (TURNIN / ACCEPT / STEP_NPC / FRIENDLY_QUEST / OBJECTIVE)
+-- Unit classification (KILL / LOOT / TURNIN / ACCEPT / STEP_NPC / FRIENDLY_QUEST / OBJECTIVE)
 -------------------------------------------------------------------------------
 local ROLE_STYLES = {
+    KILL = {
+        icon = "Interface\\Icons\\Ability_DualWield",
+        r = 1.0, g = 0.22, b = 0.22,
+        tagKey = "HIGHLIGHT_KILL_TAG",
+    },
+    LOOT = {
+        icon = "Interface\\Icons\\INV_Misc_Bag_08",
+        r = 1.0, g = 0.70, b = 0.12,
+        tagKey = "HIGHLIGHT_LOOT_TAG",
+    },
     TURNIN = {
         icon = "Interface\\GossipFrame\\ActiveQuestIcon",
         r = 1.0, g = 0.84, b = 0.12,
@@ -251,84 +306,129 @@ local ROLE_STYLES = {
     },
 }
 
+local scanTooltip
+local function GetScanTooltip()
+    if not scanTooltip then
+        scanTooltip = CreateFrame("GameTooltip", "NexusKitScanTooltip", UIParent, "GameTooltipTemplate")
+        scanTooltip:SetOwner(WorldFrame, "ANCHOR_NONE")
+    end
+    return scanTooltip
+end
+
 local function InspectUnitTooltip(unit, lowerName)
-    if not (C_TooltipInfo and C_TooltipInfo.GetUnit) then return false, false, false end
-    local data = SafeCall(C_TooltipInfo.GetUnit, unit)
-    if type(data) ~= "table" or type(data.lines) ~= "table" then
-        return false, false, false
+    if not Plain(unit) then return false, false, false, nil end
+
+    local lines = {}
+    if C_TooltipInfo and C_TooltipInfo.GetUnit then
+        local data = SafeCall(C_TooltipInfo.GetUnit, unit)
+        if type(data) == "table" and type(data.lines) == "table" and #data.lines > 0 then
+            for lineIdx, line in ipairs(data.lines) do
+                if lineIdx > 1 and type(line) == "table" and Plain(line.leftText) and line.leftText ~= "" then
+                    lines[#lines + 1] = {
+                        text = line.leftText,
+                        lineType = line.type,
+                        lineQid = (type(line.id) == "number" and line.id > 0) and line.id or nil,
+                        completed = (line.completed == true),
+                    }
+                end
+            end
+        end
+    end
+
+    if #lines == 0 then
+        local tip = GetScanTooltip()
+        tip:SetOwner(WorldFrame, "ANCHOR_NONE")
+        tip:ClearLines()
+        local ok = SafeCall(tip.SetUnit, tip, unit)
+        if ok then
+            local numLines = tip:NumLines() or 0
+            for i = 2, numLines do
+                local fontString = _G["NexusKitScanTooltipTextLeft" .. i]
+                local txt = fontString and fontString:GetText()
+                if Plain(txt) and txt ~= "" then
+                    lines[#lines + 1] = {
+                        text = txt,
+                    }
+                end
+            end
+        end
+    end
+
+    if #lines == 0 then
+        return false, false, false, nil
     end
 
     local hasReadyTitle = false
     local hasIncompleteObj = false
     local sawIncompleteTitle = false
     local sawObjLine = false
+    local detectedRole = nil
+
     local enumQuestTitle = Enum and Enum.TooltipDataLineType and Enum.TooltipDataLineType.QuestTitle
-    local enumQuestObj = Enum and Enum.TooltipDataLineType and Enum.TooltipDataLineType.QuestObjective
 
-    for lineIdx, line in ipairs(data.lines) do
-        if lineIdx > 1 and type(line) == "table" then
-            local lineType = line.type
-            local lineQid = (type(line.id) == "number" and line.id > 0) and line.id or nil
-            local isQuestTitleLine = (enumQuestTitle ~= nil) and (lineType == enumQuestTitle)
-            local isQuestObjLine = (enumQuestObj ~= nil) and (lineType == enumQuestObj)
+    for _, line in ipairs(lines) do
+        local raw = line.text
+        local norm = CleanTitle(raw)
+        local lineQid = line.lineQid
+        local lineType = line.lineType
+        local isQuestTitleLine = (enumQuestTitle ~= nil) and (lineType == enumQuestTitle)
 
-            -- Only treat explicit quest tooltip lines as quest turn-in / objective matches;
-            -- never match generic NPC faction, zone, or title lines (e.g. "Stormwind", "Westfall").
-            if lineQid and readyQuestIds[lineQid] and (isQuestTitleLine or not enumQuestTitle) then
-                hasReadyTitle = true
-            elseif lineQid and incompleteQuestIds[lineQid] and (isQuestTitleLine or not enumQuestObj) then
-                sawIncompleteTitle = true
-            end
+        if lineQid and readyQuestIds[lineQid] then
+            hasReadyTitle = true
+        elseif lineQid and incompleteQuestIds[lineQid] then
+            sawIncompleteTitle = true
+        end
 
-            if Plain(line.leftText) then
-                local raw = line.leftText
-                local norm = CleanTitle(raw)
+        if readyQuestTitles[norm] then
+            hasReadyTitle = true
+        elseif incompleteQuestTitles[norm] then
+            sawIncompleteTitle = true
+        end
 
-                if isQuestTitleLine then
-                    if readyQuestTitles[norm] or (lineQid and readyQuestIds[lineQid]) then
-                        hasReadyTitle = true
-                    elseif incompleteQuestTitles[norm] or (lineQid and incompleteQuestIds[lineQid]) then
-                        sawIncompleteTitle = true
-                    end
-                elseif isQuestObjLine then
-                    sawObjLine = true
-                    local lineCompleted = (line.completed == true)
-                    local cur, max = raw:match("(%d+)%s*/%s*(%d+)")
-                    if cur and max then
-                        local nCur, nMax = tonumber(cur), tonumber(max)
-                        if nCur and nMax then
-                            if nCur < nMax and not lineCompleted then
-                                hasIncompleteObj = true
-                            end
-                        elseif not lineCompleted then
-                            hasIncompleteObj = true
-                        end
-                    elseif not lineCompleted then
-                        hasIncompleteObj = true
-                    end
-                elseif not enumQuestObj and lineIdx >= 3 then
-                    local cur, max = raw:match("(%d+)%s*/%s*(%d+)")
-                    if cur and max then
-                        sawObjLine = true
-                        local nCur, nMax = tonumber(cur), tonumber(max)
-                        if nCur and nMax and nCur < nMax and line.completed ~= true then
-                            hasIncompleteObj = true
+        local cur, max = raw:match("(%d+)%s*/%s*(%d+)")
+        local isCompleteText = raw:find("%(Complete%)") or raw:find("%(Completata%)") or raw:find("%(Fertig%)") or raw:find("%(Terminée%)")
+        if cur and max then
+            sawObjLine = true
+            local nCur, nMax = tonumber(cur), tonumber(max)
+            if nCur and nMax and nCur < nMax and not line.completed and not isCompleteText then
+                hasIncompleteObj = true
+                local rawLower = string.lower(raw)
+                local isKill = rawLower:find("slain") or rawLower:find("uccis") or rawLower:find("kill") or rawLower:find("töt")
+                local isLoot = rawLower:find("meat") or rawLower:find("pelt") or rawLower:find("fin") or rawLower:find("bone")
+                    or rawLower:find("tooth") or rawLower:find("scale") or rawLower:find("feather") or rawLower:find("blood")
+                    or rawLower:find("drop") or rawLower:find("collect") or rawLower:find("gather") or rawLower:find("carne")
+                    or rawLower:find("pelle") or rawLower:find("pinna") or rawLower:find("dente") or rawLower:find("raccogl")
+
+                if isKill then
+                    detectedRole = "KILL"
+                elseif isLoot then
+                    detectedRole = "LOOT"
+                else
+                    for _, uo in ipairs(unfinishedObjectives) do
+                        if uo.text and rawLower:find(uo.text, 1, true) then
+                            detectedRole = uo.role
+                            break
                         end
                     end
+                    detectedRole = detectedRole or "KILL"
                 end
             end
+        elseif isCompleteText then
+            sawObjLine = true
         end
     end
 
-    -- Fallback when tooltip shows only an active incomplete QuestTitle line without individual objective counters
     if not hasIncompleteObj and sawIncompleteTitle and not sawObjLine and not hasReadyTitle then
-        if not (lowerName and UnitMatchesObjList(lowerName, finishedObjTexts) and not UnitMatchesObjList(lowerName, unfinishedObjTexts)) then
-            hasIncompleteObj = true
-        end
+        hasIncompleteObj = true
+        detectedRole = detectedRole or "KILL"
+    end
+
+    if hasIncompleteObj and lowerName and detectedRole then
+        runtimeMobRoleCache[lowerName] = detectedRole
     end
 
     local hasCompletedOnlyObj = (not hasIncompleteObj) and (sawObjLine or (hasReadyTitle and not sawIncompleteTitle))
-    return hasReadyTitle, hasIncompleteObj, hasCompletedOnlyObj
+    return hasReadyTitle, hasIncompleteObj, hasCompletedOnlyObj, detectedRole
 end
 
 local function ClassifyUnit(unit)
@@ -356,28 +456,57 @@ local function ClassifyUnit(unit)
         return "TURNIN"
     end
 
-    -- 3. Active quest API + Tooltip inspection
-    local related = (type(UnitIsRelatedToActiveQuest) == "function")
-        and (SafeCall(UnitIsRelatedToActiveQuest, unit) == true)
-    local hasReadyTitle, hasIncompleteObj, hasCompletedOnlyObj = InspectUnitTooltip(unit, lowerName)
+    -- 3. Tooltip inspection (both C_TooltipInfo and GameTooltip scan)
+    local hasReadyTitle, hasIncompleteObj, hasCompletedOnlyObj, tipRole = InspectUnitTooltip(unit, lowerName)
 
     if not canAttack then
         if hasReadyTitle then
             return "TURNIN"
-        elseif related then
-            return "FRIENDLY_QUEST"
+        elseif hasIncompleteObj then
+            return "OBJECTIVE"
         end
     else
+        -- Attackable unit (kill / loot quest target)
         if hasIncompleteObj then
-            return "OBJECTIVE"
+            return tipRole or "KILL"
         elseif hasCompletedOnlyObj then
             return nil
-        elseif related and hasAnyIncompleteQuest then
-            if lowerName and UnitMatchesObjList(lowerName, finishedObjTexts)
-                and not UnitMatchesObjList(lowerName, unfinishedObjTexts) then
+        end
+
+        -- Check runtime cache
+        if lowerName and runtimeMobRoleCache[lowerName] then
+            return runtimeMobRoleCache[lowerName]
+        end
+
+        -- Direct Quest Log Objective matching
+        if lowerName and #unfinishedObjectives > 0 then
+            local isFinished = MatchesObjTable(lowerName, finishedObjectives)
+            local isUnfinished, matchedRole = MatchesObjTable(lowerName, unfinishedObjectives)
+            if isUnfinished then
+                return matchedRole or "KILL"
+            elseif isFinished then
                 return nil
             end
-            return "OBJECTIVE"
+        end
+
+        -- Active Route Step matching (e.g. "Kill 10 Kobold Vermin", "Kill Timber Wolves for 8 Tough Wolf Meat")
+        if FP.activeRoute and FP.currentStepIndex and FP.activeRoute.steps and lowerName then
+            local step = FP.activeRoute.steps[FP.currentStepIndex]
+            if step and step.action == "COMPLETE" and Plain(step.text) then
+                local stepLower = string.lower(step.text)
+                local dummyObj = { text = stepLower }
+                if UnitMatchesObjective(lowerName, dummyObj) then
+                    local isKill = stepLower:find("kill") or stepLower:find("slay") or stepLower:find("uccidi")
+                    return isKill and "KILL" or "LOOT"
+                end
+            end
+        end
+
+        -- Fallback for modern engine UnitIsRelatedToActiveQuest
+        local related = (type(UnitIsRelatedToActiveQuest) == "function")
+            and (SafeCall(UnitIsRelatedToActiveQuest, unit) == true)
+        if related and hasAnyIncompleteQuest then
+            return "KILL"
         end
     end
 
@@ -436,6 +565,14 @@ local function CreatePulsingBadge(parent, size, showTag)
     return badge
 end
 
+local defaultTags = {
+    HIGHLIGHT_KILL_TAG = "Uccidi!",
+    HIGHLIGHT_LOOT_TAG = "Raccogli!",
+    HIGHLIGHT_TURNIN_TAG = "Consegna!",
+    HIGHLIGHT_ACCEPT_TAG = "Accetta!",
+    HIGHLIGHT_OBJECTIVE_TAG = "Obiettivo",
+}
+
 local function ApplyBadgeStyle(badge, role, showTextTag)
     local style = ROLE_STYLES[role]
     if not style then
@@ -456,7 +593,7 @@ local function ApplyBadgeStyle(badge, role, showTextTag)
     if badge.tag then
         local L = FP.L or {}
         if showTextTag and style.tagKey then
-            badge.tag:SetText(L[style.tagKey] or "")
+            badge.tag:SetText(L[style.tagKey] or defaultTags[style.tagKey] or "")
             badge.tag:SetTextColor(style.r, style.g, style.b, 1)
             badge.tag:Show()
         else
@@ -611,9 +748,8 @@ local function UpdatePlateForUnit(unit)
     badge.hostPlate = plate
     badge.unit = unit
 
-    local strata = (plate.GetFrameStrata and plate:GetFrameStrata()) or "BACKGROUND"
-    badge:SetFrameStrata(strata)
-    badge:SetFrameLevel(math.max(10, (plate.GetFrameLevel and plate:GetFrameLevel() or 2) + 8))
+    badge:SetFrameStrata("HIGH")
+    badge:SetFrameLevel(math.max(50, (plate.GetFrameLevel and plate:GetFrameLevel() or 2) + 20))
 
     if not RepositionPlateBadge(badge, plate, unit) then
         HidePlateBadge(plate)
@@ -725,6 +861,7 @@ end
 
 local eventFrame = CreateFrame("Frame")
 SafeRegister(eventFrame, "PLAYER_LOGIN")
+SafeRegister(eventFrame, "PLAYER_ENTERING_WORLD")
 SafeRegister(eventFrame, "QUEST_LOG_UPDATE")
 SafeRegister(eventFrame, "UNIT_QUEST_LOG_CHANGED")
 SafeRegister(eventFrame, "QUEST_TURNED_IN")
@@ -750,6 +887,8 @@ eventFrame:SetScript("OnEvent", function(_, event, unit)
         end
     elseif event == "PLAYER_TARGET_CHANGED" then
         pcall(UpdateTargetBadge)
+        pcall(InspectInteractiveUnit, "target")
+        pcall(UpdateAllNameplates)
     elseif event == "PLAYER_REGEN_ENABLED" then
         pcall(function() FP:RefreshHighlights() end)
     elseif event == "PLAYER_SOFT_INTERACT_CHANGED" then
