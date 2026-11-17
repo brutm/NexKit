@@ -382,24 +382,7 @@ local function InspectUnitTooltip(unit, lowerName)
     end
 
     local lines = {}
-    local tip = GetScanTooltip()
-    tip:SetOwner(WorldFrame, "ANCHOR_NONE")
-    tip:ClearLines()
-    local ok = SafeCall(tip.SetUnit, tip, unit)
-    if ok then
-        local numLines = tip:NumLines() or 0
-        for i = 2, numLines do
-            local fontString = _G["NexusKitScanTooltipTextLeft" .. i]
-            local txt = fontString and fontString:GetText()
-            if Plain(txt) and txt ~= "" then
-                lines[#lines + 1] = {
-                    text = txt,
-                }
-            end
-        end
-    end
-
-    if #lines == 0 and C_TooltipInfo and C_TooltipInfo.GetUnit then
+    if C_TooltipInfo and C_TooltipInfo.GetUnit then
         local data = SafeCall(C_TooltipInfo.GetUnit, unit)
         if type(data) == "table" and type(data.lines) == "table" and #data.lines > 0 then
             for lineIdx, line in ipairs(data.lines) do

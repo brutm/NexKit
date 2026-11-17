@@ -514,21 +514,61 @@ function FP:SetTrackReagentFromInput(input)
         return
     end
 
-    -- Lookup itemID by name in cached skill-up reagents or player bags
+    -- Lookup itemID by name in special class reagents, cached skill-up reagents, or player bags
     local foundID = nil
     local lowRaw = NormalizeName(raw)
-    local byProf = NexusKitCharDB and NexusKitCharDB.profSkillReagentsByProf or {}
-    for _, tbl in pairs(byProf) do
-        if type(tbl) == "table" then
-            for _, e in pairs(tbl) do
-                if type(e) == "table" and NormalizeName(e.name) == lowRaw and IsSafeNum(e.itemID) then
-                    foundID = e.itemID
-                    raw = e.name
+
+    local SPECIAL_NAMES = {
+        ["light feather"] = 17056, ["piuma leggera"] = 17056, ["feather"] = 17056, ["piuma"] = 17056,
+        ["shiny fish scales"] = 17057, ["scaglie di pesce lucenti"] = 17057,
+        ["fish oil"] = 17058, ["olio di pesce"] = 17058,
+        ["arcane powder"] = 17020, ["polvere arcana"] = 17020,
+        ["rune of teleportation"] = 17031, ["runa del teletrasporto"] = 17031,
+        ["rune of portals"] = 17032, ["runa dei portali"] = 17032,
+        ["wild berries"] = 17028, ["bacche selvatiche"] = 17028,
+        ["wild thornroot"] = 17029, ["radice di spina selvatica"] = 17029,
+        ["symbol of divinity"] = 17033, ["simbolo della divinita"] = 17033,
+        ["symbol of kings"] = 21177, ["simbolo dei re"] = 21177,
+        ["sacred candle"] = 17026, ["candela consacrata"] = 17026,
+        ["holy candle"] = 17055, ["candela benedetta"] = 17055,
+        ["soul shard"] = 6265, ["frammento d'anima"] = 6265,
+        ["flash powder"] = 5140, ["polvere accecante"] = 5140,
+    }
+    if lowRaw and SPECIAL_NAMES[lowRaw] then
+        foundID = SPECIAL_NAMES[lowRaw]
+    end
+
+    if not foundID then
+        local byProf = NexusKitCharDB and NexusKitCharDB.profSkillReagentsByProf or {}
+        for _, tbl in pairs(byProf) do
+            if type(tbl) == "table" then
+                for _, e in pairs(tbl) do
+                    if type(e) == "table" and NormalizeName(e.name) == lowRaw and IsSafeNum(e.itemID) then
+                        foundID = e.itemID
+                        raw = e.name
+                        break
+                    end
+                end
+            end
+            if foundID then break end
+        end
+    end
+
+    -- Check items currently in player bags
+    if not foundID and ReadContainerSlotItem then
+        for bag = 0, 4 do
+            local numSlots = (C_Container and C_Container.GetContainerNumSlots and C_Container.GetContainerNumSlots(bag))
+                or (GetContainerNumSlots and GetContainerNumSlots(bag)) or 0
+            for slot = 1, numSlots do
+                local sID, sLink, sName = ReadContainerSlotItem(bag, slot)
+                if sID and sName and (NormalizeName(sName) == lowRaw or sName:lower():find(lowRaw, 1, true)) then
+                    foundID = sID
+                    raw = sName
                     break
                 end
             end
+            if foundID then break end
         end
-        if foundID then break end
     end
 
     self:ToggleTrackReagent(foundID, raw, nil, nil)
@@ -1944,6 +1984,35 @@ local BAG_FALLBACK_REAGENT_IDS = {
     [7909] = true,  -- Citrine
     [7910] = true,  -- Aquamarine
     [7972] = true,  -- Star Ruby
+
+    -- Class & Spell Reagents (Mage, Priest, Shaman, Druid, Paladin, Warlock, Rogue, etc.)
+    [17056] = true, -- Light Feather (Piuma Leggera - Mage Slow Fall, Priest Levitate)
+    [17057] = true, -- Shiny Fish Scales (Scaglie di Pesce Lucenti - Shaman Water Walking)
+    [17058] = true, -- Fish Oil (Olio di Pesce - Shaman Water Breathing)
+    [17020] = true, -- Arcane Powder (Polvere Arcana - Mage Arcane Brilliance)
+    [17031] = true, -- Rune of Teleportation (Runa del Teletrasporto - Mage Portals)
+    [17032] = true, -- Rune of Portals (Runa dei Portali - Mage Portals)
+    [17028] = true, -- Wild Berries (Bacche Selvatiche - Druid Gift of the Wild)
+    [17029] = true, -- Wild Thornroot (Radice di Spina Selvatica - Druid Gift of the Wild)
+    [17033] = true, -- Symbol of Divinity (Simbolo della Divinità - Paladin Rebirth)
+    [21177] = true, -- Symbol of Kings (Simbolo dei Re - Paladin Greater Blessings)
+    [17026] = true, -- Sacred Candle (Candela Consacrata - Priest Prayer of Fortitude)
+    [17055] = true, -- Holy Candle (Candela Benedetta - Priest Prayer of Shadow Protection)
+    [5565]  = true, -- Soul Shard (Frammento d'Anima - Warlock)
+    [6265]  = true, -- Soul Shard (Frammento d'Anima - Warlock)
+    [16583] = true, -- Demonic Figurine (Statuetta Demoniaca - Warlock Doomguard)
+    [5140]  = true, -- Flash Powder (Polvere Accecante - Rogue Vanish)
+    [5139]  = true, -- Dust of Deterioration (Polvere di Deterioramento - Rogue Poisons)
+    [8924]  = true, -- Dust of Decay (Polvere del Decadimento - Rogue Poisons)
+    [8923]  = true, -- Essence of Pain (Essenza del Dolore - Rogue Poisons)
+    [4470]  = true, -- Simple Wood (Legna Semplice - Campfire)
+    [4471]  = true, -- Flint and Tinder (Pietra Focaia ed Esca - Campfire)
+    [5060]  = true, -- Linen Bandage (Bende di Lino)
+    [3530]  = true, -- Heavy Linen Bandage (Bende di Lino Pesanti)
+    [3531]  = true, -- Wool Bandage (Bende di Lana)
+    [6450]  = true, -- Silk Bandage (Bende di Seta)
+    [8544]  = true, -- Mageweave Bandage (Bende di Magitessuto)
+    [14529] = true, -- Runecloth Bandage (Bende di Runatessuto)
 }
 
 local function IsBagTrackableReagent(itemID, link, name, isTracked, isKeep, isSkill, quality)
