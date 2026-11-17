@@ -146,6 +146,13 @@ function FP:OpenMinimapLauncherMenu(anchorBtn)
             end,
         },
         {
+            text = L["MINIMAP_MENU_TODO"] or "To-Do List / Promemoria",
+            checked = IsFrameVisible("NexusKitTodoFrame"),
+            func = function()
+                if FP.ToggleTodoList then FP:ToggleTodoList() end
+            end,
+        },
+        {
             text = L["MINIMAP_MENU_REAGENTS"] or "Tracked Reagents HUD",
             checked = settings.profShowTrackedHud ~= false,
             func = ToggleTrackedHudSetting,

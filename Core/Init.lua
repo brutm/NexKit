@@ -571,6 +571,28 @@ local function HandleSlashCommand(input)
         if FP.ToggleBuffAdvisor then
             FP:ToggleBuffAdvisor()
         end
+    elseif cmd == "todo" or cmd == "task" or cmd == "tasks" or cmd == "appunti" or cmd == "note" then
+        if FP.ToggleTodoList then
+            if rest == "" then
+                FP:ToggleTodoList()
+            elseif rest:lower() == "hud" then
+                NexusKitDB.settings.showTodoHud = not (NexusKitDB.settings.showTodoHud == true)
+                if FP.RefreshTodoHUD then FP:RefreshTodoHUD() end
+                local statusStr = NexusKitDB.settings.showTodoHud and "|cff00ff00ATTIVATO|r" or "|cffff0000DISATTIVATO|r"
+                FP:Print("HUD Promemoria To-Do a schermo: " .. statusStr)
+            elseif rest:lower() == "clear" or rest:lower() == "clean" then
+                if FP.ClearDoneTodoTasks then FP:ClearDoneTodoTasks() end
+                FP:Print("Promemoria completati rimossi.")
+            else
+                local toAdd = rest:match("^[Aa][Dd][Dd]%s+(.+)$") or rest
+                if FP.AddTodoTask then
+                    FP:AddTodoTask(toAdd)
+                    FP:Print("|cff00ff96[To-Do]|r Promemoria aggiunto: " .. toAdd)
+                end
+            end
+        else
+            FP:Print(L["USAGE"])
+        end
     elseif cmd == "boss" or cmd == "dungeon" or cmd == "dungeons" or cmd == "tactics" then
         if FP.ToggleDungeonGuide then
             FP:ToggleDungeonGuide(rest)

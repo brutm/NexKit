@@ -38,6 +38,7 @@ UI/DungeonGuide.lua
 UI/QuestHelper.lua
 UI/QuestRewards.lua
 UI/TrackerFrame.lua
+UI/TodoList.lua
 UI/MinimapButton.lua
 UI/ImporterFrame.lua
 UI/WelcomeFrame.lua

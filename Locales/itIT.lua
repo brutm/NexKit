@@ -304,6 +304,21 @@ FP.Locales["itIT"] = {
     MINIMAP_MENU_REAGENTS   = "HUD Reagenti Tracciati",
     MINIMAP_MENU_COORDS     = "Coordinate in Tempo Reale",
     MINIMAP_MENU_SYNC       = "Sincronia Quest Log",
+    MINIMAP_MENU_TODO       = "To-Do List / Promemoria",
+
+    -- Modulo To-Do List Giocatore
+    TODO_TITLE              = "To-Do List & Obiettivi",
+    TODO_TAB_CHAR           = "Personaggio",
+    TODO_TAB_GLOBAL         = "Account",
+    TODO_FILTER_ALL         = "Tutte",
+    TODO_FILTER_ACTIVE      = "Da Fare",
+    TODO_FILTER_DONE        = "Fatte",
+    TODO_INPUT_HINT         = "Scrivi un promemoria e premi Invio...",
+    TODO_ADD                = "Aggiungi",
+    TODO_EMPTY              = "Nessun promemoria presente.\nScrivi un'attivita qui sopra per iniziare!",
+    TODO_SHOW_HUD           = "HUD a schermo",
+    TODO_CLEAR_DONE         = "Pulisci fatte",
+    TODO_HUD_TITLE          = "Promemoria To-Do",
 
     -- Temi Colore
     SETTING_UI_THEME        = "Tema colori testi",

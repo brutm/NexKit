@@ -314,6 +314,21 @@ local enUS = {
     MINIMAP_MENU_REAGENTS   = "Tracked Reagents HUD",
     MINIMAP_MENU_COORDS     = "Real-Time Coordinates",
     MINIMAP_MENU_SYNC       = "Quest Log Sync",
+    MINIMAP_MENU_TODO       = "To-Do List / Notes",
+
+    -- Player In-Game To-Do List Module
+    TODO_TITLE              = "To-Do List & Goals",
+    TODO_TAB_CHAR           = "Character",
+    TODO_TAB_GLOBAL         = "Account",
+    TODO_FILTER_ALL         = "All",
+    TODO_FILTER_ACTIVE      = "To-Do",
+    TODO_FILTER_DONE        = "Done",
+    TODO_INPUT_HINT         = "Type a task or note and press Enter...",
+    TODO_ADD                = "Add",
+    TODO_EMPTY              = "No tasks yet.\nType a task above to get started!",
+    TODO_SHOW_HUD           = "On-screen HUD",
+    TODO_CLEAR_DONE         = "Clear done",
+    TODO_HUD_TITLE          = "To-Do Notes",
 
     -- Color Themes
     SETTING_UI_THEME        = "Color theme",
