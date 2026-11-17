@@ -2,7 +2,7 @@
 
 > **The Ultimate All-in-One Leveling, Waypoints, Dungeon Tactics & Reagent Tracking Suite for WoW Forever**
 
-[![Version](https://img.shields.io/badge/Version-0.2-brightgreen.svg)](#)
+[![Version](https://img.shields.io/badge/Version-0.2.1-brightgreen.svg)](#)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-yellow.svg)](LICENSE)
 [![Interface](https://img.shields.io/badge/WoW%20Forever-1.60.1-blue.svg)](#)
 [![Languages](https://img.shields.io/badge/Locales-EN%20%7C%20IT%20%7C%20DE%20%7C%20ES%20%7C%20FR%20%7C%20RU-orange.svg)](#)

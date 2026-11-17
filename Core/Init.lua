@@ -14,7 +14,7 @@ FP.OnStepChangedCallbacks = FP.OnStepChangedCallbacks or {}
 ------------------------------------------------------------------------
 -- Version & Media (mirror of TOC) & Global Export
 ------------------------------------------------------------------------
-FP.VERSION      = "0.2"
+FP.VERSION      = "0.2.1"
 FP.LOGO_TEXTURE = "Interface\\AddOns\\" .. (addonName or "NexKit") .. "\\Media\\Logo.tga"
 
 -- Export global addon table for macros, WeakAuras, and external scripts
