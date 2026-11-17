@@ -1,17 +1,17 @@
 # NexKit
 
-> **The Ultimate All-in-One Leveling, Waypoints, Dungeon Tactics & Reagent Tracking Suite for World of Warcraft**
+> **The Ultimate All-in-One Leveling, Waypoints, Dungeon Tactics & Reagent Tracking Suite for WoW Forever**
 
 [![Version](https://img.shields.io/badge/Version-0.2-brightgreen.svg)](#)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-yellow.svg)](LICENSE)
-[![Interface](https://img.shields.io/badge/WoW-Classic%20Era%201.15.5-blue.svg)](#)
+[![Interface](https://img.shields.io/badge/WoW%20Forever-1.60.1-blue.svg)](#)
 [![Languages](https://img.shields.io/badge/Locales-EN%20%7C%20IT%20%7C%20DE%20%7C%20ES%20%7C%20FR%20%7C%20RU-orange.svg)](#)
 
 ---
 
 ## Overview
 
-**NexKit** (also distributed as **NexusKit**) is an open-source, high-performance leveling and quality-of-life suite built for **World of Warcraft (Classic Era 1.15.x and custom clients)**. It combines speedrun leveling guides, smooth 3D waypoint navigation, dynamic quest sync, dungeon boss tactics, an interactive profession advisor, and a live reagent/materials tracker with in-bag buttons into one unified, lightweight, zero-taint addon.
+**NexKit** (also distributed as **NexusKit**) is an open-source, high-performance leveling and quality-of-life suite built exclusively for **WoW Forever (Client 1.60.1)**. It combines speedrun leveling guides, smooth 3D waypoint navigation, dynamic quest sync, dungeon boss tactics, an interactive profession advisor, and a live reagent/materials tracker with in-bag buttons into one unified, lightweight, zero-taint addon.
 
 ---
 

@@ -1,4 +1,4 @@
-## Interface: 11505, 16001
+## Interface: 16001, 11505
 ## Title: NexKit |cff00ff96[All-in-One Utility Suite]|r
 ## Notes: Smart leveling routes (1-60 Horde & Alliance), 3D waypoint navigation, dungeon boss tactics, profession advisor & reagent tracker.
 ## Author: NexKit Team
