@@ -2,7 +2,7 @@
 
 > **The Ultimate All-in-One Leveling, Waypoints, Dungeon Tactics & Reagent Tracking Suite for WoW Forever**
 
-[![Version](https://img.shields.io/badge/Version-0.3.0-brightgreen.svg)](#)
+[![Version](https://img.shields.io/badge/Version-0.3.2-brightgreen.svg)](#)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-yellow.svg)](LICENSE)
 [![Interface](https://img.shields.io/badge/WoW%20Forever-1.60.1-blue.svg)](#)
 [![Languages](https://img.shields.io/badge/Locales-EN%20%7C%20IT%20%7C%20DE%20%7C%20ES%20%7C%20FR%20%7C%20RU-orange.svg)](#)
@@ -78,7 +78,7 @@
 
 ## Installation
 
-1. Download the latest release: **[NexKit-v0.3.0.zip](https://github.com/brutm/NexKit/releases/latest)**.
+1. Download the latest release: **[NexKit-v0.3.2.zip](https://github.com/brutm/NexKit/releases/latest)**.
 2. Extract the archive into your World of Warcraft AddOns directory:
    ```text
    World of Warcraft/_forever_/Interface/AddOns/
