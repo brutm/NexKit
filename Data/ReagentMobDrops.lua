@@ -40,12 +40,12 @@ local REAGENT_MOB_MAP = {
     -- 1. Class Reagents & Consumables
     [17056] = { -- Light Feather / Piuma Leggera (Mage Slow Fall, Priest Levitate)
         patterns = {
-            "harpy", "arpia", "vulture", "avvoltoio", "buzzard", "roc", "owlbeast", "gufigufo",
-            "moonkin", "wildkin", "carrion", "falcon", "falco", "eagle", "aquila", "bird",
+            "harpy", "arpia", "vulture", "avvoltoio", "buzzard", "fire roc", "greater roc", "owlbeast", "gufigufo",
+            "moonkin", "wildkin", "carrion bird", "carrion vulture", "falcon", "falco", "eagle", "aquila", "bird",
             "uccello", "seagull", "gabbiano", "fleshripper", "shrieker", "dreadbird", "corvo",
             "crow", "raven", "wind serpent", "serpente alato", "hippogryph", "ippogrifo",
-            "gryphon", "grifone", "hawk", "falco", "poultry", "chicken", "gallina", "strider",
-            "hawkstrider", "condor", "aeris", "screamer", "plumed", "feathered", "pennuto",
+            "gryphon", "grifone", "hawk", "poultry", "chicken", "gallina", "hawkstrider",
+            "tallstrider", "condor", "screamer", "plumed", "feathered", "pennuto",
         },
     },
     [17057] = { -- Fish Oil / Olio di Pesce (Shaman Water Walking / Breathing)
@@ -154,7 +154,7 @@ local REAGENT_MOB_MAP = {
 
     -- 4. Special Drops & Reagents
     [6889] = { -- Small Egg / Uovo Piccolo
-        patterns = { "strider", "hawkstrider", "moonkin", "owlbeast", "dragonhawk", "bird", "vulture", "buzzard", "roc", "gufigufo", "condor" },
+        patterns = { "hawkstrider", "tallstrider", "moonkin", "owlbeast", "dragonhawk", "bird", "vulture", "buzzard", "fire roc", "greater roc", "gufigufo", "condor" },
     },
     [4611] = { -- Small Lustrous Pearl
         patterns = { "murloc", "makrura", "naga", "clam", "clam meat", "greymist", "saltscale" },
@@ -202,8 +202,8 @@ local ANIMAL_KEYWORDS = {
     ["serpente"]    = { "snake", "serpente", "adder", "cobra", "viper" },
     ["yeti"]        = { "yeti" },
     ["ogre"]        = { "ogre" },
-    ["feather"]     = { "harpy", "arpia", "vulture", "avvoltoio", "buzzard", "roc", "owlbeast", "gufigufo", "falcon", "eagle", "aquila", "bird" },
-    ["piuma"]       = { "harpy", "arpia", "vulture", "avvoltoio", "buzzard", "roc", "owlbeast", "gufigufo", "falcon", "eagle", "aquila", "bird" },
+    ["feather"]     = { "harpy", "arpia", "vulture", "avvoltoio", "buzzard", "fire roc", "greater roc", "owlbeast", "gufigufo", "falcon", "eagle", "aquila", "bird" },
+    ["piuma"]       = { "harpy", "arpia", "vulture", "avvoltoio", "buzzard", "fire roc", "greater roc", "owlbeast", "gufigufo", "falcon", "eagle", "aquila", "bird" },
 }
 
 local STOP_WORDS = {
@@ -231,9 +231,39 @@ local STOP_WORDS = {
     ["piece"] = true, ["pezzo"] = true,
 }
 
+local function MobMatchesPattern(mobName, pattern)
+    if not mobName or not pattern or pattern == "" then return false end
+    local escaped = pattern:gsub("([%%%^%$%(%)%%%.%[%]%*%+%-%?])", "%%%1")
+    if mobName:find("%f[%a]" .. escaped .. "%f[%A]") then
+        return true
+    end
+    if mobName:find("%f[%a]" .. escaped .. "s%f[%A]") then
+        return true
+    end
+    return false
+end
+
+local function IsHumanoidType(t)
+    if not t then return false end
+    return t:find("human") or t:find("uman") or t:find("mensch")
+end
+
+local function IsBeastType(t)
+    if not t then return false end
+    return t:find("beast") or t:find("best") or t:find("wildtier") or t:find("bête")
+end
+
+local function IsElementalType(t)
+    if not t then return false end
+    return t:find("element")
+end
+
 function FP:GetUnitTrackedReagent(unit, lowerMobName)
     if not lowerMobName or lowerMobName == "" then return nil end
     if not (NexusKitCharDB and NexusKitCharDB.trackedReagents) then return nil end
+
+    local creatureType = unit and UnitCreatureType and UnitCreatureType(unit)
+    local lowerType = creatureType and string.lower(creatureType) or nil
 
     for key, rec in pairs(NexusKitCharDB.trackedReagents) do
         if type(rec) == "table" and (rec.name or rec.itemID) then
@@ -244,57 +274,89 @@ function FP:GetUnitTrackedReagent(unit, lowerMobName)
             -- If a target goal was set and already achieved, do not highlight
             local isGoalReached = (targetCount and targetCount > 0 and curBags >= targetCount)
             if not isGoalReached then
-                local isMatch = false
+                local isCategoryBlocked = false
+                local isFeatherItem = (itemID == 17056) or (rec.name and (rec.name:lower():find("feather") or rec.name:lower():find("piuma")))
+                local isClothItem = (itemID == 2589 or itemID == 2592 or itemID == 4306 or itemID == 4338 or itemID == 14047 or itemID == 14256)
+                    or (rec.name and (rec.name:lower():find("cloth") or rec.name:lower():find("stoffa") or rec.name:lower():find("tessuto")))
+                local isAnimalMeatOrPelt = rec.name and (rec.name:lower():find("meat") or rec.name:lower():find("carne") or rec.name:lower():find("pelt") or rec.name:lower():find("pelle") or rec.name:lower():find("hide") or rec.name:lower():find("cuoio"))
+                local isElementalItem = (itemID == 7076 or itemID == 7078 or itemID == 7080 or itemID == 7082 or itemID == 12808 or itemID == 12803 or itemID == 12804 or itemID == 12805)
 
-                -- 1. Check explicit itemID pattern list
-                if itemID and REAGENT_MOB_MAP[itemID] then
-                    local pats = REAGENT_MOB_MAP[itemID].patterns
-                    for _, p in ipairs(pats) do
-                        if lowerMobName:find(p, 1, true) then
-                            isMatch = true
-                            break
+                if isFeatherItem and lowerType then
+                    if IsHumanoidType(lowerType) then
+                        local isHarpy = lowerMobName:find("harpy", 1, true) or lowerMobName:find("arpia", 1, true)
+                        if not isHarpy then
+                            isCategoryBlocked = true
                         end
+                    elseif not IsBeastType(lowerType) then
+                        isCategoryBlocked = true
+                    end
+                elseif isClothItem and lowerType then
+                    if IsBeastType(lowerType) or lowerType:find("critter") or lowerType:find("creatura") or lowerType:find("mechanical") or lowerType:find("meccanico") then
+                        isCategoryBlocked = true
+                    end
+                elseif isAnimalMeatOrPelt and lowerType then
+                    if IsHumanoidType(lowerType) or IsElementalType(lowerType) or lowerType:find("mechanical") or lowerType:find("meccanico") then
+                        isCategoryBlocked = true
+                    end
+                elseif isElementalItem and lowerType then
+                    if IsBeastType(lowerType) or IsHumanoidType(lowerType) then
+                        isCategoryBlocked = true
                     end
                 end
 
-                -- 2. Check dynamic animal/creature keywords from item name
-                if not isMatch and rec.name then
-                    local cleanItemName = string.lower(rec.name:gsub("[%p%c]", " "))
-                    for word in cleanItemName:gmatch("%S+") do
-                        if ANIMAL_KEYWORDS[word] then
-                            for _, p in ipairs(ANIMAL_KEYWORDS[word]) do
-                                if lowerMobName:find(p, 1, true) then
-                                    isMatch = true
-                                    break
-                                end
-                            end
-                            if isMatch then break end
-                        elseif #word >= 4 and not STOP_WORDS[word] then
-                            if lowerMobName:find(word, 1, true) then
+                if not isCategoryBlocked then
+                    local isMatch = false
+
+                    -- 1. Check explicit itemID pattern list
+                    if itemID and REAGENT_MOB_MAP[itemID] then
+                        local pats = REAGENT_MOB_MAP[itemID].patterns
+                        for _, p in ipairs(pats) do
+                            if MobMatchesPattern(lowerMobName, p) then
                                 isMatch = true
                                 break
                             end
                         end
                     end
-                end
 
-                if isMatch then
-                    local icon = rec.icon
-                    if (not icon or icon == "Interface\\Icons\\INV_Misc_QuestionMark") and itemID then
-                        icon = GetItemIconCompat(itemID) or icon
+                    -- 2. Check dynamic animal/creature keywords from item name
+                    if not isMatch and rec.name then
+                        local cleanItemName = string.lower(rec.name:gsub("[%p%c]", " "))
+                        for word in cleanItemName:gmatch("%S+") do
+                            if ANIMAL_KEYWORDS[word] then
+                                for _, p in ipairs(ANIMAL_KEYWORDS[word]) do
+                                    if MobMatchesPattern(lowerMobName, p) then
+                                        isMatch = true
+                                        break
+                                    end
+                                end
+                                if isMatch then break end
+                            elseif #word >= 4 and not STOP_WORDS[word] then
+                                if MobMatchesPattern(lowerMobName, word) then
+                                    isMatch = true
+                                    break
+                                end
+                            end
+                        end
                     end
-                    local tagText = (targetCount and targetCount > 0) and string.format("%d/%d", curBags, targetCount) or string.format("%d", curBags)
-                    local fullTitle = rec.name .. ((targetCount and targetCount > 0) and string.format(" (%d/%d)", curBags, targetCount) or string.format(" (%d)", curBags))
-                    return {
-                        key = key,
-                        itemID = itemID,
-                        name = rec.name,
-                        icon = icon or "Interface\\Icons\\INV_Misc_Bag_08",
-                        curCount = curBags,
-                        targetCount = targetCount,
-                        tagText = tagText,
-                        fullTitle = fullTitle,
-                    }
+
+                    if isMatch then
+                        local icon = rec.icon
+                        if (not icon or icon == "Interface\\Icons\\INV_Misc_QuestionMark") and itemID then
+                            icon = GetItemIconCompat(itemID) or icon
+                        end
+                        local tagText = (targetCount and targetCount > 0) and string.format("%d/%d", curBags, targetCount) or string.format("%d", curBags)
+                        local fullTitle = rec.name .. ((targetCount and targetCount > 0) and string.format(" (%d/%d)", curBags, targetCount) or string.format(" (%d)", curBags))
+                        return {
+                            key = key,
+                            itemID = itemID,
+                            name = rec.name,
+                            icon = icon or "Interface\\Icons\\INV_Misc_Bag_08",
+                            curCount = curBags,
+                            targetCount = targetCount,
+                            tagText = tagText,
+                            fullTitle = fullTitle,
+                        }
+                    end
                 end
             end
         end
