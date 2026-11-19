@@ -982,14 +982,18 @@ local function CreateOverlayHost(name, poolTbl, onVisibleTick)
         if self.accum < 0.05 then return end
         self.accum = 0
         for _, ov in ipairs(poolTbl) do
-            if ov:IsShown() or (ov.trackBtn and ov.trackBtn:IsShown()) then
+            if ov:IsShown() or (ov.trackBtn and ov.trackBtn:IsShown()) or (ov.targetRef and ov.windowRef) then
                 local tr = ov.targetRef
                 local wr = ov.windowRef
-                if not tr or not wr or (wr.IsShown and not wr:IsShown()) or (tr.IsVisible and not tr:IsVisible()) then
+                if not tr or not wr or (wr.IsShown and not wr:IsShown()) then
                     HideSlotOverlay(ov)
+                elseif tr.IsVisible and not tr:IsVisible() then
+                    ov:Hide()
+                    if ov.trackBtn then ov.trackBtn:Hide() end
                 else
                     if not SyncOverlayToTarget(ov, self, tr, wr) then
-                        HideSlotOverlay(ov)
+                        ov:Hide()
+                        if ov.trackBtn then ov.trackBtn:Hide() end
                     end
                 end
             end
@@ -3250,6 +3254,26 @@ local function HookContainerItemClicks()
             end
         end)
     end
+
+    -- Hook 3: ContainerFrame_Update (whenever Blizzard updates or redraws bag slots)
+    if ContainerFrame_Update and not hookFlags.containerUpdate then
+        hookFlags.containerUpdate = true
+        hooksecurefunc("ContainerFrame_Update", function(frame)
+            if InCombatLockdown and InCombatLockdown() then return end
+            if IsAnyBagFrameVisible() then
+                FP:RefreshBagOverlays()
+            end
+        end)
+    end
+    if ContainerFrameCombinedBags_Update and not hookFlags.combinedBagsUpdate then
+        hookFlags.combinedBagsUpdate = true
+        hooksecurefunc("ContainerFrameCombinedBags_Update", function(frame)
+            if InCombatLockdown and InCombatLockdown() then return end
+            if IsAnyBagFrameVisible() then
+                FP:RefreshBagOverlays()
+            end
+        end)
+    end
 end
 
 local function EnsureProfHooks()
@@ -3295,20 +3319,45 @@ bagWatchFrame.lastSig = ""
 bagWatchFrame:SetScript("OnUpdate", function(self, elapsed)
     if InCombatLockdown and InCombatLockdown() then return end
     self.accum = self.accum + elapsed
-    if self.accum < 0.05 then return end
+    if self.accum < 0.10 then return end
     self.accum = 0
-    local sig = GetOpenBagsSignature()
-    if sig ~= self.lastSig then
-        self.lastSig = sig
-        if sig == "" then
+
+    local anyBag = IsAnyBagFrameVisible()
+    if not anyBag then
+        if self.lastSig ~= "" then
+            self.lastSig = ""
             bagOverlayHost:Hide()
             for _, ov in ipairs(bagOvPool) do
                 HideSlotOverlay(ov)
             end
-        else
-            FP:RefreshBagOverlays()
         end
-    elseif sig ~= "" and (bagOverlayHost.lastUsed or 0) == 0 then
+        return
+    end
+
+    local sig = GetOpenBagsSignature()
+    local needRefresh = false
+
+    if sig ~= self.lastSig then
+        self.lastSig = sig
+        needRefresh = true
+    else
+        -- Bags remain open with same signature: verify overlays haven't been cleared/hidden
+        if not bagOverlayHost:IsShown() then
+            needRefresh = true
+        else
+            local activeCount = 0
+            for _, ov in ipairs(bagOvPool) do
+                if ov.targetRef and (ov:IsShown() or (ov.trackBtn and ov.trackBtn:IsShown())) then
+                    activeCount = activeCount + 1
+                end
+            end
+            if activeCount == 0 then
+                needRefresh = true
+            end
+        end
+    end
+
+    if needRefresh then
         FP:RefreshBagOverlays()
     end
 end)
