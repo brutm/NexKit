@@ -431,6 +431,7 @@ function FP:ToggleTrackReagent(itemID, itemName, icon, itemLink, silent, targetC
                 end
             end
             self:RefreshReagentTrackerUI()
+            if self.RefreshHighlights then pcall(function() self:RefreshHighlights() end) end
             return true
         end
 
@@ -440,6 +441,7 @@ function FP:ToggleTrackReagent(itemID, itemName, icon, itemLink, silent, targetC
             self:Print(string.format(L["REAGENT_UNTRACKED"] or "Stopped tracking reagent: %s", removedName))
         end
         self:RefreshReagentTrackerUI()
+        if self.RefreshHighlights then pcall(function() self:RefreshHighlights() end) end
         return false
     end
 
@@ -487,6 +489,7 @@ function FP:ToggleTrackReagent(itemID, itemName, icon, itemLink, silent, targetC
         end
     end
     self:RefreshReagentTrackerUI()
+    if self.RefreshHighlights then pcall(function() self:RefreshHighlights() end) end
     return true
 end
 
@@ -531,6 +534,7 @@ function FP:SetTrackReagentFromInput(input)
             end
         end
         self:RefreshReagentTrackerUI()
+        if self.RefreshHighlights then pcall(function() self:RefreshHighlights() end) end
         self:Print(L["REAGENT_TRACK_CLEARED"] or "Cleared all tracked reagents.")
         return
     end

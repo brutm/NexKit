@@ -425,6 +425,11 @@ local ROLE_STYLES = {
         r = 0.15, g = 1.0, b = 0.55,
         tagKey = "HIGHLIGHT_OBJECTIVE_TAG",
     },
+    REAGENT = {
+        icon = "Interface\\Icons\\INV_Misc_Bag_08",
+        r = 0.25, g = 0.90, b = 1.0,
+        tagKey = "HIGHLIGHT_REAGENT_TAG",
+    },
 }
 
 local scanTooltip
@@ -584,10 +589,20 @@ local function ClassifyUnit(unit)
         isFinished, finRole = MatchesObjTable(lowerName, finishedObjectives)
     end
 
-    -- If this mob type matches a COMPLETED quest objective, and NO OTHER unfinished objective requires it:
-    -- IT IS 100% COMPLETE! Never show any icon.
-    if isFinished and not isUnfinished then
+    -- Helper to check if this creature drops a currently tracked reagent
+    local function CheckTrackedReagent()
+        if FP.GetUnitTrackedReagent and lowerName then
+            local rInfo = FP:GetUnitTrackedReagent(unit, lowerName)
+            if rInfo then
+                return "REAGENT", rInfo.fullTitle, rInfo.icon, rInfo
+            end
+        end
         return nil, nil
+    end
+
+    -- If this mob type matches a COMPLETED quest objective, check if it drops a tracked reagent
+    if isFinished and not isUnfinished then
+        return CheckTrackedReagent()
     end
 
     -- Direct Quest Log active objective match
@@ -598,15 +613,15 @@ local function ClassifyUnit(unit)
     -- Live Tooltip inspection
     local hasReadyTitle, hasIncompleteObj, hasCompletedOnlyObj, tipRole, tipQuest = InspectUnitTooltip(unit, lowerName)
     if hasCompletedOnlyObj and not hasIncompleteObj then
-        return nil, nil
+        return CheckTrackedReagent()
     end
     if hasIncompleteObj then
         return (tipRole or "KILL"), tipQuest
     end
 
-    -- If finished in quest log or tooltip, definitely return nil
+    -- If finished in quest log or tooltip, check if it drops a tracked reagent
     if isFinished then
-        return nil, nil
+        return CheckTrackedReagent()
     end
 
     -- Active Route Step matching (ONLY if step quest is not complete, and mob is not already finished)
@@ -626,7 +641,7 @@ local function ClassifyUnit(unit)
         end
     end
 
-    return nil, nil
+    return CheckTrackedReagent()
 end
 
 -------------------------------------------------------------------------------
@@ -687,9 +702,10 @@ local defaultTags = {
     HIGHLIGHT_TURNIN_TAG = "Consegna!",
     HIGHLIGHT_ACCEPT_TAG = "Accetta!",
     HIGHLIGHT_OBJECTIVE_TAG = "Obiettivo",
+    HIGHLIGHT_REAGENT_TAG = "Reagente!",
 }
 
-local function ApplyBadgeStyle(badge, role, showTextTag, questTitle)
+local function ApplyBadgeStyle(badge, role, showTextTag, questTitle, customIcon)
     local style = ROLE_STYLES[role]
     if not style then
         if badge.anim then badge.anim:Stop() end
@@ -697,8 +713,9 @@ local function ApplyBadgeStyle(badge, role, showTextTag, questTitle)
         return
     end
 
-    badge.icon:SetTexture(style.icon)
-    if type(style.icon) == "string" and style.icon:find("^Interface\\Icons\\") then
+    local iconTex = customIcon or style.icon
+    badge.icon:SetTexture(iconTex)
+    if type(iconTex) == "string" and iconTex:find("^Interface\\Icons\\") then
         badge.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
     else
         badge.icon:SetTexCoord(0, 1, 0, 1)
@@ -816,7 +833,7 @@ local function UpdatePlateForUnit(unit)
 
     activePlates[unit] = plate
 
-    local role = ClassifyUnit(unit)
+    local role, questTitle, customIcon = ClassifyUnit(unit)
     SyncUnitRaidMarker(unit, role, false)
 
     if not role then
@@ -852,9 +869,9 @@ local function UpdatePlateForUnit(unit)
     badge:SetFrameStrata("HIGH")
     badge:SetFrameLevel(math.max(100, (host.GetFrameLevel and host:GetFrameLevel() or 2) + 25))
 
-    -- Show text tag above Turn-In / Accept NPCs; keep enemy objectives clean icon + glow
-    local showText = (role == "TURNIN" or role == "ACCEPT")
-    ApplyBadgeStyle(badge, role, showText)
+    -- Show text tag above Turn-In / Accept NPCs and Reagents; keep enemy quest objectives clean icon + glow
+    local showText = (role == "TURNIN" or role == "ACCEPT" or role == "REAGENT")
+    ApplyBadgeStyle(badge, role, showText, questTitle, customIcon)
     badge:Show()
 end
 
@@ -891,6 +908,8 @@ local function UpdateTargetBadge()
             if targetBadge.anim then targetBadge.anim:Stop() end
             targetBadge.role = nil
             targetBadge.questTitle = nil
+            targetBadge.customIcon = nil
+            targetBadge.reagentInfo = nil
             targetBadge:Hide()
         end
         if not IsHighlightsEnabled() then
@@ -899,7 +918,7 @@ local function UpdateTargetBadge()
         return
     end
 
-    local role, questTitle = ClassifyUnit("target")
+    local role, questTitle, customIcon, reagentInfo = ClassifyUnit("target")
     SyncUnitRaidMarker("target", role, true)
 
     if not role then
@@ -907,6 +926,8 @@ local function UpdateTargetBadge()
             if targetBadge.anim then targetBadge.anim:Stop() end
             targetBadge.role = nil
             targetBadge.questTitle = nil
+            targetBadge.customIcon = nil
+            targetBadge.reagentInfo = nil
             targetBadge:Hide()
         end
         return
@@ -921,10 +942,21 @@ local function UpdateTargetBadge()
                 local style = ROLE_STYLES[self.role]
                 local r, g, b = (style and style.r or 1), (style and style.g or 0.8), (style and style.b or 0)
                 local L = FP.L or {}
-                local tagText = (style and style.tagKey and (L[style.tagKey] or defaultTags[style.tagKey])) or "Obiettivo Quest"
-                GameTooltip:AddLine(tagText, r, g, b)
-                if self.questTitle and self.questTitle ~= "" then
-                    GameTooltip:AddLine(self.questTitle, 1, 0.82, 0, true)
+                if self.role == "REAGENT" and self.reagentInfo then
+                    GameTooltip:AddLine(L["HIGHLIGHT_REAGENT_TAG"] or "Reagente Tracciato", 0.25, 0.90, 1.0)
+                    GameTooltip:AddLine(self.reagentInfo.name, 1, 1, 1, true)
+                    if self.reagentInfo.targetCount and self.reagentInfo.targetCount > 0 then
+                        GameTooltip:AddLine(string.format(L["REAGENT_TOOLTIP_PROGRESS"] or "Raccolti: %d / %d", self.reagentInfo.curCount, self.reagentInfo.targetCount), 1, 0.82, 0)
+                    else
+                        GameTooltip:AddLine(string.format(L["REAGENT_TOOLTIP_COUNT"] or "In borsa: %d", self.reagentInfo.curCount), 1, 0.82, 0)
+                    end
+                    GameTooltip:AddLine(L["REAGENT_TOOLTIP_MOB_DROP"] or "Rilasciato da questa creatura", 0.7, 0.7, 0.7, true)
+                else
+                    local tagText = (style and style.tagKey and (L[style.tagKey] or defaultTags[style.tagKey])) or "Obiettivo Quest"
+                    GameTooltip:AddLine(tagText, r, g, b)
+                    if self.questTitle and self.questTitle ~= "" then
+                        GameTooltip:AddLine(self.questTitle, 1, 0.82, 0, true)
+                    end
                 end
                 GameTooltip:Show()
             end
@@ -936,6 +968,8 @@ local function UpdateTargetBadge()
 
     targetBadge.role = role
     targetBadge.questTitle = questTitle
+    targetBadge.customIcon = customIcon
+    targetBadge.reagentInfo = reagentInfo
 
     targetBadge:ClearAllPoints()
     if TargetFrame and not IsForbiddenObj(TargetFrame) and TargetFrame:IsVisible() then
@@ -955,7 +989,7 @@ local function UpdateTargetBadge()
         targetBadge:SetPoint("TOP", UIParent, "TOP", 0, -110)
     end
 
-    ApplyBadgeStyle(targetBadge, role, true, questTitle)
+    ApplyBadgeStyle(targetBadge, role, true, questTitle, customIcon)
     targetBadge:Show()
 end
 
