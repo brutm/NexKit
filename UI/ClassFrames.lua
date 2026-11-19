@@ -324,8 +324,9 @@ local function UpdateTargetFrame()
 
     local unit = TargetFrame.unit or "target"
     local color, class = GetUnitClassColor(unit)
+    local healthbar = TargetFrameHealthBar or TargetFrame.healthbar
+
     if color and class then
-        local healthbar = TargetFrameHealthBar or TargetFrame.healthbar
         if healthbar and healthbar.SetStatusBarColor then
             healthbar:SetStatusBarColor(color.r, color.g, color.b)
         end
@@ -342,6 +343,13 @@ local function UpdateTargetFrame()
     else
         if TargetFrame.nkClassIcon then
             TargetFrame.nkClassIcon:Hide()
+        end
+        -- Restore Blizzard's native selection color for NPCs and mobs (Red for hostile, Green for friendly, Yellow for neutral)
+        if healthbar and healthbar.SetStatusBarColor and UnitExists(unit) then
+            local r, g, b = UnitSelectionColor(unit)
+            if r and g and b then
+                healthbar:SetStatusBarColor(r, g, b)
+            end
         end
     end
 end
