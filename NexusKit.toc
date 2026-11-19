@@ -1,8 +1,8 @@
 ## Interface: 16001, 11505
 ## Title: NexKit |cff00ff96[All-in-One Utility Suite]|r
-## Notes: Smart leveling routes (1-60 Horde & Alliance), 3D waypoint navigation, dungeon boss tactics, profession advisor & reagent tracker.
+## Notes: Smart leveling routes (1-60 Horde & Alliance), 3D waypoint navigation, dungeon boss tactics, profession advisor, reagent tracker, player to-do list, class frames & talent spec inspector.
 ## Author: NexKit Team
-## Version: 0.2.1
+## Version: 0.3.0
 ## IconTexture: Interface\AddOns\NexKit\Media\Logo.tga
 ## Category: Quests & Leveling
 ## SavedVariables: NexKitDB, NexusKitDB

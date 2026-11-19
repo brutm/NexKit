@@ -2,7 +2,7 @@
 
 > **The Ultimate All-in-One Leveling, Waypoints, Dungeon Tactics & Reagent Tracking Suite for WoW Forever**
 
-[![Version](https://img.shields.io/badge/Version-0.2.1-brightgreen.svg)](#)
+[![Version](https://img.shields.io/badge/Version-0.3.0-brightgreen.svg)](#)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-yellow.svg)](LICENSE)
 [![Interface](https://img.shields.io/badge/WoW%20Forever-1.60.1-blue.svg)](#)
 [![Languages](https://img.shields.io/badge/Locales-EN%20%7C%20IT%20%7C%20DE%20%7C%20ES%20%7C%20FR%20%7C%20RU-orange.svg)](#)
@@ -17,8 +17,22 @@
 
 ## Key Features
 
-### 1. Reagent & Materials Live Tracker (`/nk track`, `/nk trackbtn`)
-* **Dedicated HUD Window**: A movable, resizable on-screen HUD tracking your selected reagents, herbs, ores, cloth, leather, meat, potions, and quest items in real time. Shows exact inventory count vs. target goal.
+### 1. In-Game To-Do List & Goals (`/nk todo`, `/nk todo hud`)
+* **Personal Task Manager**: Create, organize, prioritize, and check off character-specific and account-wide tasks, farming goals, or reminders.
+* **On-Screen Movable HUD**: A lightweight, minimalist desktop HUD keeping your active tasks in view. Includes position locking, drag anywhere, and quick completion.
+* **Inline Note Editing**: Right-click any note or click the note icon to edit task text directly with Enter to save and Escape to cancel.
+* **Strikethrough Archive**: Completed tasks get crossed out with a sleek strikethrough line and can be reopened anytime or cleared from the archive.
+
+### 2. Class Frames, Colors & Portrait Spec Inspector (`/nk classframes`)
+* **Class Colors & Badges**: Automatically colors player health bars with official Blizzard `RAID_CLASS_COLORS` and attaches circular class badges to Party frames, TargetFrame, and Nameplates.
+* **Portrait Talent Spec Inspector**: Hovering over the circular photo (portrait) of yourself, your target, or party members displays their class, active talent specialization (e.g. `Paladino — Castigo (11/0/31)`), and exact talent tree point distribution.
+
+### 3. Quest-Starter Loot Alert (`/nk questalert`)
+* **Loot Detection**: Instantly alerts you when picking up an item in your bags that begins a quest (`ITEM_STARTS_QUEST`).
+* **One-Click Start**: Plays a quest alert sound and shows a clean prompt dialog with item preview, link, and an **[Inizia Missione]** button to use the item directly from bags without having to search through your inventory.
+
+### 4. Reagent & Materials Live Tracker (`/nk track`, `/nk trackbtn`)
+* **Dedicated HUD Window**: A movable, resizable on-screen HUD tracking your selected reagents, herbs, ores, cloth, leather, meat, potions, and quest items in real time. Shows exact inventory count vs. target goal with completion notifications.
 * **Interactive `[+]` Bag Slot Overlays**:
   * Every valid reagent or material slot in your bags displays a clean, solid green `[+]` button in the top-right corner.
   * Clicking `[+]` instantly toggles tracking, morphs the button into a red `[-]`, adds the item to your HUD tracker, and highlights the bag slot with a glowing cyan border.
@@ -29,34 +43,34 @@
   * **Golden Glow**: Valuable items to keep for future quests (never vendor important quest turn-in reagents).
   * **Orange/Yellow/Green Glow**: Materials relevant to leveling your currently learned professions.
 
-### 2. Complete 1-60 Guided Speedrun Routes (Horde & Alliance)
+### 5. Complete 1-60 Guided Speedrun Routes (Horde & Alliance)
 * **Pre-calculated 1-60 Routes**: Full, step-by-step guidance covering all starting zones, mid-game contested regions, and end-game zones.
   * **Horde**: Durotar / Mulgore / Tirisfal (1-20) ➔ Southern Barrens / Stonetalon / Hillsbrad / Arathi / STV (20-40) ➔ Badlands / Tanaris / Feralas / Un'Goro / Felwood / Plaguelands (40-60).
   * **Alliance**: Elwynn / Dun Morogh / Teldrassil (1-20) ➔ Redridge / Duskwood / Wetlands / Hillsbrad / STV (20-40) ➔ Badlands / Tanaris / Feralas / Un'Goro / Felwood / Plaguelands (40-60).
 * **Auto-Advancement**: Automatically advances across chapters and zones upon route completion.
 * **Smart Auto-Sync**: Automatic step completion for quest accepts, turn-ins, flight paths, grinding milestones, and Hearthstone binds/uses.
 
-### 3. Smooth 3D Waypoint Arrow & Map Pins
+### 6. Smooth 3D Waypoint Arrow & Map Pins
 * Floating 3D/2D direction arrow with distance counter (yards) and arrival notifications.
 * Optimized vector math and dimension caching for silky-smooth 60+ FPS even in crowded capital cities.
 * World map and minimap POI pins: flight masters, innkeepers, class trainers, repair vendors, and mailboxes.
 
-### 4. Dynamic Quest Log Sync (`/nk sync`)
+### 7. Dynamic Quest Log Sync (`/nk sync`)
 * Instantly converts your current active quest log into an optimized leveling path for whatever zone you are currently exploring.
 * Prioritizes tracked quests, suggests trainer visits at milestone levels, and groups nearby turn-ins.
 
-### 5. Dungeon Guide & Boss Tactics (`/nk boss`)
+### 8. Dungeon Guide & Boss Tactics (`/nk boss`)
 * In-game tactic book with abilities, interrupt warnings, and phase strategies for Classic dungeons and raids.
 * Auto-detection: automatically switches to the corresponding dungeon guide upon entering an instance.
 
-### 6. Profession Skill Advisor (`/nk prof`)
+### 9. Profession Skill Advisor (`/nk prof`)
 * Step-by-step guide from 1 to 300 for all primary and secondary professions (Alchemy, Blacksmithing, Engineering, Leatherworking, Tailoring, Mining, Herbalism, Skinning, Cooking, First Aid, Fishing).
 * Includes a **"Track All"** button to monitor all materials required for any recipe in your HUD with one click.
 
-### 7. Buff & Weapon Reminder (`/nk buffs`)
+### 10. Buff & Weapon Reminder (`/nk buffs`)
 * Smart monitor reminding you of missing class buffs (Intellect, Fortitude, Mark of the Wild, Blessings), weapon enhancements (oils/stones), and gathering tracking.
 
-### 8. Zero-Taint Architecture
+### 11. Zero-Taint Architecture
 * Clean execution designed specifically for modern Classic Era engine requirements (1.15.5+).
 * Isolated frames running in safe execution context without blocking default Blizzard UI action bars or protected combat routines.
 
@@ -64,7 +78,7 @@
 
 ## Installation
 
-1. Download the latest release: **[NexKit-v0.2.zip](https://github.com/brutm/NexKit/releases/latest)**.
+1. Download the latest release: **[NexKit-v0.3.0.zip](https://github.com/brutm/NexKit/releases/latest)**.
 2. Extract the archive into your World of Warcraft AddOns directory:
    ```text
    World of Warcraft/_forever_/Interface/AddOns/
@@ -80,6 +94,10 @@
 | :--- | :--- |
 | `/nk` or `/nk help` | Opens the Welcome & Commands guide window |
 | `/nk config` | Opens the multi-tab Settings configuration frame |
+| `/nk todo` | Opens the In-Game To-Do List & Goals window |
+| `/nk todo hud` | Toggles the desktop on-screen To-Do Notes HUD |
+| `/nk classframes` | Toggles Class Colors & Badges on Party, Target, and Nameplates |
+| `/nk questalert` | Toggles automatic prompt alerts for quest-starter items |
 | `/nk track [item]` | Adds an item to the Reagent Tracker by name or link |
 | `/nk trackbtn` | Toggles the `[+]` button overlays on bag items on/off |
 | `/nk prof` | Opens the Profession Skill Advisor |
