@@ -29,7 +29,8 @@ local function IsForbiddenObj(obj)
 end
 
 local function GetSettings()
-    return (NexusKitDB and NexusKitDB.settings) or {}
+    local db = NexKitDB or NexusKitDB
+    return (db and db.settings) or {}
 end
 
 local function IsClassFeaturesEnabled()
@@ -48,7 +49,7 @@ end
 
 local function ApplyClassTextureToIcon(icon, class)
     if not icon or not class then return end
-    icon:SetTexture("Interface\\TargetingFrame\\UI-Classes-Circles")
+    icon:SetTexture("Interface\\Glues\\CharacterCreate\\UI-CharacterCreate-Classes")
     local coords = (CLASS_ICON_TCOORDS and CLASS_ICON_TCOORDS[class]) or FALLBACK_CLASS_COORDS[class]
     if coords then
         icon:SetTexCoord(unpack(coords))
@@ -234,47 +235,99 @@ local function GetPlayerDispelCapabilities()
     return dispels, playerClass
 end
 
+local PLAYER_BUFF_SPELLS = {
+    -- Paladin
+    ["Blessing of Might"] = true, ["Benedizione della Potenza"] = true,
+    ["Blessing of Wisdom"] = true, ["Benedizione della Saggezza"] = true,
+    ["Blessing of Kings"] = true, ["Benedizione dei Re"] = true,
+    ["Blessing of Salvation"] = true, ["Benedizione della Salvezza"] = true,
+    ["Blessing of Light"] = true, ["Benedizione della Luce"] = true,
+    ["Blessing of Sanctuary"] = true, ["Benedizione del Rifugio"] = true,
+    ["Blessing of Protection"] = true, ["Benedizione della Protezione"] = true,
+    ["Blessing of Freedom"] = true, ["Benedizione della Libertà"] = true,
+    ["Blessing of Sacrifice"] = true, ["Benedizione del Sacrificio"] = true,
+    ["Devotion Aura"] = true, ["Aura di Devozione"] = true,
+    ["Retribution Aura"] = true, ["Aura di Ritorsione"] = true,
+    ["Concentration Aura"] = true, ["Aura di Concentrazione"] = true,
+    ["Shadow Resistance Aura"] = true, ["Aura di Resistenza all'Ombra"] = true,
+    ["Frost Resistance Aura"] = true, ["Aura di Resistenza al Gelo"] = true,
+    ["Fire Resistance Aura"] = true, ["Aura di Resistenza al Fuoco"] = true,
+    -- Priest
+    ["Power Word: Fortitude"] = true, ["Parola del Potere: Fortezza"] = true,
+    ["Shadow Protection"] = true, ["Protezione dall'Ombra"] = true,
+    ["Divine Spirit"] = true, ["Spirito Divino"] = true,
+    ["Renew"] = true, ["Rinnovamento"] = true,
+    ["Power Word: Shield"] = true, ["Parola del Potere: Scudo"] = true,
+    ["Fear Ward"] = true, ["Difesa dalla Paura"] = true,
+    -- Mage
+    ["Arcane Intellect"] = true, ["Intelletto Arcano"] = true,
+    ["Arcane Brilliance"] = true, ["Brillantezza Arcana"] = true,
+    ["Amplify Magic"] = true, ["Amplificazione Magica"] = true,
+    ["Dampen Magic"] = true, ["Attenuazione Magica"] = true,
+    -- Druid
+    ["Mark of the Wild"] = true, ["Marchio Selvaggio"] = true,
+    ["Gift of the Wild"] = true, ["Dono del Selvaggio"] = true,
+    ["Thorns"] = true, ["Spine"] = true,
+    ["Rejuvenation"] = true, ["Ringiovanimento"] = true,
+    ["Regrowth"] = true, ["Ricrescita"] = true,
+    -- Warrior
+    ["Battle Shout"] = true, ["Urlo di Battaglia"] = true,
+    -- Warlock
+    ["Unending Breath"] = true, ["Respiro Inesauribile"] = true,
+    ["Detect Invisibility"] = true, ["Individuazione dell'Invisibilità"] = true,
+    ["Fire Shield"] = true, ["Scudo di Fuoco"] = true,
+    -- Shaman
+    ["Water Walking"] = true, ["Camminata sull'Acqua"] = true,
+    ["Water Breathing"] = true, ["Respiro Acquatico"] = true,
+}
+
 local function GetPartyUnitDebuffs(unit)
     local debuffs = {}
     if not unit or not UnitExists(unit) then return debuffs end
     local dispels, playerClass = GetPlayerDispelCapabilities()
-    local hasAnyDispel = next(dispels) ~= nil
 
     for i = 1, 16 do
-        local name, icon, count, dType, duration, expirationTime, source, spellId
+        local name, icon, count, dType, duration, expirationTime, spellId
         if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
             local aura = C_UnitAuras.GetAuraDataByIndex(unit, i, "HARMFUL")
             if not aura then break end
             name, icon, count, dType, duration, expirationTime, spellId = aura.name, aura.icon, aura.applications, aura.dispelName, aura.duration, aura.expirationTime, aura.spellId
         elseif UnitDebuff then
-            name, icon, count, dType, duration, expirationTime, source, _, _, spellId = UnitDebuff(unit, i)
+            local _
+            name, icon, count, dType, duration, expirationTime, _, _, _, spellId = UnitDebuff(unit, i)
             if not name then break end
         else
             break
         end
 
-        local canDispel = dType and dispels[dType]
-        if not hasAnyDispel or canDispel then
-            debuffs[#debuffs + 1] = {
-                index = i,
-                name = name,
-                icon = icon,
-                count = count or 0,
-                dispelType = dType or "none",
-                canDispel = canDispel,
-                duration = duration or 0,
-                expirationTime = expirationTime or 0,
-                spellId = spellId,
-            }
-        end
-        if #debuffs >= 4 then break end
+        local canDispel = (dType and dispels[dType]) and true or false
+        debuffs[#debuffs + 1] = {
+            index = i,
+            name = name,
+            icon = icon,
+            count = count or 0,
+            dispelType = dType or "none",
+            canDispel = canDispel,
+            duration = duration or 0,
+            expirationTime = expirationTime or 0,
+            spellId = spellId,
+        }
     end
+
+    -- Sort debuffs: dispellable debuffs FIRST
+    table.sort(debuffs, function(a, b)
+        if a.canDispel and not b.canDispel then return true end
+        if not a.canDispel and b.canDispel then return false end
+        return a.index < b.index
+    end)
+
     return debuffs
 end
 
 local function GetPartyUnitBuffs(unit)
     local buffs = {}
     if not unit or not UnitExists(unit) then return buffs end
+    local _, playerClass = UnitClass("player")
 
     for i = 1, 32 do
         local name, icon, count, duration, expirationTime, source, spellId
@@ -291,20 +344,27 @@ local function GetPartyUnitBuffs(unit)
             break
         end
 
-        -- Only "i buff tuoi" (buffs cast on the party member by player)
-        if source == "player" then
-            buffs[#buffs + 1] = {
-                index = i,
-                name = name,
-                icon = icon,
-                count = count or 0,
-                duration = duration or 0,
-                expirationTime = expirationTime or 0,
-                spellId = spellId,
-            }
-        end
-        if #buffs >= 5 then break end
+        local isPlayerBuff = (source == "player") or (source == nil and name and PLAYER_BUFF_SPELLS[name])
+        buffs[#buffs + 1] = {
+            index = i,
+            name = name,
+            icon = icon,
+            count = count or 0,
+            duration = duration or 0,
+            expirationTime = expirationTime or 0,
+            source = source,
+            isPlayerBuff = isPlayerBuff,
+            spellId = spellId,
+        }
     end
+
+    -- Sort buffs: player's own buffs FIRST, then other party buffs
+    table.sort(buffs, function(a, b)
+        if a.isPlayerBuff and not b.isPlayerBuff then return true end
+        if not a.isPlayerBuff and b.isPlayerBuff then return false end
+        return a.index < b.index
+    end)
+
     return buffs
 end
 
@@ -323,17 +383,29 @@ local function UpdatePartyAuras(frame)
         return
     end
 
+    -- Hide Blizzard's built-in duplicate debuffs so they don't conflict or duplicate
+    local frameName = frame.GetName and frame:GetName()
+    if frameName then
+        for d = 1, 4 do
+            local bDebuff = _G[frameName .. "Debuff" .. d]
+            if bDebuff then
+                bDebuff:SetAlpha(0)
+                bDebuff:Hide()
+            end
+        end
+    end
+
     local container = frame.nkPermanentAuras
     if not container then
         container = CreateFrame("Frame", nil, frame)
-        container:SetSize(130, 20)
+        container:SetSize(160, 20)
         -- Positioned permanently below the health/mana bar (matching Blizzard's hover area, but always shown!)
         container:SetPoint("TOPLEFT", frame, "BOTTOMLEFT", 44, -2)
-        container:SetFrameLevel(frame:GetFrameLevel() + 15)
+        container:SetFrameLevel(frame:GetFrameLevel() + 25)
         frame.nkPermanentAuras = container
 
         container.slots = {}
-        for s = 1, 6 do
+        for s = 1, 8 do
             local btn = CreateFrame("Button", nil, container)
             btn:SetSize(16, 16)
             btn:SetPoint("LEFT", container, "LEFT", (s - 1) * 19, 0)
@@ -378,9 +450,9 @@ local function UpdatePartyAuras(frame)
 
     local slotIndex = 1
 
-    -- 1. Display Dispellable Debuffs first (with dispel type colored borders)
-    for d = 1, #debuffs do
-        if slotIndex <= 6 then
+    -- 1. Display Debuffs first (dispellable ones have bright dispel color, others have red border)
+    for d = 1, math.min(#debuffs, 4) do
+        if slotIndex <= 8 then
             local btn = container.slots[slotIndex]
             local debuff = debuffs[d]
             btn.unit = unit
@@ -403,9 +475,9 @@ local function UpdatePartyAuras(frame)
         end
     end
 
-    -- 2. Display "I Buff Tuoi" immediately after (with clean subtle borders)
+    -- 2. Display Buffs immediately after (player buffs have golden border, other buffs have clean subtle border)
     for b = 1, #buffs do
-        if slotIndex <= 6 then
+        if slotIndex <= 8 then
             local btn = container.slots[slotIndex]
             local buff = buffs[b]
             btn.unit = unit
@@ -414,7 +486,13 @@ local function UpdatePartyAuras(frame)
             btn.icon:SetTexture(buff.icon)
             btn.border:SetTexture("Interface\\Buttons\\UI-ActionButton-Border")
             btn.border:SetTexCoord(0, 1, 0, 1)
-            btn.border:SetVertexColor(0.8, 0.8, 0.8, 0.7)
+            if buff.isPlayerBuff then
+                -- Highlight player's own buffs in golden yellow
+                btn.border:SetVertexColor(1.0, 0.82, 0.0, 0.95)
+            else
+                -- Subtle clean border for group buffs
+                btn.border:SetVertexColor(0.5, 0.5, 0.5, 0.6)
+            end
             btn.border:Show()
             if buff.count and buff.count > 1 then
                 btn.countFs:SetText(buff.count)
@@ -428,7 +506,7 @@ local function UpdatePartyAuras(frame)
     end
 
     -- Hide remaining unused slots
-    for s = slotIndex, 6 do
+    for s = slotIndex, 8 do
         container.slots[s]:Hide()
     end
 end
@@ -503,14 +581,12 @@ local function UpdatePartyMember(frame)
             end
         end
 
-        -- 3. Circular Class Badge Button with Secure Targeting & Spec Tooltip
+        -- 3. Circular Class Badge Button with Spec Tooltip
         local badge = frame.nkClassBadge
         if not badge then
-            badge = CreateFrame("Button", nil, frame, "SecureActionButtonTemplate")
-            badge:SetSize(20, 20)
-            badge:SetFrameLevel(frame:GetFrameLevel() + 15)
-            badge:RegisterForClicks("AnyUp")
-            badge:SetAttribute("type1", "target")
+            badge = CreateFrame("Button", nil, frame)
+            badge:SetSize(22, 22)
+            badge:SetFrameLevel(frame:GetFrameLevel() + 25)
 
             local icon = badge:CreateTexture(nil, "ARTWORK")
             icon:SetAllPoints(badge)
@@ -518,7 +594,7 @@ local function UpdatePartyMember(frame)
 
             local border = badge:CreateTexture(nil, "OVERLAY")
             border:SetTexture("Interface\\Minimap\\MiniMap-TrackingBorder")
-            border:SetSize(36, 36)
+            border:SetSize(38, 38)
             border:SetPoint("CENTER", badge, "CENTER", 6, -5)
             badge.border = border
 
@@ -536,19 +612,19 @@ local function UpdatePartyMember(frame)
                 end
                 GameTooltip:Hide()
             end)
+            badge:SetScript("OnClick", function(self)
+                local u = self.unit
+                if u and UnitExists(u) and not (InCombatLockdown and InCombatLockdown()) then
+                    pcall(TargetUnit, u)
+                end
+            end)
 
-            local portrait = _G[frame:GetName() .. "Portrait"] or frame.portrait
-            if portrait then
-                badge:SetPoint("BOTTOMRIGHT", portrait, "BOTTOMRIGHT", 2, -2)
-            else
-                badge:SetPoint("TOPLEFT", frame, "TOPLEFT", 2, -2)
-            end
+            badge:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 18, 2)
 
             frame.nkClassBadge = badge
         end
 
         badge.unit = unit
-        badge:SetAttribute("unit", unit)
         ApplyClassTextureToIcon(badge.icon, class)
         badge:Show()
 
@@ -598,7 +674,7 @@ local function UpdateTargetFrame()
         if not badge then
             badge = CreateFrame("Button", nil, TargetFrame)
             badge:SetSize(22, 22)
-            badge:SetFrameLevel(TargetFrame:GetFrameLevel() + 15)
+            badge:SetFrameLevel(TargetFrame:GetFrameLevel() + 25)
             badge:SetPoint("TOPRIGHT", TargetFrame, "TOPRIGHT", -22, -10)
 
             local icon = badge:CreateTexture(nil, "ARTWORK")
@@ -690,7 +766,7 @@ local function UpdateNameplateUnit(unit)
 
         local baseLevel = (healthBar and healthBar.GetFrameLevel and healthBar:GetFrameLevel())
             or (host.GetFrameLevel and host:GetFrameLevel()) or 1
-        badge:SetFrameLevel(baseLevel + 15)
+        badge:SetFrameLevel(baseLevel + 25)
 
         badge:ClearAllPoints()
         if healthBar and healthBar:IsShown() then
@@ -728,7 +804,40 @@ local function EnhanceUnitTooltip(tooltip, unitOverride)
     if not tooltip or not IsClassFeaturesEnabled() then return end
     local _, unit = tooltip:GetUnit()
     unit = unit or unitOverride
-    if not unit or not UnitExists(unit) or not UnitIsPlayer(unit) then return end
+    if not unit or not UnitExists(unit) then return end
+
+    if not UnitIsPlayer(unit) then
+        -- For NPC / creature units, show tracked reagent drops in tooltip if any
+        local uName = UnitName(unit)
+        if uName and FP.GetUnitTrackedReagent then
+            local rInfo = FP:GetUnitTrackedReagent(unit, string.lower(uName))
+            if rInfo then
+                local n = tooltip:NumLines() or 0
+                local tName = tooltip:GetName()
+                local alreadyHas = false
+                if tName then
+                    for i = 1, n do
+                        local line = _G[tName .. "TextLeft" .. i]
+                        if line and line:GetText() and line:GetText():find("Reagente", 1, true) then
+                            alreadyHas = true
+                            break
+                        end
+                    end
+                end
+                if not alreadyHas then
+                    local countStr = ""
+                    if rInfo.targetCount and rInfo.targetCount > 0 then
+                        countStr = string.format(" (%d/%d)", rInfo.curCount or 0, rInfo.targetCount)
+                    elseif rInfo.curCount and rInfo.curCount > 0 then
+                        countStr = string.format(" (%d)", rInfo.curCount)
+                    end
+                    tooltip:AddLine(string.format("|cff40e0d0Reagente tracciato:|r |cffffffff%s|r|cffffd100%s|r", rInfo.name or "Reagente", countStr), 1, 1, 1)
+                    tooltip:Show()
+                end
+            end
+        end
+        return
+    end
 
     local n = tooltip:NumLines() or 0
     local name = tooltip:GetName()

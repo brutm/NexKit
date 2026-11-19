@@ -724,6 +724,8 @@ local function HideSlotOverlay(ov)
     ov.itemIcon = nil
     ov.itemLink = nil
     ov.isTracked = false
+    ov.shouldShowOv = nil
+    ov.shouldShowBtn = nil
     ov.targetRef = nil
     ov.windowRef = nil
     if ov.glow then ov.glow:Hide() end
@@ -940,21 +942,25 @@ local function ApplyReagentOverlayState(ov, itemID, itemName, itemIcon, itemLink
         ov:SetBackdropBorderColor(TRACKED.r, TRACKED.g, TRACKED.b, 0.95)
         ov.glow:SetVertexColor(TRACKED.r, TRACKED.g, TRACKED.b, 0.85)
         ov.glow:Show()
+        ov.shouldShowOv = true
         ov:Show()
     elseif keepInfo then
         ov:SetBackdropBorderColor(QUEST_KEEP.r, QUEST_KEEP.g, QUEST_KEEP.b, 0.96)
         ov.glow:SetVertexColor(QUEST_KEEP.r, QUEST_KEEP.g, QUEST_KEEP.b, 0.82)
         ov.glow:Show()
+        ov.shouldShowOv = true
         ov:Show()
     elseif skillInfo then
         local col = SKILL_COLORS[skillInfo.bestDiff] or ACCENT
         ov:SetBackdropBorderColor(col.r, col.g, col.b, 0.95)
         ov.glow:SetVertexColor(col.r, col.g, col.b, 0.80)
         ov.glow:Show()
+        ov.shouldShowOv = true
         ov:Show()
     else
         ov:SetBackdropBorderColor(0, 0, 0, 0)
         ov.glow:Hide()
+        ov.shouldShowOv = false
         ov:Hide()
     end
 
@@ -963,9 +969,11 @@ local function ApplyReagentOverlayState(ov, itemID, itemName, itemIcon, itemLink
             ApplyTrackButtonVisual(ov)
             ov.trackBtn:SetFrameStrata("DIALOG")
             ov.trackBtn:SetFrameLevel(60)
+            ov.shouldShowBtn = true
             ov.trackBtn:Show()
         else
             ov.trackBtn.hovered = false
+            ov.shouldShowBtn = false
             ov.trackBtn:Hide()
         end
     end
@@ -991,7 +999,14 @@ local function CreateOverlayHost(name, poolTbl, onVisibleTick)
                     ov:Hide()
                     if ov.trackBtn then ov.trackBtn:Hide() end
                 else
-                    if not SyncOverlayToTarget(ov, self, tr, wr) then
+                    if SyncOverlayToTarget(ov, self, tr, wr) then
+                        if ov.shouldShowOv and not ov:IsShown() then
+                            ov:Show()
+                        end
+                        if ov.shouldShowBtn and ov.trackBtn and not ov.trackBtn:IsShown() then
+                            ov.trackBtn:Show()
+                        end
+                    else
                         ov:Hide()
                         if ov.trackBtn then ov.trackBtn:Hide() end
                     end
@@ -2420,8 +2435,6 @@ local function BuildBagSlotFrameIndex()
 end
 
 function FP:RefreshBagOverlays()
-    if InCombatLockdown and InCombatLockdown() then return end
-
     if not IsAnyBagFrameVisible() then
         bagOverlayHost:Hide()
         for _, ov in ipairs(bagOvPool) do
@@ -3204,7 +3217,6 @@ local function HookContainerItemClicks()
     -- Hook 1: ContainerFrameItemButton_OnModifiedClick (Standard Blizzard bag slot modified clicks)
     if type(ContainerFrameItemButton_OnModifiedClick) == "function" then
         hooksecurefunc("ContainerFrameItemButton_OnModifiedClick", function(self, button)
-            if InCombatLockdown and InCombatLockdown() then return end
             if not self or IsForbiddenObj(self) then return end
             if button and button ~= "LeftButton" then return end
             if not (IsAltKeyDown and IsAltKeyDown()) then return end
@@ -3235,7 +3247,6 @@ local function HookContainerItemClicks()
     -- Hook 2: HandleModifiedItemClick (Global handler for links, merchant, profession, bank items)
     if type(HandleModifiedItemClick) == "function" then
         hooksecurefunc("HandleModifiedItemClick", function(link, itemLocation)
-            if InCombatLockdown and InCombatLockdown() then return end
             if not (IsAltKeyDown and IsAltKeyDown()) then return end
             if (IsShiftKeyDown and IsShiftKeyDown()) or (IsControlKeyDown and IsControlKeyDown()) then return end
 
@@ -3259,7 +3270,6 @@ local function HookContainerItemClicks()
     if ContainerFrame_Update and not hookFlags.containerUpdate then
         hookFlags.containerUpdate = true
         hooksecurefunc("ContainerFrame_Update", function(frame)
-            if InCombatLockdown and InCombatLockdown() then return end
             if IsAnyBagFrameVisible() then
                 FP:RefreshBagOverlays()
             end
@@ -3268,7 +3278,6 @@ local function HookContainerItemClicks()
     if ContainerFrameCombinedBags_Update and not hookFlags.combinedBagsUpdate then
         hookFlags.combinedBagsUpdate = true
         hooksecurefunc("ContainerFrameCombinedBags_Update", function(frame)
-            if InCombatLockdown and InCombatLockdown() then return end
             if IsAnyBagFrameVisible() then
                 FP:RefreshBagOverlays()
             end
@@ -3317,7 +3326,6 @@ local bagWatchFrame = CreateFrame("Frame")
 bagWatchFrame.accum = 0
 bagWatchFrame.lastSig = ""
 bagWatchFrame:SetScript("OnUpdate", function(self, elapsed)
-    if InCombatLockdown and InCombatLockdown() then return end
     self.accum = self.accum + elapsed
     if self.accum < 0.10 then return end
     self.accum = 0

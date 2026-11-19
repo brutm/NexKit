@@ -78,6 +78,7 @@ local REAGENT_MOB_MAP = {
             "dark iron", "magram", "gelkis", "galak", "razormane", "bristleback", "dragonmaw",
             "ironband", "dun garok", "witherbark", "scarlet", "scarlatt", "troll", "dwarf",
             "nano", "dwarven", "infiltrator", "renegade", "rinnegato", "marauder",
+            "shadowhide", "gnoll", "campomorto", "orc", "orco", "ogre",
         },
     },
     [4306] = { -- Silk Cloth / Stoffa di Seta
@@ -260,12 +261,13 @@ end
 
 function FP:GetUnitTrackedReagent(unit, lowerMobName)
     if not lowerMobName or lowerMobName == "" then return nil end
-    if not (NexusKitCharDB and NexusKitCharDB.trackedReagents) then return nil end
+    local db = NexKitCharDB or NexusKitCharDB
+    if not (db and db.trackedReagents) then return nil end
 
     local creatureType = unit and UnitCreatureType and UnitCreatureType(unit)
     local lowerType = creatureType and string.lower(creatureType) or nil
 
-    for key, rec in pairs(NexusKitCharDB.trackedReagents) do
+    for key, rec in pairs(db.trackedReagents) do
         if type(rec) == "table" and (rec.name or rec.itemID) then
             local itemID = rec.itemID
             local targetCount = tonumber(rec.target)
