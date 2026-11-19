@@ -2,7 +2,7 @@
 
 > **The Ultimate All-in-One Leveling, Waypoints, Dungeon Tactics & Reagent Tracking Suite for WoW Forever**
 
-[![Version](https://img.shields.io/badge/Version-0.3.2-brightgreen.svg)](#)
+[![Version](https://img.shields.io/badge/Version-0.3.3-brightgreen.svg)](#)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-yellow.svg)](LICENSE)
 [![Interface](https://img.shields.io/badge/WoW%20Forever-1.60.1-blue.svg)](#)
 [![Languages](https://img.shields.io/badge/Locales-EN%20%7C%20IT%20%7C%20DE%20%7C%20ES%20%7C%20FR%20%7C%20RU-orange.svg)](#)
@@ -23,9 +23,10 @@
 * **Inline Note Editing**: Right-click any note or click the note icon to edit task text directly with Enter to save and Escape to cancel.
 * **Strikethrough Archive**: Completed tasks get crossed out with a sleek strikethrough line and can be reopened anytime or cleared from the archive.
 
-### 2. Class Frames, Colors & Portrait Spec Inspector (`/nk classframes`)
-* **Class Colors & Badges**: Automatically colors player health bars with official Blizzard `RAID_CLASS_COLORS` and attaches circular class badges to Party frames, TargetFrame, and Nameplates.
-* **Portrait Talent Spec Inspector**: Hovering over the circular photo (portrait) of yourself, your target, or party members displays their class, active talent specialization (e.g. `Paladino — Castigo (11/0/31)`), and exact talent tree point distribution.
+### 2. Class Frames, Colors, Permanent Party Auras & Portrait Spec Inspector (`/nk classframes`)
+* **Class Colors & Badges**: Automatically colors player health bars and party member names with official Blizzard `RAID_CLASS_COLORS` and attaches circular class badges to Party frames, TargetFrame, and Nameplates.
+* **Permanent Party Buffs & Dispellable Debuffs**: Displays a clean, permanent row directly beneath each party member's frame showing dispellable debuffs (with colored borders by dispel type: Magic, Curse, Disease, Poison) and buffs cast by you, always visible without requiring mouse hover.
+* **Portrait Talent Spec Inspector**: Hovering over the circular photo (portrait) or class badge of yourself, your target, or party members displays their class, active talent specialization (e.g. `Paladino — Castigo (11/0/31)`), and exact talent tree point distribution.
 
 ### 3. Quest-Starter Loot Alert (`/nk questalert`)
 * **Loot Detection**: Instantly alerts you when picking up an item in your bags that begins a quest (`ITEM_STARTS_QUEST`).
