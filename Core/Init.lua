@@ -397,7 +397,6 @@ local SV_DEFAULTS = {
         highlightQuestRewards   = true,
         rewardSpecByClass       = {},
         warnKeepQuestLoot       = true,
-        showBackpackFreeSlots   = true,
         syncDeprioritizeDungeons = true,
         syncPreferWatched       = true,
         syncSuggestTrainers     = true,
@@ -457,6 +456,10 @@ local SV_DEFAULTS = {
         minimapButtonPos        = 220,
         locked                  = false,
         arrowLocked             = false,
+
+        -- Quest Starter Alert & Class Frames
+        enableQuestStarterAlert = true,
+        showClassColorsAndIcons = true,
     },
 }
 
@@ -617,6 +620,19 @@ local function HandleSlashCommand(input)
             NexusKitDB.settings.showZonePOIs = not (NexusKitDB.settings.showZonePOIs == true)
             if FP.RefreshZonePOIs then FP:RefreshZonePOIs() end
             FP:Print("Zone POIs: " .. (NexusKitDB.settings.showZonePOIs and "|cff00ff00ON|r" or "|cffff0000OFF|r"))
+        end
+    elseif cmd == "classframes" or cmd == "classcolors" or cmd == "classicons" then
+        if NexusKitDB and NexusKitDB.settings then
+            NexusKitDB.settings.showClassColorsAndIcons = not (NexusKitDB.settings.showClassColorsAndIcons ~= false)
+            if FP.RefreshClassFrames then FP:RefreshClassFrames() end
+            local st = NexusKitDB.settings.showClassColorsAndIcons and "|cff00ff00ATTIVATI|r" or "|cffff0000DISATTIVATI|r"
+            FP:Print("Colori & Icone di Classe: " .. st)
+        end
+    elseif cmd == "questalert" or cmd == "starteralert" then
+        if NexusKitDB and NexusKitDB.settings then
+            NexusKitDB.settings.enableQuestStarterAlert = not (NexusKitDB.settings.enableQuestStarterAlert ~= false)
+            local st = NexusKitDB.settings.enableQuestStarterAlert and "|cff00ff00ATTIVATO|r" or "|cffff0000DISATTIVATO|r"
+            FP:Print("Avviso Oggetti che Iniziano Missioni: " .. st)
         end
     elseif cmd == "mmtrail" or cmd == "mmroute" or cmd == "minimaptrail" then
         if NexusKitDB and NexusKitDB.settings then

@@ -1394,13 +1394,6 @@ local SETTINGS_CONTROLS = {
             end,
         },
         {
-            kind = "checkbox", key = "showBackpackFreeSlots", default = true,
-            labelKey = "SETTING_BACKPACK_FREE_SLOTS", tipKey = "SETTING_BACKPACK_FREE_SLOTS_TIP", fallback = "Show free slots on Backpack icon",
-            onChange = function()
-                if FP.RefreshBackpackFreeSlots then FP:RefreshBackpackFreeSlots() end
-            end,
-        },
-        {
             kind = "checkbox", key = "syncDeprioritizeDungeons", default = true,
             labelKey = "SETTING_SYNC_NO_DUNGEON", tipKey = "SETTING_SYNC_NO_DUNGEON_TIP", fallback = "Sync: Put dungeons at the end",
             onChange = function()
@@ -1446,6 +1439,17 @@ local SETTINGS_CONTROLS = {
             labelKey = "SETTING_UPCOMING_COUNT", tipKey = "SETTING_UPCOMING_COUNT_TIP", fallback = "Upcoming steps shown",
             onChange = function()
                 if FP.RefreshTracker then FP:RefreshTracker() end
+            end,
+        },
+        {
+            kind = "checkbox", key = "enableQuestStarterAlert", default = true,
+            labelKey = "SETTING_QUEST_STARTER_ALERT", tipKey = "SETTING_QUEST_STARTER_ALERT_TIP", fallback = "Quest-starter item alert",
+        },
+        {
+            kind = "checkbox", key = "showClassColorsAndIcons", default = true,
+            labelKey = "SETTING_CLASS_FRAMES", tipKey = "SETTING_CLASS_FRAMES_TIP", fallback = "Class colors & icons for PCs",
+            onChange = function()
+                if FP.RefreshClassFrames then FP:RefreshClassFrames() end
             end,
         },
         {

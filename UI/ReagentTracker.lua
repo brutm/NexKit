@@ -42,10 +42,6 @@ local function IsQuestKeepEnabled()
     return GetSettings().warnKeepQuestLoot ~= false
 end
 
-local function IsBackpackFreeSlotsEnabled()
-    return GetSettings().showBackpackFreeSlots ~= false
-end
-
 local function IsBagTrackButtonsEnabled()
     return GetSettings().profBagTrackButtons ~= false
 end
@@ -3128,119 +3124,11 @@ function FP:RefreshTrackedReagentsHUD()
     hud:Show()
 end
 
--------------------------------------------------------------------------------
--- 6. Starter Backpack Free Slots Counter (Non-tainting UIParent overlay)
--------------------------------------------------------------------------------
-local function FindBackpackButton()
-    local candidates = {
-        _G.MainMenuBarBackpackButton,
-        _G.BagsBar and _G.BagsBar.BackpackButton,
-    }
-    for _, btn in ipairs(candidates) do
-        if btn and not IsForbiddenObj(btn) then
-            return btn
-        end
-    end
-    return nil
-end
-
-local function HasVisibleNativeBackpackCount(btn)
-    local blizzCount = (btn and not IsForbiddenObj(btn) and btn.Count) or _G.MainMenuBarBackpackButtonCount
-    if blizzCount and not IsForbiddenObj(blizzCount) and blizzCount.IsVisible and blizzCount:IsVisible() and blizzCount.GetText then
-        local ok, txt = pcall(blizzCount.GetText, blizzCount)
-        if ok and IsSafeStr(txt) and txt:match("%d") then
-            return true
-        end
-    end
-    return false
-end
-
-local function CountFreeBagSlots()
-    local fn = (C_Container and C_Container.GetContainerNumFreeSlots) or GetContainerNumFreeSlots
-    if type(fn) ~= "function" then return nil end
-    local totalFree = 0
-    local maxBag = IsSafeNum(NUM_BAG_SLOTS) and NUM_BAG_SLOTS or 4
-    for bag = 0, maxBag do
-        local ok, free, bagFamily = pcall(fn, bag)
-        if ok and IsSafeNum(free) and (bagFamily == nil or bagFamily == 0) then
-            totalFree = totalFree + free
-        end
-    end
-    return totalFree
-end
-
-local backpackFreeFrame = CreateFrame("Frame", "NexusKitBackpackFreeSlotsFrame", UIParent)
-backpackFreeFrame:EnableMouse(false)
-backpackFreeFrame:SetClampedToScreen(true)
-backpackFreeFrame:Hide()
-
-local backpackFreeText = backpackFreeFrame:CreateFontString(nil, "OVERLAY", (NumberFontNormal and "NumberFontNormal") or "GameFontNormal")
-backpackFreeText:SetPoint("BOTTOMRIGHT", backpackFreeFrame, "BOTTOMRIGHT", -2, 2)
-backpackFreeText:SetJustifyH("RIGHT")
-backpackFreeText:SetJustifyV("BOTTOM")
-backpackFreeText:SetTextColor(1.00, 1.00, 1.00, 1)
-backpackFreeText:SetShadowColor(0, 0, 0, 0.95)
-backpackFreeText:SetShadowOffset(1, -1)
-
-backpackFreeFrame:SetScript("OnUpdate", function(self, elapsed)
-    self.accum = (self.accum or 0) + elapsed
-    if self.accum < 0.25 then return end
-    self.accum = 0
-    if not IsBackpackFreeSlotsEnabled() then
-        self:Hide()
-        return
-    end
-    local btn = FindBackpackButton()
-    if not btn or not btn:IsVisible() or HasVisibleNativeBackpackCount(btn) then
-        self:Hide()
-        return
-    end
-    if not PositionFrameOverTarget(self, UIParent, btn, btn, 6, 4) then
-        self:Hide()
-    end
-end)
-
-function FP:RefreshBackpackFreeSlots()
-    if not IsBackpackFreeSlotsEnabled() then
-        backpackFreeFrame:Hide()
-        return
-    end
-    local btn = FindBackpackButton()
-    if not btn or not btn:IsVisible() or HasVisibleNativeBackpackCount(btn) then
-        backpackFreeFrame:Hide()
-        return
-    end
-    local freeSlots = CountFreeBagSlots()
-    if not IsSafeNum(freeSlots) then
-        backpackFreeFrame:Hide()
-        return
-    end
-    local ok, _, h = PositionFrameOverTarget(backpackFreeFrame, UIParent, btn, btn, 6, 4)
-    if not ok then
-        backpackFreeFrame:Hide()
-        return
-    end
-
-    local wantSize = math.max(10, math.min(14, math.floor((h or 36) * 0.36)))
-    if backpackFreeFrame.lastFontH ~= wantSize then
-        local fn = backpackFreeText:GetFont()
-        if fn then
-            backpackFreeText:SetFont(fn, wantSize, "OUTLINE")
-        end
-        backpackFreeFrame.lastFontH = wantSize
-    end
-
-    backpackFreeText:SetText(tostring(freeSlots))
-    backpackFreeText:SetTextColor(1.00, 1.00, 1.00, 1)
-    backpackFreeFrame:Show()
-end
-
 function FP:RefreshReagentTrackerUI()
     self:RefreshTrackedReagentsHUD()
     self:RefreshLootOverlays()
     self:RefreshProfSlotOverlays()
     self:RefreshBagOverlays()
-    self:RefreshBackpackFreeSlots()
 end
 
 -------------------------------------------------------------------------------
@@ -3553,18 +3441,14 @@ evFrame:SetScript("OnEvent", function(_, event, arg1)
         EnsureCharTables()
         EnsureHooks()
         FP:RefreshTrackedReagentsHUD()
-        FP:RefreshBackpackFreeSlots()
         SafeAfter(0.25, function()
             EnsureHooks()
-            FP:RefreshBackpackFreeSlots()
             if IsAnyBagFrameVisible() then FP:RefreshBagOverlays() end
         end)
-        SafeAfter(1.00, function() FP:RefreshBackpackFreeSlots() end)
     elseif event == "BAG_OPEN" or event == "BAG_CLOSED" then
         EnsureHooks()
         ScheduleBagShowRefreshes()
     elseif event == "BAG_UPDATE" or event == "BAG_CONTAINER_UPDATE" or event == "BAG_SLOT_FLAGS_UPDATED" or event == "UI_SCALE_CHANGED" or event == "DISPLAY_SIZE_CHANGED" or event == "CINEMATIC_STOP" or event == "UNIT_EXITED_VEHICLE" or event == "PLAYER_REGEN_ENABLED" then
-        FP:RefreshBackpackFreeSlots()
         if FP.RefreshTrackedReagentsHUD then
             FP:RefreshTrackedReagentsHUD()
         end
@@ -3624,7 +3508,6 @@ evFrame:SetScript("OnEvent", function(_, event, arg1)
         FP:RefreshTrackedReagentsHUD()
         FP:RefreshBagOverlays()
         FP:RefreshProfSlotOverlays()
-        FP:RefreshBackpackFreeSlots()
     elseif event == "GET_ITEM_INFO_RECEIVED" and IsSafeNum(arg1) then
         local tracked = NexusKitCharDB and NexusKitCharDB.trackedReagents
         if type(tracked) == "table" and tracked[tostring(arg1)] then

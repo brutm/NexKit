@@ -452,6 +452,16 @@ local enUS = {
     TRACKER_TRAIN_CLICK_TIP          = "Click row to guide to this class trainer.",
     SETTING_SYNC_TRAINERS            = "Sync: Suggest class trainer by level",
     SETTING_SYNC_TRAINERS_TIP        = "Adds a trainer stop to your route and map trajectory whenever your level unlocks unlearned class skills.",
+
+    -- Quest Starter Alert & Class Frames
+    QUEST_STARTER_ALERT_TITLE        = "New Quest Available",
+    QUEST_STARTER_ALERT_DESC         = "You picked up an item that begins a quest!\nWould you like to start the quest now?",
+    QUEST_STARTER_ALERT_START        = "Start Quest",
+    QUEST_STARTER_ALERT_LATER        = "Later",
+    SETTING_QUEST_STARTER_ALERT      = "Quest-starter item alert",
+    SETTING_QUEST_STARTER_ALERT_TIP  = "Shows a prompt popup whenever you loot an item in your bags that begins a quest and lets you start it immediately.",
+    SETTING_CLASS_FRAMES             = "Class colors & icons for PCs",
+    SETTING_CLASS_FRAMES_TIP         = "Colors healthbars by player class and displays circular class badges on Party frames, TargetFrame, and Nameplates.",
 }
 
 FP.Locales["enUS"] = enUS

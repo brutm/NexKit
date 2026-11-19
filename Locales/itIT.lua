@@ -442,4 +442,14 @@ FP.Locales["itIT"] = {
     TRACKER_TRAIN_CLICK_TIP          = "Clicca la riga per guidarti all'istruttore di classe.",
     SETTING_SYNC_TRAINERS            = "Sync: Suggerisci istruttore per livello e skill",
     SETTING_SYNC_TRAINERS_TIP        = "Aggiunge una tappa al trainer nella lista e nella traiettoria su mappa quando hai abilita non ancora imparate.",
+
+    -- Quest Starter Alert & Class Frames
+    QUEST_STARTER_ALERT_TITLE        = "Nuova Missione Disponibile",
+    QUEST_STARTER_ALERT_DESC         = "Hai raccolto un oggetto che avvia una missione!\nVuoi iniziare la missione adesso?",
+    QUEST_STARTER_ALERT_START        = "Inizia Missione",
+    QUEST_STARTER_ALERT_LATER        = "Piu tardi",
+    SETTING_QUEST_STARTER_ALERT      = "Avviso oggetti che iniziano missioni",
+    SETTING_QUEST_STARTER_ALERT_TIP  = "Mostra una finestra di dialogo quando raccogli un oggetto nelle borse che avvia una missione e permette di aprirla subito.",
+    SETTING_CLASS_FRAMES             = "Colori e icone di classe per PG",
+    SETTING_CLASS_FRAMES_TIP         = "Colora le barre della salute in base alla classe e mostra l'icona circolare di classe nel Party, sul Target e sui Nameplate.",
 }
