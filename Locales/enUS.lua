@@ -329,6 +329,7 @@ local enUS = {
     TODO_SHOW_HUD           = "On-screen HUD",
     TODO_CLEAR_DONE         = "Clear Archive",
     TODO_CLEAR_DONE_TIP     = "Permanently deletes completed tasks from archive.",
+    TODO_EDIT_TIP           = "Edit note (or Right-Click row)",
     TODO_MOVE_UP            = "Move up (Higher priority)",
     TODO_MOVE_DOWN          = "Move down",
     TODO_DEL_TIP            = "Delete task",

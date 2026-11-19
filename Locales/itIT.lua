@@ -319,6 +319,7 @@ FP.Locales["itIT"] = {
     TODO_SHOW_HUD           = "HUD a schermo",
     TODO_CLEAR_DONE         = "Svuota Archivio",
     TODO_CLEAR_DONE_TIP     = "Elimina definitivamente i promemoria completati dall'archivio.",
+    TODO_EDIT_TIP           = "Modifica nota (oppure clicca col tasto destro sulla riga)",
     TODO_MOVE_UP            = "Sposta su (Priorita piu alta)",
     TODO_MOVE_DOWN          = "Sposta giu",
     TODO_DEL_TIP            = "Elimina promemoria",

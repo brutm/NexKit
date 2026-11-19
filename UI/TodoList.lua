@@ -294,6 +294,62 @@ emptyFs:SetJustifyH("CENTER")
 emptyFs:Hide()
 
 local taskRows = {}
+local currentlyEditingRow = nil
+
+local function CancelEditingRow(row)
+    if not row or not row.isEditing then return end
+    row.isEditing = false
+    if currentlyEditingRow == row then
+        currentlyEditingRow = nil
+    end
+    if row.inlineEditBox then
+        row.inlineEditBox:Hide()
+    end
+    if row.textFs then
+        row.textFs:Show()
+    end
+    if row.task and row.task.done and row.strikeLine then
+        row.strikeLine:Show()
+    end
+    FP:RefreshTodoListUI()
+end
+
+local function SaveAndStopEditingRow(row)
+    if not row or not row.isEditing then return end
+    row.isEditing = false
+    if currentlyEditingRow == row then
+        currentlyEditingRow = nil
+    end
+    local newText = row.inlineEditBox and row.inlineEditBox:GetText()
+    if row.inlineEditBox then
+        row.inlineEditBox:Hide()
+    end
+    if row.textFs then
+        row.textFs:Show()
+    end
+    if row.task and newText and newText:match("%S") then
+        FP:EditTodoTask(row.task.id, currentScope, newText)
+    else
+        FP:RefreshTodoListUI()
+    end
+end
+
+local function StartEditingRow(row)
+    if not row or not row.task then return end
+    if currentlyEditingRow and currentlyEditingRow ~= row then
+        SaveAndStopEditingRow(currentlyEditingRow)
+    end
+    currentlyEditingRow = row
+    row.isEditing = true
+    if row.textFs then row.textFs:Hide() end
+    if row.strikeLine then row.strikeLine:Hide() end
+    if row.inlineEditBox then
+        row.inlineEditBox:SetText(row.task.text or "")
+        row.inlineEditBox:Show()
+        row.inlineEditBox:SetFocus()
+        row.inlineEditBox:HighlightText()
+    end
+end
 
 local function GetOrCreateTaskRow(index)
     local row = taskRows[index]
@@ -405,13 +461,62 @@ local function GetOrCreateTaskRow(index)
     end)
     row.dnBtn = dnBtn
 
+    -- Edit Button (Blizzard Note/Pencil texture)
+    local editBtn = CreateFrame("Button", nil, row)
+    editBtn:SetSize(16, 16)
+    editBtn:SetPoint("RIGHT", dnBtn, "LEFT", -1, 0)
+    editBtn:SetNormalTexture("Interface\\FriendsFrame\\UI-FriendsFrame-Note")
+    editBtn:SetPushedTexture("Interface\\FriendsFrame\\UI-FriendsFrame-Note")
+    editBtn:SetHighlightTexture("Interface\\Buttons\\UI-Common-MouseHilight", "ADD")
+    editBtn:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        GameTooltip:SetText((FP.L and FP.L["TODO_EDIT_TIP"]) or "Modifica nota (oppure tasto destro)")
+        GameTooltip:Show()
+    end)
+    editBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    editBtn:SetScript("OnClick", function()
+        StartEditingRow(row)
+    end)
+    row.editBtn = editBtn
+
     -- Task text
     local textFs = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     textFs:SetPoint("LEFT", checkBtn, "RIGHT", 8, 0)
-    textFs:SetPoint("RIGHT", dnBtn, "LEFT", -6, 0)
+    textFs:SetPoint("RIGHT", editBtn, "LEFT", -4, 0)
     textFs:SetJustifyH("LEFT")
     textFs:SetWordWrap(false)
     row.textFs = textFs
+
+    -- Inline EditBox
+    local inlineEditBox = CreateFrame("EditBox", nil, row, "BackdropTemplate")
+    inlineEditBox:SetPoint("LEFT", checkBtn, "RIGHT", 6, 0)
+    inlineEditBox:SetPoint("RIGHT", editBtn, "LEFT", -4, 0)
+    inlineEditBox:SetHeight(18)
+    inlineEditBox:SetBackdrop({
+        bgFile   = "Interface\\Buttons\\WHITE8x8",
+        edgeFile = "Interface\\Buttons\\WHITE8x8",
+        edgeSize = 1,
+    })
+    inlineEditBox:SetBackdropColor(0.04, 0.06, 0.09, 0.98)
+    inlineEditBox:SetBackdropBorderColor(ACCENT.r, ACCENT.g, ACCENT.b, 0.95)
+    inlineEditBox:SetFontObject("GameFontHighlightSmall")
+    inlineEditBox:SetAutoFocus(false)
+    inlineEditBox:SetTextInsets(4, 4, 0, 0)
+    inlineEditBox:SetMaxLetters(140)
+    inlineEditBox:Hide()
+
+    inlineEditBox:SetScript("OnEnterPressed", function()
+        SaveAndStopEditingRow(row)
+    end)
+    inlineEditBox:SetScript("OnEscapePressed", function()
+        CancelEditingRow(row)
+    end)
+    inlineEditBox:SetScript("OnEditFocusLost", function()
+        if row.isEditing then
+            SaveAndStopEditingRow(row)
+        end
+    end)
+    row.inlineEditBox = inlineEditBox
 
     -- Strikethrough horizontal line across completed tasks
     local strikeLine = row:CreateTexture(nil, "OVERLAY", nil, 3)
@@ -426,7 +531,15 @@ local function GetOrCreateTaskRow(index)
         end
     end
     checkBtn:SetScript("OnClick", ToggleDone)
-    row:SetScript("OnClick", ToggleDone)
+
+    row:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+    row:SetScript("OnClick", function(self, button)
+        if button == "RightButton" then
+            StartEditingRow(self)
+        else
+            ToggleDone()
+        end
+    end)
 
     row:SetScript("OnEnter", function(self)
         if self.task and self.task.done then
@@ -438,13 +551,17 @@ local function GetOrCreateTaskRow(index)
             GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
             GameTooltip:SetText(self.task.text or "Promemoria", 1, 1, 1, 1, true)
             GameTooltip:AddLine(string.format("Creato: %s", self.task.created), 0.65, 0.65, 0.65)
+            if self.task.edited then
+                GameTooltip:AddLine(string.format("Modificato: %s", self.task.edited), 0.55, 0.55, 0.55)
+            end
             if self.task.done then
                 GameTooltip:AddLine("Stato: |cff00ff00Completato (Tagliato)|r", 0.7, 0.7, 0.7)
-                GameTooltip:AddLine("|cff40e0ffClicca per riprendere il task|r (rimuovi la spunta).", 0.5, 0.8, 0.9)
+                GameTooltip:AddLine("|cff40e0ffClick sinistro|r: riprendi promemoria.", 0.5, 0.8, 0.9)
             else
                 GameTooltip:AddLine("Stato: |cff40e0ffIn corso (Da fare)|r", 0.7, 0.7, 0.7)
-                GameTooltip:AddLine("Clicca per spuntare / completare.", 0.5, 0.8, 0.9)
+                GameTooltip:AddLine("|cff40e0ffClick sinistro|r: completa promemoria.", 0.5, 0.8, 0.9)
             end
+            GameTooltip:AddLine("|cffffff00Click destro o icona nota|r: modifica testo.", 0.9, 0.85, 0.4)
             GameTooltip:Show()
         end
     end)
@@ -791,6 +908,11 @@ function FP:RefreshTodoListUI()
     for i, t in ipairs(filtered) do
         local row = GetOrCreateTaskRow(i)
         row.task = t
+        if row.isEditing then
+            row.isEditing = false
+            if row.inlineEditBox then row.inlineEditBox:Hide() end
+            row.textFs:Show()
+        end
         row.textFs:SetText(t.text or "?")
 
         if t.done then
@@ -870,6 +992,25 @@ function FP:AddTodoTask(text, scope)
 
     pcall(PlaySound, SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON or 856, "Master")
     self:RefreshTodoListUI()
+end
+
+function FP:EditTodoTask(id, scope, newText)
+    EnsureTodoTables()
+    if not id or not newText then return end
+    newText = newText:match("^%s*(.-)%s*$") or ""
+    if newText == "" then return end
+
+    local list = GetTodoList(scope or currentScope)
+    for _, t in ipairs(list) do
+        if t.id == id then
+            t.text = newText
+            t.edited = (date and date("%d/%m %H:%M")) or "Adesso"
+            pcall(PlaySound, SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON or 856, "Master")
+            break
+        end
+    end
+    self:RefreshTodoListUI()
+    self:RefreshTodoHUD()
 end
 
 function FP:ToggleTodoTaskDone(id, scope)
