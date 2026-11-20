@@ -69,32 +69,85 @@ local function FormatQuestTitle(s)
 end
 
 local STOP_WORDS = {
-    ["slain"] = true, ["killed"] = true, ["kill"] = true,
-    ["collected"] = true, ["gather"] = true, ["destroy"] = true,
-    ["ucciso"] = true, ["uccisi"] = true, ["raccogli"] = true, ["trova"] = true,
+    ["slain"] = true, ["killed"] = true, ["kill"] = true, ["slay"] = true,
+    ["collected"] = true, ["gather"] = true, ["gathered"] = true, ["destroy"] = true, ["destroyed"] = true,
+    ["ucciso"] = true, ["uccisi"] = true, ["uccisa"] = true, ["uccise"] = true,
+    ["raccolto"] = true, ["raccolti"] = true, ["raccolta"] = true, ["raccolte"] = true,
+    ["ottenuto"] = true, ["ottenuti"] = true, ["ottenuta"] = true, ["ottenute"] = true,
+    ["trova"] = true, ["trovato"] = true, ["trovati"] = true, ["trovata"] = true,
+    ["distrutto"] = true, ["distrutti"] = true,
+    ["getötet"] = true, ["gesammelt"] = true, ["zerstört"] = true,
+    ["tué"] = true, ["tués"] = true, ["collecté"] = true, ["collectés"] = true,
+    ["asesinado"] = true, ["asesinados"] = true, ["recogido"] = true,
     ["level"] = true, ["the"] = true, ["and"] = true, ["for"] = true,
-    ["with"] = true, ["from"] = true,
+    ["with"] = true, ["from"] = true, ["di"] = true, ["del"] = true, ["della"] = true,
+    ["dei"] = true, ["degli"] = true, ["da"] = true, ["in"] = true, ["su"] = true, ["per"] = true,
+    ["a"] = true, ["an"] = true, ["to"] = true, ["of"] = true,
 }
 
 local MODIFIER_WORDS = {
-    ["black"] = true, ["nero"] = true, ["neri"] = true,
-    ["red"] = true, ["rosso"] = true, ["rossi"] = true,
+    -- Size
+    ["pygmy"] = true, ["pigmeo"] = true, ["pigmei"] = true, ["pigmea"] = true, ["pigmee"] = true,
+    ["giant"] = true, ["gigante"] = true, ["giganti"] = true,
+    ["small"] = true, ["piccolo"] = true, ["piccoli"] = true, ["piccola"] = true, ["piccole"] = true,
+    ["big"] = true, ["grande"] = true, ["grandi"] = true,
+    ["huge"] = true, ["enorme"] = true, ["enormi"] = true,
+    ["massive"] = true, ["massiccio"] = true, ["colossal"] = true,
+    -- Age / Rank / Family / State
+    ["young"] = true, ["giovane"] = true, ["giovani"] = true,
+    ["elder"] = true, ["anziano"] = true, ["anziani"] = true,
+    ["ancient"] = true, ["antico"] = true, ["antichi"] = true, ["antiche"] = true,
+    ["veteran"] = true, ["veterano"] = true, ["veterani"] = true,
+    ["prime"] = true,
+    ["matriarch"] = true, ["matriarca"] = true,
+    ["patriarch"] = true, ["patriarca"] = true,
+    ["lord"] = true, ["lady"] = true, ["boss"] = true,
+    ["alpha"] = true, ["alfa"] = true,
+    ["leader"] = true, ["chief"] = true, ["capo"] = true,
+    ["chieftain"] = true, ["capotribù"] = true,
+    ["lesser"] = true, ["inferiore"] = true, ["inferiori"] = true, ["minore"] = true, ["minori"] = true,
+    ["greater"] = true, ["superiore"] = true, ["superiori"] = true, ["maggiore"] = true, ["maggiori"] = true,
+    ["deep"] = true, ["profondo"] = true, ["profondi"] = true,
+    ["raging"] = true, ["furioso"] = true, ["furiosi"] = true, ["furious"] = true,
+    ["diseased"] = true, ["malato"] = true, ["malati"] = true,
+    ["decaying"] = true, ["marcescente"] = true, ["marcescenti"] = true, ["rot"] = true,
+    ["crazed"] = true, ["folle"] = true, ["folli"] = true,
+    ["rabid"] = true, ["idrofobo"] = true,
+    ["starving"] = true, ["affamato"] = true, ["affamati"] = true,
+    ["frenzied"] = true, ["frenetico"] = true, ["frenetici"] = true,
+    ["corrupted"] = true, ["corrotto"] = true, ["corrotti"] = true,
+    ["tainted"] = true, ["infetto"] = true, ["infetti"] = true,
+    ["mad"] = true, ["pazzo"] = true, ["pazzi"] = true,
+    ["feral"] = true, ["ferale"] = true, ["ferali"] = true,
+    ["wild"] = true, ["selvaggio"] = true, ["selvaggi"] = true,
+    -- Role / Caste
+    ["scout"] = true, ["esploratore"] = true, ["esploratori"] = true,
+    ["sentry"] = true, ["sentinella"] = true, ["sentinelle"] = true,
+    ["warrior"] = true, ["guerriero"] = true, ["guerrieri"] = true,
+    ["shaman"] = true, ["sciamano"] = true, ["sciamani"] = true,
+    ["herbalist"] = true, ["erborista"] = true, ["erboristi"] = true,
+    ["rogue"] = true, ["ladro"] = true, ["ladri"] = true,
+    ["bandit"] = true, ["bandito"] = true, ["banditi"] = true,
+    ["trapper"] = true, ["bracconiere"] = true, ["bracconieri"] = true,
+    ["hunter"] = true, ["cacciatore"] = true, ["cacciatori"] = true,
+    ["miner"] = true, ["minatore"] = true, ["minatori"] = true,
+    ["worker"] = true, ["lavoratore"] = true, ["operaio"] = true, ["operai"] = true,
+    ["guard"] = true, ["guardia"] = true, ["guardie"] = true,
+    ["outrunner"] = true, ["renegade"] = true, ["rinnegato"] = true,
+    ["raider"] = true, ["predatore"] = true, ["marauder"] = true,
+    ["infiltrator"] = true, ["infiltrato"] = true,
+    ["brigand"] = true, ["brigante"] = true, ["briganti"] = true,
+    ["thief"] = true, ["tagliaborse"] = true, ["cutpurse"] = true,
+    ["footpad"] = true, ["defias"] = true,
+    -- Colors
+    ["black"] = true, ["nero"] = true, ["neri"] = true, ["nera"] = true, ["nere"] = true,
+    ["red"] = true, ["rosso"] = true, ["rossi"] = true, ["rossa"] = true, ["rosse"] = true,
     ["green"] = true, ["verde"] = true, ["verdi"] = true,
     ["blue"] = true, ["blu"] = true,
-    ["white"] = true, ["bianco"] = true, ["bianchi"] = true,
+    ["white"] = true, ["bianco"] = true, ["bianchi"] = true, ["bianca"] = true, ["bianche"] = true,
     ["yellow"] = true, ["giallo"] = true, ["gialli"] = true,
-    ["dark"] = true, ["scuro"] = true, ["oscur"] = true,
-    ["light"] = true, ["chiaro"] = true,
-    ["lesser"] = true, ["inferiore"] = true, ["minore"] = true,
-    ["greater"] = true, ["superiore"] = true, ["maggiore"] = true,
-    ["young"] = true, ["giovane"] = true,
-    ["giant"] = true, ["gigante"] = true,
-    ["wild"] = true, ["selvaggio"] = true,
-    ["ancient"] = true, ["antico"] = true,
-    ["elder"] = true, ["anziano"] = true,
-    ["small"] = true, ["piccolo"] = true,
-    ["big"] = true, ["grande"] = true,
-    ["huge"] = true, ["enorme"] = true,
+    ["dark"] = true, ["scuro"] = true, ["scuri"] = true, ["scura"] = true, ["scure"] = true,
+    ["light"] = true, ["chiaro"] = true, ["chiari"] = true,
 }
 
 local CROSS_LANG_STEMS = {
@@ -127,83 +180,144 @@ local CROSS_LANG_STEMS = {
     ["raccogli"] = "collect", ["trova"] = "find",
 }
 
+local function NormalizeSingular(w)
+    if not w or #w <= 3 then return w end
+    if #w > 4 and w:sub(-3) == "ies" then
+        return w:sub(1, -4) .. "y"
+    end
+    if #w > 4 and w:sub(-2) == "es" then
+        return w:sub(1, -3)
+    end
+    if #w > 3 and w:sub(-1) == "s" and w:sub(-2) ~= "ss" then
+        return w:sub(1, -2)
+    end
+    if #w > 3 and w:sub(-1) == "i" then
+        return w:sub(1, -2) .. "o"
+    end
+    return w
+end
+
+local function WordsMatch(w1, w2)
+    if w1 == w2 then return true end
+    local s1 = NormalizeSingular(w1)
+    local s2 = NormalizeSingular(w2)
+    if s1 == s2 then return true end
+    if CROSS_LANG_STEMS[w1] == w2 or CROSS_LANG_STEMS[w2] == w1 then return true end
+    if CROSS_LANG_STEMS[s1] == s2 or CROSS_LANG_STEMS[s2] == s1 then return true end
+    return false
+end
+
+local function CleanObjectiveWords(objText)
+    if not Plain(objText) then return {} end
+    local s = objText:lower():gsub("^%s*(.-)%s*$", "%1")
+    s = s:gsub("^%d+%s*/%s*%d+%s*", "")
+    s = s:gsub("^%d+%s+of%s+%d+%s*", "")
+    s = s:gsub("%s*:%s*%d+%s*/%s*%d+%s*$", "")
+    s = s:gsub("%s*%d+%s*/%s*%d+%s*$", "")
+    s = s:gsub("%s*:%s*%d+%s*$", "")
+    s = s:gsub("%s*%(.-%)%s*$", "")
+    s = s:gsub("[%p%c]", " ")
+
+    local words = {}
+    for w in s:gmatch("%S+") do
+        words[#words + 1] = w
+    end
+
+    while #words > 0 and STOP_WORDS[words[1]] do
+        table.remove(words, 1)
+    end
+    while #words > 0 and STOP_WORDS[words[#words]] do
+        table.remove(words, #words)
+    end
+
+    return words
+end
+
 local function UnitMatchesObjective(lowerName, obj)
     if not Plain(lowerName) or lowerName == "" or not obj or not Plain(obj.text) then
         return false
     end
-    local objLower = obj.text
 
-    -- 1. Exact substring match in either direction
-    if objLower:find(lowerName, 1, true) then
-        return true
+    local targetWords = CleanObjectiveWords(obj.text)
+    if #targetWords == 0 then return false end
+
+    local cleanName = lowerName:gsub("[%p%c]", " ")
+    local unitWords = {}
+    for w in cleanName:gmatch("%S+") do
+        if not STOP_WORDS[w] then
+            unitWords[#unitWords + 1] = w
+        end
     end
+    if #unitWords == 0 then return false end
 
-    -- Clean objective text of numbers, progress like "0/6", and punctuation
-    local cleanObj = objLower:gsub("%d+%s*/%s*%d+", " "):gsub("%d+", " "):gsub("[%p%c]", " ")
-
-    -- 2. Forward matching: check each significant word of lowerName in cleanObj
-    local matchCount = 0
-    local totalSigWords = 0
-    local hasSpecificMatch = false
-    for word in lowerName:gmatch("%S+") do
-        if #word >= 3 and not STOP_WORDS[word] then
-            totalSigWords = totalSigWords + 1
-            local stem4 = word:sub(1, math.min(#word, 4))
-            local stem5 = (#word >= 5) and word:sub(1, math.min(#word, 5)) or stem4
-            local trans = CROSS_LANG_STEMS[word] or CROSS_LANG_STEMS[stem5] or CROSS_LANG_STEMS[stem4]
-            local matched = cleanObj:find(word, 1, true) or cleanObj:find(stem4, 1, true)
-                or (trans and (cleanObj:find(trans, 1, true) or cleanObj:find(trans:sub(1, math.min(#trans, 4)), 1, true)))
-            if matched then
-                matchCount = matchCount + 1
-                if not MODIFIER_WORDS[word] and not (trans and MODIFIER_WORDS[trans]) then
-                    hasSpecificMatch = true
-                end
+    -- Check words of target in unit
+    local missingFromUnit = {}
+    for _, tw in ipairs(targetWords) do
+        local found = false
+        for _, uw in ipairs(unitWords) do
+            if WordsMatch(tw, uw) then
+                found = true
+                break
             end
         end
-    end
-
-    if totalSigWords > 0 and matchCount > 0 and hasSpecificMatch then
-        if totalSigWords == 1 and matchCount >= 1 then
-            return true
-        elseif totalSigWords == 2 and matchCount >= 2 then
-            return true
-        elseif totalSigWords >= 3 and matchCount >= 2 and (matchCount / totalSigWords >= 0.5) then
-            return true
+        if not found then
+            missingFromUnit[#missingFromUnit + 1] = tw
         end
     end
 
-    -- 3. Reverse matching: check each significant word of cleanObj in lowerName
-    local revMatch = 0
-    local revSig = 0
-    local revHasSpecific = false
-    for word in cleanObj:gmatch("%S+") do
-        if #word >= 3 and not STOP_WORDS[word] then
-            revSig = revSig + 1
-            local stem4 = word:sub(1, math.min(#word, 4))
-            local stem5 = (#word >= 5) and word:sub(1, math.min(#word, 5)) or stem4
-            local trans = CROSS_LANG_STEMS[word] or CROSS_LANG_STEMS[stem5] or CROSS_LANG_STEMS[stem4]
-            local matched = lowerName:find(word, 1, true) or lowerName:find(stem4, 1, true)
-                or (trans and (lowerName:find(trans, 1, true) or lowerName:find(trans:sub(1, math.min(#trans, 4)), 1, true)))
-            if matched then
-                revMatch = revMatch + 1
-                if not MODIFIER_WORDS[word] and not (trans and MODIFIER_WORDS[trans]) then
-                    revHasSpecific = true
-                end
+    -- Check words of unit in target
+    local extraInUnit = {}
+    for _, uw in ipairs(unitWords) do
+        local found = false
+        for _, tw in ipairs(targetWords) do
+            if WordsMatch(uw, tw) then
+                found = true
+                break
             end
         end
-    end
-
-    if revSig > 0 and revMatch > 0 and revHasSpecific then
-        if revSig == 1 and revMatch >= 1 then
-            return true
-        elseif revSig == 2 and revMatch >= 2 then
-            return true
-        elseif revSig >= 3 and revMatch >= 2 and (revMatch / revSig >= 0.5) then
-            return true
+        if not found then
+            extraInUnit[#extraInUnit + 1] = uw
         end
     end
 
-    return false
+    -- If target has a modifier that unit is missing -> REJECT!
+    -- e.g. Target: "Pygmy Venom Web Spider" vs Unit: "Venom Web Spider" (missing "pygmy")
+    for _, mw in ipairs(missingFromUnit) do
+        if MODIFIER_WORDS[mw] or MODIFIER_WORDS[NormalizeSingular(mw)] then
+            return false
+        end
+    end
+
+    -- If unit has a modifier that target did not specify -> REJECT!
+    -- e.g. Target: "Venom Web Spider" vs Unit: "Pygmy Venom Web Spider" (extra "pygmy")
+    for _, ew in ipairs(extraInUnit) do
+        if MODIFIER_WORDS[ew] or MODIFIER_WORDS[NormalizeSingular(ew)] then
+            return false
+        end
+    end
+
+    -- If both missing and extra words exist -> conflict, REJECT!
+    if #missingFromUnit > 0 and #extraInUnit > 0 then
+        return false
+    end
+
+    -- If unit matched 0 words of target -> REJECT!
+    local matchedCount = #unitWords - #extraInUnit
+    if matchedCount <= 0 then
+        return false
+    end
+
+    -- For multi-word targets (2+ words), require all target words to match
+    if #targetWords >= 2 and #missingFromUnit > 0 then
+        return false
+    end
+
+    -- For multi-word units (2+ words), require all unit words to match
+    if #unitWords >= 2 and #extraInUnit > 0 then
+        return false
+    end
+
+    return true
 end
 
 local function MatchesObjTable(lowerName, list)
@@ -443,7 +557,7 @@ end
 
 local function InspectUnitTooltip(unit, lowerName)
     if not Plain(unit) or not (UnitExists and SafeCall(UnitExists, unit)) then
-        return false, false, false, nil, nil
+        return false, false, false, nil, nil, false
     end
 
     local lines = {}
@@ -464,7 +578,24 @@ local function InspectUnitTooltip(unit, lowerName)
     end
 
     if #lines == 0 then
-        return false, false, false, nil, nil
+        local st = GetScanTooltip()
+        st:ClearLines()
+        local ok = pcall(st.SetUnit, st, unit)
+        if ok then
+            local n = st:NumLines() or 0
+            for i = 2, n do
+                local fs = _G["NexusKitScanTooltipTextLeft" .. i]
+                local txt = fs and fs:GetText()
+                if txt and txt ~= "" then
+                    lines[#lines + 1] = { text = txt }
+                end
+            end
+        end
+    end
+
+    local hasTooltipData = (#lines > 0)
+    if not hasTooltipData then
+        return false, false, false, nil, nil, false
     end
 
     local hasReadyTitle = false
@@ -540,7 +671,7 @@ local function InspectUnitTooltip(unit, lowerName)
     end
 
     local hasCompletedOnlyObj = (not hasIncompleteObj) and (sawObjLine or (hasReadyTitle and not sawIncompleteTitle))
-    return hasReadyTitle, hasIncompleteObj, hasCompletedOnlyObj, detectedRole, detectedQuestTitle or lastSeenTitle
+    return hasReadyTitle, hasIncompleteObj, hasCompletedOnlyObj, detectedRole, detectedQuestTitle or lastSeenTitle, true
 end
 
 local function ClassifyUnit(unit)
@@ -581,14 +712,6 @@ local function ClassifyUnit(unit)
         return nil, nil
     end
 
-    -- 4. Attackable unit (kill / loot quest target)
-    local isUnfinished, unfinRole, unfinQuest = false, nil, nil
-    local isFinished, finRole = false, nil
-    if lowerName then
-        isUnfinished, unfinRole, unfinQuest = MatchesObjTable(lowerName, unfinishedObjectives)
-        isFinished, finRole = MatchesObjTable(lowerName, finishedObjectives)
-    end
-
     -- Helper to check if this creature drops a currently tracked reagent
     local function CheckTrackedReagent()
         if FP.GetUnitTrackedReagent and lowerName then
@@ -600,28 +723,40 @@ local function ClassifyUnit(unit)
         return nil, nil
     end
 
+    -- 4. Attackable unit (kill / loot quest target)
+    -- Ground Truth: check Blizzard's live tooltip first!
+    local hasReadyTitle, hasIncompleteObj, hasCompletedOnlyObj, tipRole, tipQuest, hasTooltipData = InspectUnitTooltip(unit, lowerName)
+
+    if hasIncompleteObj then
+        return (tipRole or "KILL"), tipQuest
+    end
+
+    if hasCompletedOnlyObj and not hasIncompleteObj then
+        return CheckTrackedReagent()
+    end
+
+    -- If the unit's tooltip was successfully inspected and Blizzard confirmed it has NO quest objectives,
+    -- then this unit is definitively NOT an active quest objective.
+    if hasTooltipData then
+        return CheckTrackedReagent()
+    end
+
+    -- 5. Fallback for distant nameplates where tooltip data is not yet cached:
+    local isUnfinished, unfinRole, unfinQuest = false, nil, nil
+    local isFinished, finRole = false, nil
+    if lowerName then
+        isUnfinished, unfinRole, unfinQuest = MatchesObjTable(lowerName, unfinishedObjectives)
+        isFinished, finRole = MatchesObjTable(lowerName, finishedObjectives)
+    end
+
     -- If this mob type matches a COMPLETED quest objective, check if it drops a tracked reagent
     if isFinished and not isUnfinished then
         return CheckTrackedReagent()
     end
 
-    -- Direct Quest Log active objective match
+    -- Direct Quest Log active objective match (strict word-based matcher)
     if isUnfinished then
         return (unfinRole or "KILL"), unfinQuest
-    end
-
-    -- Live Tooltip inspection
-    local hasReadyTitle, hasIncompleteObj, hasCompletedOnlyObj, tipRole, tipQuest = InspectUnitTooltip(unit, lowerName)
-    if hasCompletedOnlyObj and not hasIncompleteObj then
-        return CheckTrackedReagent()
-    end
-    if hasIncompleteObj then
-        return (tipRole or "KILL"), tipQuest
-    end
-
-    -- If finished in quest log or tooltip, check if it drops a tracked reagent
-    if isFinished then
-        return CheckTrackedReagent()
     end
 
     -- Active Route Step matching (ONLY if step quest is not complete, and mob is not already finished)
