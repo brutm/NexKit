@@ -14,7 +14,18 @@ FP.OnStepChangedCallbacks = FP.OnStepChangedCallbacks or {}
 ------------------------------------------------------------------------
 -- Version & Media (mirror of TOC) & Global Export
 ------------------------------------------------------------------------
-FP.VERSION      = "0.2.1"
+local function GetAddonVersion()
+    local name = addonName or "NexusKit"
+    local v
+    if C_AddOns and C_AddOns.GetAddOnMetadata then
+        v = C_AddOns.GetAddOnMetadata(name, "Version") or C_AddOns.GetAddOnMetadata("NexusKit", "Version") or C_AddOns.GetAddOnMetadata("NexKit", "Version")
+    elseif GetAddOnMetadata then
+        v = GetAddOnMetadata(name, "Version") or GetAddOnMetadata("NexusKit", "Version") or GetAddOnMetadata("NexKit", "Version")
+    end
+    return (v and v ~= "" and v ~= "@project-version@") and v or "0.3.4"
+end
+
+FP.VERSION      = GetAddonVersion()
 FP.LOGO_TEXTURE = "Interface\\AddOns\\" .. (addonName or "NexKit") .. "\\Media\\Logo.tga"
 
 -- Export global addon table for macros, WeakAuras, and external scripts
