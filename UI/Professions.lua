@@ -1031,6 +1031,17 @@ emptyNotice:SetWordWrap(true)
 emptyNotice:SetTextColor(0.80, 0.82, 0.86, 1)
 emptyNotice:Hide()
 
+local emptyConfigBtn = CreateFrame("Button", nil, profFrame, "UIPanelButtonTemplate")
+emptyConfigBtn:SetSize(200, 24)
+emptyConfigBtn:SetPoint("TOP", emptyNotice, "BOTTOM", 0, -14)
+emptyConfigBtn:SetText("Opzioni Professioni")
+emptyConfigBtn:SetScript("OnClick", function()
+    if FP.ToggleSettingsFrame then
+        FP:ToggleSettingsFrame("prof")
+    end
+end)
+emptyConfigBtn:Hide()
+
 local ROW_HEIGHT = 64
 local ROW_GAP = 4
 local rowPool = {}
@@ -1419,10 +1430,14 @@ function FP:RefreshProfessionAdvisor()
             emptyNotice:SetText(L["PROF_MAX_OR_EMPTY"] or "No skill-up recipes available right now.")
         end
         emptyNotice:Show()
+        emptyConfigBtn:SetText(L["PROF_OPEN_CONFIG_BTN"] or "Opzioni Professioni")
+        if self.FitButtonToText then self:FitButtonToText(emptyConfigBtn, 160, 20, nil, 220) end
+        emptyConfigBtn:Show()
         return
     end
 
     emptyNotice:Hide()
+    emptyConfigBtn:Hide()
     filterBar:Show()
     scrollFrame:Show()
 

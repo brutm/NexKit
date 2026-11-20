@@ -3061,17 +3061,37 @@ function FP:RefreshTrackedReagentsHUD()
     end
     table.sort(list, function(a, b) return (a.name or "") < (b.name or "") end)
 
-    if #list == 0 then
-        hud:Hide()
-        return
-    end
-
     local L = self.L or {}
     hudTitle:SetText(L["REAGENT_HUD_TITLE"] or "Tracked Reagents")
     hudClearLbl:SetText(L["REAGENT_HUD_CLEAR"] or "Clear")
     if self.FitButtonToText then
         self:FitButtonToText(hudClearBtn, 40, 12, hudClearLbl, 76)
     end
+
+    if #list == 0 then
+        hudClearBtn:Hide()
+        for _, r in ipairs(hudRows) do
+            r.entry = nil
+            r.isComplete = false
+            r:Hide()
+        end
+        if not hud.emptyText then
+            hud.emptyText = hud:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+            hud.emptyText:SetPoint("TOPLEFT", 8, -26)
+            hud.emptyText:SetPoint("RIGHT", -8, 0)
+            hud.emptyText:SetJustifyH("LEFT")
+            hud.emptyText:SetWordWrap(false)
+            hud.emptyText:SetTextColor(0.65, 0.70, 0.78, 0.9)
+        end
+        hud.emptyText:SetText(L["REAGENT_HUD_EMPTY_TIP"] or "Nessun reagente (Alt+Click per tracciare)")
+        hud.emptyText:Show()
+        hud:SetHeight(48)
+        hud:Show()
+        return
+    end
+
+    if hud.emptyText then hud.emptyText:Hide() end
+    hudClearBtn:Show()
 
     for i, rec in ipairs(list) do
         local row = GetOrCreateHudRow(i)

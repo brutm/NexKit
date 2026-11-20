@@ -95,6 +95,7 @@ local function ToggleTrackedHudSetting()
     if not (NexusKitDB and NexusKitDB.settings) then return end
     local enabled = not (NexusKitDB.settings.profShowTrackedHud ~= false)
     NexusKitDB.settings.profShowTrackedHud = enabled
+    local L = FP.L or {}
     if FP.RefreshTrackedReagentsHUD then
         FP:RefreshTrackedReagentsHUD()
     end
@@ -102,11 +103,68 @@ local function ToggleTrackedHudSetting()
         FP:RefreshSettingsUI()
     end
     if enabled then
+        FP:Print(L["REAGENT_HUD_ENABLED_MSG"] or "|cff00ff00HUD Reagenti Tracciati abilitato.|r")
         local tracked = NexusKitCharDB and NexusKitCharDB.trackedReagents
         local hasAny = type(tracked) == "table" and next(tracked) ~= nil
-        if not hasAny and FP.L then
-            FP:Print(FP.L["REAGENT_TRACK_USAGE"] or "Usage: /nk track [Item Link or Name]  |  /nk track clear")
+        if not hasAny then
+            FP:Print(L["REAGENT_TRACK_USAGE"] or "Uso: Alt+Click su un oggetto in borsa, o /nk track [Link Oggetto]")
         end
+    else
+        FP:Print(L["REAGENT_HUD_DISABLED_MSG"] or "|cffff5555HUD Reagenti Tracciati disabilitato.|r")
+    end
+end
+
+local function ToggleBuffAdvisorSetting()
+    if not (NexusKitDB and NexusKitDB.settings) then return end
+    local enabled = not (NexusKitDB.settings.enableBuffAdvisor ~= false)
+    NexusKitDB.settings.enableBuffAdvisor = enabled
+    local L = FP.L or {}
+    if enabled then
+        FP:Print(L["BUFF_ENABLED_MSG"] or "|cff00ff00Consigliere Buff e Tracking abilitato.|r")
+        if FP.ToggleBuffAdvisor then
+            FP:ToggleBuffAdvisor()
+        end
+    else
+        FP:Print(L["BUFF_DISABLED_MSG"] or "|cffff5555Consigliere Buff e Tracking disabilitato.|r")
+        if NexusKitBuffFrame then
+            NexusKitBuffFrame:Hide()
+        end
+    end
+    if FP.RefreshSettingsUI then
+        FP:RefreshSettingsUI()
+    end
+end
+
+local function ToggleCoordsSetting()
+    if not (NexusKitDB and NexusKitDB.settings) then return end
+    local enabled = not (NexusKitDB.settings.showPlayerCoords ~= false)
+    NexusKitDB.settings.showPlayerCoords = enabled
+    local L = FP.L or {}
+    if enabled then
+        FP:Print(L["COORDS_ENABLED_MSG"] or "|cff00ff00Coordinate in tempo reale abilitate.|r")
+    else
+        FP:Print(L["COORDS_DISABLED_MSG"] or "|cffff5555Coordinate in tempo reale disabilitate.|r")
+    end
+    if FP.RefreshCoordsUI then
+        FP:RefreshCoordsUI()
+    end
+    if FP.RefreshSettingsUI then
+        FP:RefreshSettingsUI()
+    end
+end
+
+local function ToggleProfessionMenuAction()
+    local L = FP.L or {}
+    if NexusKitProfFrame and NexusKitProfFrame:IsShown() then
+        NexusKitProfFrame:Hide()
+        return
+    end
+    if FP.ToggleProfessionAdvisor then
+        FP:ToggleProfessionAdvisor()
+    end
+    local anchor = FP.SafeGetTradeSkillAnchor and FP.SafeGetTradeSkillAnchor()
+    if not anchor then
+        FP:Print(L["PROF_OPEN_TIP_CHAT"] or "|cffffcc00[NexKit]|r Consigliere Professioni aperto. Apri una professione (es. Alchimia, Primo Soccorso) o clicca 'Opzioni Professioni'.")
     end
 end
 
@@ -117,84 +175,111 @@ function FP:OpenMinimapLauncherMenu(anchorBtn)
     local owner = anchorBtn or minimapBtn
 
     local items = {
+        -- Section 1: Finestre & Guide
         {
-            text = L["MINIMAP_MENU_TRACKER"] or "Route Tracker",
-            checked = IsFrameVisible("NexusKitTrackerFrame"),
+            text = L["MINIMAP_MENU_SEC_WINDOWS"] or "FINESTRE & GUIDE",
+            isHeader = true,
+        },
+        {
+            text = L["MINIMAP_MENU_TRACKER"] or "Tracker Percorso",
+            checked = function() return IsFrameVisible("NexusKitTrackerFrame") end,
             func = function()
                 if FP.ToggleTrackerFrame then FP:ToggleTrackerFrame() end
             end,
         },
         {
-            text = L["MINIMAP_MENU_PROF"] or "Profession Advisor",
-            checked = IsFrameVisible("NexusKitProfFrame"),
-            func = function()
-                if FP.ToggleProfessionAdvisor then FP:ToggleProfessionAdvisor() end
-            end,
-        },
-        {
-            text = L["MINIMAP_MENU_BUFFS"] or "Buff & Tracking Advisor",
-            checked = IsFrameVisible("NexusKitBuffFrame"),
-            func = function()
-                if FP.ToggleBuffAdvisor then FP:ToggleBuffAdvisor() end
-            end,
-        },
-        {
-            text = L["MINIMAP_MENU_DUNGEON"] or "Dungeon Boss Guide",
-            checked = IsFrameVisible("NexusKitDungeonFrame"),
+            text = L["MINIMAP_MENU_DUNGEON"] or "Guida Boss Dungeon & Raid",
+            checked = function() return IsFrameVisible("NexusKitDungeonFrame") end,
             func = function()
                 if FP.ToggleDungeonGuide then FP:ToggleDungeonGuide() end
             end,
         },
         {
+            text = L["MINIMAP_MENU_PROF"] or "Consigliere Professioni",
+            checked = function() return IsFrameVisible("NexusKitProfFrame") end,
+            func = ToggleProfessionMenuAction,
+        },
+        {
             text = L["MINIMAP_MENU_TODO"] or "To-Do List / Promemoria",
-            checked = IsFrameVisible("NexusKitTodoFrame"),
+            checked = function() return IsFrameVisible("NexusKitTodoFrame") end,
             func = function()
                 if FP.ToggleTodoList then FP:ToggleTodoList() end
             end,
         },
         {
-            text = L["MINIMAP_MENU_REAGENTS"] or "Tracked Reagents HUD",
-            checked = settings.profShowTrackedHud ~= false,
-            func = ToggleTrackedHudSetting,
-        },
-        {
-            text = L["MINIMAP_MENU_COORDS"] or "Real-Time Coordinates",
-            checked = settings.showPlayerCoords ~= false,
-            func = function()
-                if FP.TogglePlayerCoords then FP:TogglePlayerCoords() end
-            end,
-        },
-        {
-            text = L["MINIMAP_MENU_SYNC"] or "Quest Log Sync",
-            checked = (FP.IsQuestSyncActive and FP:IsQuestSyncActive()) or false,
-            func = function()
-                if FP.ToggleQuestSync then FP:ToggleQuestSync() end
-            end,
-        },
-        {
-            text = L["IMPORT_TITLE"] or "Import Route Pack",
-            checked = IsFrameVisible("NexusKitImporterFrame"),
+            text = L["IMPORT_TITLE"] or "Importa pacchetto percorso",
+            checked = function() return IsFrameVisible("NexusKitImporterFrame") end,
             func = function()
                 if FP.ToggleImporterFrame then FP:ToggleImporterFrame() end
             end,
         },
+
+        -- Section 2: Widget & HUD a Schermo
         {
-            text = L["SETTINGS_TITLE"] or "NexusKit Settings",
-            checked = IsFrameVisible("NexusKitSettingsFrame"),
+            text = L["MINIMAP_MENU_SEC_WIDGETS"] or "WIDGET & HUD ATTIVI",
+            isHeader = true,
+        },
+        {
+            text = L["MINIMAP_MENU_BUFFS"] or "Consigliere Buff e Tracking",
+            checked = function() return GetSettings().enableBuffAdvisor ~= false end,
+            keepOpen = true,
+            func = ToggleBuffAdvisorSetting,
+        },
+        {
+            text = L["MINIMAP_MENU_REAGENTS"] or "HUD Reagenti Tracciati",
+            checked = function() return GetSettings().profShowTrackedHud ~= false end,
+            keepOpen = true,
+            func = ToggleTrackedHudSetting,
+        },
+        {
+            text = L["MINIMAP_MENU_COORDS"] or "Coordinate in Tempo Reale",
+            checked = function() return GetSettings().showPlayerCoords ~= false end,
+            keepOpen = true,
+            func = ToggleCoordsSetting,
+        },
+        {
+            text = L["MINIMAP_MENU_SYNC"] or "Sincronia Quest Log",
+            checked = function() return (FP.IsQuestSyncActive and FP:IsQuestSyncActive()) or false end,
+            keepOpen = true,
+            func = function()
+                if FP.ToggleQuestSync then FP:ToggleQuestSync() end
+            end,
+        },
+
+        -- Section 3: Configurazioni & Aiuto
+        {
+            text = L["MINIMAP_MENU_SEC_CONFIG"] or "CONFIGURAZIONE",
+            isHeader = true,
+        },
+        {
+            text = L["MINIMAP_MENU_CFG_PROF"] or "Configura Professioni...",
+            func = function()
+                if FP.ToggleSettingsFrame then FP:ToggleSettingsFrame("prof") end
+            end,
+        },
+        {
+            text = L["MINIMAP_MENU_CFG_BUFFS"] or "Configura Buff & Interfaccia...",
+            func = function()
+                if FP.ToggleSettingsFrame then FP:ToggleSettingsFrame("buffs") end
+            end,
+        },
+        {
+            text = L["SETTINGS_TITLE"] or "Impostazioni NexKit",
+            checked = function() return IsFrameVisible("NexusKitSettingsFrame") end,
             func = function()
                 if FP.ToggleSettingsFrame then FP:ToggleSettingsFrame() end
             end,
         },
         {
-            text = L["HELP_BTN_TIP"] or "Guide & Commands (/nk help)",
-            checked = IsFrameVisible("NexusKitWelcomeFrame"),
+            text = L["HELP_BTN_TIP"] or "Guida e Comandi (/nk help)",
+            checked = function() return IsFrameVisible("NexusKitWelcomeFrame") end,
             func = function()
                 if FP.ToggleWelcomeFrame then FP:ToggleWelcomeFrame() end
             end,
         },
     }
 
-    self:ShowPopupMenu(owner, "TOPRIGHT", "BOTTOMLEFT", -4, 4, 240, items)
+    self:ShowPopupMenu(owner, "TOPRIGHT", "BOTTOMLEFT", -4, 4, 245, items)
 end
 
 local isDragging = false

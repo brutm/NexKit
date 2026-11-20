@@ -97,26 +97,53 @@ local function ShowPopupMenu(owner, anchorPoint, relPoint, xOff, yOff, width, it
         row.check:SetTextColor(ACCENT.r, ACCENT.g, ACCENT.b, 1)
         row:SetPoint("TOPLEFT", pad, -(pad + (i - 1) * rowH))
         row:SetPoint("TOPRIGHT", -pad, -(pad + (i - 1) * rowH))
-        row.check:SetText(item.checked and "*" or "")
-        row.label:SetText(item.text or "")
 
-        if item.disabled then
+        if item.isHeader then
             row:Disable()
-            row.label:SetTextColor(0.5, 0.5, 0.5, 1)
+            row.check:SetText("")
+            row.label:SetTextColor(ACCENT.r, ACCENT.g, ACCENT.b, 1)
+            row.label:SetText(item.text or "")
+            row:SetScript("OnClick", nil)
+        elseif item.isSeparator then
+            row:Disable()
+            row.check:SetText("")
+            row.label:SetTextColor(0.35, 0.40, 0.48, 0.6)
+            row.label:SetText("────────────────────────")
+            row:SetScript("OnClick", nil)
         else
-            row:Enable()
-            row.label:SetTextColor(1, 1, 1, 1)
-        end
-
-        row:SetScript("OnClick", function()
-            if item.func then item.func() end
-            if not item.keepOpen then
-                ClosePopupMenu()
+            local isChecked = false
+            if type(item.checked) == "function" then
+                isChecked = item.checked()
             else
-                item.checked = not item.checked
-                row.check:SetText(item.checked and "*" or "")
+                isChecked = item.checked and true or false
             end
-        end)
+            row.check:SetText(isChecked and "*" or "")
+            row.label:SetText(item.text or "")
+
+            if item.disabled then
+                row:Disable()
+                row.label:SetTextColor(0.5, 0.5, 0.5, 1)
+            else
+                row:Enable()
+                row.label:SetTextColor(1, 1, 1, 1)
+            end
+
+            row:SetScript("OnClick", function()
+                if item.func then item.func() end
+                if not item.keepOpen then
+                    ClosePopupMenu()
+                else
+                    local nowChecked = false
+                    if type(item.checked) == "function" then
+                        nowChecked = item.checked()
+                    else
+                        item.checked = not item.checked
+                        nowChecked = item.checked
+                    end
+                    row.check:SetText(nowChecked and "*" or "")
+                end
+            end)
+        end
         row:Show()
     end
 
