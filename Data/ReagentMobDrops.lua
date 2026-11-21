@@ -171,6 +171,32 @@ local REAGENT_MOB_MAP = {
     },
 }
 
+local REAGENT_NAME_TO_ID = {
+    ["light feather"] = 17056, ["piuma leggera"] = 17056,
+    ["fish oil"] = 17057, ["olio di pesce"] = 17057,
+    ["shiny fish scales"] = 17058, ["scaglie di pesce brillanti"] = 17058,
+    ["linen cloth"] = 2589, ["stoffa di lino"] = 2589,
+    ["wool cloth"] = 2592, ["stoffa di lana"] = 2592,
+    ["silk cloth"] = 4306, ["stoffa di seta"] = 4306,
+    ["mageweave cloth"] = 4338, ["tessuto di magia"] = 4338,
+    ["runecloth"] = 14047, ["tessuto runico"] = 14047,
+    ["felcloth"] = 14256, ["stoffa vile"] = 14256,
+    ["elemental earth"] = 7076, ["terra elementale"] = 7076,
+    ["elemental fire"] = 7078, ["fuoco elementale"] = 7078,
+    ["elemental water"] = 7080, ["acqua elementale"] = 7080,
+    ["elemental air"] = 7082, ["aria elementale"] = 7082,
+    ["essence of water"] = 12808, ["essenza d'acqua"] = 12808,
+    ["essence of fire"] = 12803, ["essenza di fuoco"] = 12803,
+    ["essence of earth"] = 12804, ["essenza di terra"] = 12804,
+    ["essence of air"] = 12805, ["essenza d'aria"] = 12805,
+    ["essence of undeath"] = 12807, ["essenza di non morte"] = 12807,
+    ["small egg"] = 6889, ["uovo piccolo"] = 6889,
+    ["small lustrous pearl"] = 4611, ["perla lucente piccola"] = 4611,
+    ["iridescent pearl"] = 5498, ["perla iridescente"] = 5498,
+    ["black pearl"] = 7971, ["perla nera"] = 7971,
+    ["golden pearl"] = 13926, ["perla dorata"] = 13926,
+}
+
 local ANIMAL_KEYWORDS = {
     ["boar"]        = { "boar", "cinghiale", "porco", "swine" },
     ["cinghiale"]   = { "boar", "cinghiale", "porco", "swine" },
@@ -183,8 +209,8 @@ local ANIMAL_KEYWORDS = {
     ["crocolisk"]   = { "crocolisk", "coccodrillo", "alligator" },
     ["coccodrillo"] = { "crocolisk", "coccodrillo", "alligator" },
     ["raptor"]      = { "raptor" },
-    ["lion"]        = { "lion", "leone", "panther", "pantera", "tiger", "tigre", "cat", "gatto" },
-    ["leone"]       = { "lion", "leone", "panther", "pantera", "tiger", "tigre", "cat", "gatto" },
+    ["lion"]        = { "lion", "leone", "panther", "pantera", "tiger", "tigre", "cat", "gatto", "leopard", "cougar" },
+    ["leone"]       = { "lion", "leone", "panther", "pantera", "tiger", "tigre", "cat", "gatto", "leopard", "cougar" },
     ["tiger"]       = { "tiger", "tigre", "panther", "pantera", "cat" },
     ["tigre"]       = { "tiger", "tigre", "panther", "pantera", "cat" },
     ["turtle"]      = { "turtle", "tartaruga", "snapjaw" },
@@ -201,6 +227,18 @@ local ANIMAL_KEYWORDS = {
     ["cervo"]       = { "stag", "cervo", "gazelle", "gazella" },
     ["snake"]       = { "snake", "serpente", "adder", "cobra", "viper" },
     ["serpente"]    = { "snake", "serpente", "adder", "cobra", "viper" },
+    ["basilisk"]    = { "basilisk", "basilisco", "stonebasilisk" },
+    ["basilisco"]   = { "basilisk", "basilisco", "stonebasilisk" },
+    ["dragon"]      = { "dragon", "drago", "whelp", "draghetto", "drake", "dragonkin", "wyrmkin" },
+    ["drago"]       = { "dragon", "drago", "whelp", "draghetto", "drake", "dragonkin", "wyrmkin" },
+    ["whelp"]       = { "whelp", "draghetto", "dragonkin" },
+    ["draghetto"]   = { "whelp", "draghetto", "dragonkin" },
+    ["hyena"]       = { "hyena", "iena", "snickerfang" },
+    ["iena"]        = { "hyena", "iena", "snickerfang" },
+    ["shark"]       = { "shark", "squalo" },
+    ["squalo"]      = { "shark", "squalo" },
+    ["chimaera"]    = { "chimaera", "chimera" },
+    ["chimera"]     = { "chimaera", "chimera" },
     ["yeti"]        = { "yeti" },
     ["ogre"]        = { "ogre" },
     ["feather"]     = { "harpy", "arpia", "vulture", "avvoltoio", "buzzard", "fire roc", "greater roc", "owlbeast", "gufigufo", "falcon", "eagle", "aquila", "bird" },
@@ -270,6 +308,10 @@ function FP:GetUnitTrackedReagent(unit, lowerMobName)
     for key, rec in pairs(db.trackedReagents) do
         if type(rec) == "table" and (rec.name or rec.itemID) then
             local itemID = rec.itemID
+            if not itemID and rec.name then
+                local cleanN = rec.name:lower():gsub("^%s*(.-)%s*$", "%1")
+                itemID = REAGENT_NAME_TO_ID[cleanN]
+            end
             local targetCount = tonumber(rec.target)
             local curBags = itemID and GetItemCountCompat(itemID) or 0
 
@@ -321,6 +363,7 @@ function FP:GetUnitTrackedReagent(unit, lowerMobName)
                     end
 
                     -- 2. Check dynamic animal/creature keywords from item name
+                    -- Strict: only match verified creature keywords in ANIMAL_KEYWORDS
                     if not isMatch and rec.name then
                         local cleanItemName = string.lower(rec.name:gsub("[%p%c]", " "))
                         for word in cleanItemName:gmatch("%S+") do
@@ -332,11 +375,6 @@ function FP:GetUnitTrackedReagent(unit, lowerMobName)
                                     end
                                 end
                                 if isMatch then break end
-                            elseif #word >= 4 and not STOP_WORDS[word] then
-                                if MobMatchesPattern(lowerMobName, word) then
-                                    isMatch = true
-                                    break
-                                end
                             end
                         end
                     end

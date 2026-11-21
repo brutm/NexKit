@@ -399,8 +399,8 @@ local function UpdatePartyAuras(frame)
     if not container then
         container = CreateFrame("Frame", nil, frame)
         container:SetSize(160, 20)
-        -- Positioned permanently below the health/mana bar (matching Blizzard's hover area, but always shown!)
-        container:SetPoint("TOPLEFT", frame, "BOTTOMLEFT", 44, -2)
+        -- Positioned permanently to the right of the party frame (clean row, never collides with member below!)
+        container:SetPoint("TOPLEFT", frame, "TOPRIGHT", 4, -8)
         container:SetFrameLevel(frame:GetFrameLevel() + 25)
         frame.nkPermanentAuras = container
 
@@ -619,7 +619,7 @@ local function UpdatePartyMember(frame)
                 end
             end)
 
-            badge:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 18, 2)
+            badge:SetPoint("CENTER", frame, "TOPLEFT", 14, -14)
 
             frame.nkClassBadge = badge
         end
@@ -636,12 +636,237 @@ local function UpdatePartyMember(frame)
     end
 end
 
+-------------------------------------------------------------------------------
+-- 1b. Raid-Style / Compact Party Frames (CompactUnitFrame / CompactPartyFrame)
+-------------------------------------------------------------------------------
+local function UpdateCompactPartyAuras(frame)
+    if not frame or IsForbiddenObj(frame) then return end
+    local unit = frame.unit or frame.displayedUnit
+    if not unit or not UnitExists(unit) or not UnitIsPlayer(unit) then
+        if frame.nkPermanentAuras then frame.nkPermanentAuras:Hide() end
+        return
+    end
+
+    if not IsClassFeaturesEnabled() then
+        if frame.nkPermanentAuras then frame.nkPermanentAuras:Hide() end
+        return
+    end
+
+    local container = frame.nkPermanentAuras
+    if not container then
+        container = CreateFrame("Frame", nil, frame)
+        container:SetSize(120, 16)
+        container:SetPoint("LEFT", frame, "RIGHT", 4, 0)
+        container:SetFrameLevel((frame:GetFrameLevel() or 1) + 25)
+        frame.nkPermanentAuras = container
+
+        container.slots = {}
+        for s = 1, 6 do
+            local btn = CreateFrame("Button", nil, container)
+            btn:SetSize(14, 14)
+            btn:SetPoint("LEFT", container, "LEFT", (s - 1) * 16, 0)
+
+            local icon = btn:CreateTexture(nil, "ARTWORK")
+            icon:SetAllPoints(btn)
+            btn.icon = icon
+
+            local border = btn:CreateTexture(nil, "OVERLAY")
+            border:SetTexture("Interface\\Buttons\\UI-Debuff-Overlays")
+            border:SetTexCoord(0.296875, 0.5703125, 0, 0.515625)
+            border:SetPoint("TOPLEFT", btn, "TOPLEFT", -2, 2)
+            border:SetPoint("BOTTOMRIGHT", btn, "BOTTOMRIGHT", 2, -2)
+            btn.border = border
+
+            local countFs = btn:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+            countFs:SetPoint("BOTTOMRIGHT", btn, "BOTTOMRIGHT", 2, -2)
+            btn.countFs = countFs
+
+            btn:SetScript("OnEnter", function(self)
+                if not self.unit or not self.auraIndex then return end
+                GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+                if self.isDebuff then
+                    GameTooltip:SetUnitDebuff(self.unit, self.auraIndex)
+                else
+                    GameTooltip:SetUnitBuff(self.unit, self.auraIndex)
+                end
+                GameTooltip:Show()
+            end)
+            btn:SetScript("OnLeave", function(self)
+                GameTooltip:Hide()
+            end)
+
+            container.slots[s] = btn
+        end
+    end
+
+    container:Show()
+
+    local debuffs = GetPartyUnitDebuffs(unit)
+    local buffs = GetPartyUnitBuffs(unit)
+    local slotIndex = 1
+
+    -- 1. Debuffs first (dispellable ones highlighted)
+    for d = 1, math.min(#debuffs, 3) do
+        if slotIndex <= 6 then
+            local btn = container.slots[slotIndex]
+            local debuff = debuffs[d]
+            btn.unit = unit
+            btn.auraIndex = debuff.index
+            btn.isDebuff = true
+            btn.icon:SetTexture(debuff.icon)
+            local col = DISPEL_COLORS[debuff.dispelType] or DISPEL_COLORS["none"]
+            btn.border:SetTexture("Interface\\Buttons\\UI-Debuff-Overlays")
+            btn.border:SetTexCoord(0.296875, 0.5703125, 0, 0.515625)
+            btn.border:SetVertexColor(col.r, col.g, col.b, 1)
+            btn.border:Show()
+            if debuff.count and debuff.count > 1 then
+                btn.countFs:SetText(debuff.count)
+                btn.countFs:Show()
+            else
+                btn.countFs:Hide()
+            end
+            btn:Show()
+            slotIndex = slotIndex + 1
+        end
+    end
+
+    -- 2. Buffs (player buffs in golden yellow)
+    for b = 1, #buffs do
+        if slotIndex <= 6 then
+            local btn = container.slots[slotIndex]
+            local buff = buffs[b]
+            btn.unit = unit
+            btn.auraIndex = buff.index
+            btn.isDebuff = false
+            btn.icon:SetTexture(buff.icon)
+            btn.border:SetTexture("Interface\\Buttons\\UI-ActionButton-Border")
+            btn.border:SetTexCoord(0, 1, 0, 1)
+            if buff.isPlayerBuff then
+                btn.border:SetVertexColor(1.0, 0.82, 0.0, 0.95)
+            else
+                btn.border:SetVertexColor(0.5, 0.5, 0.5, 0.6)
+            end
+            btn.border:Show()
+            if buff.count and buff.count > 1 then
+                btn.countFs:SetText(buff.count)
+                btn.countFs:Show()
+            else
+                btn.countFs:Hide()
+            end
+            btn:Show()
+            slotIndex = slotIndex + 1
+        end
+    end
+
+    for s = slotIndex, 6 do
+        container.slots[s]:Hide()
+    end
+end
+
+local function UpdateCompactPartyFrame(frame)
+    if not frame or IsForbiddenObj(frame) then return end
+    local unit = frame.unit or frame.displayedUnit
+    if not unit or not UnitExists(unit) or not UnitIsPlayer(unit) then
+        if frame.nkClassBadge then frame.nkClassBadge:Hide() end
+        if frame.nkPermanentAuras then frame.nkPermanentAuras:Hide() end
+        return
+    end
+
+    if not IsClassFeaturesEnabled() then
+        if frame.nkClassBadge then frame.nkClassBadge:Hide() end
+        if frame.nkPermanentAuras then frame.nkPermanentAuras:Hide() end
+        return
+    end
+
+    local color, class = GetUnitClassColor(unit)
+    if color and class then
+        -- 1. Class-color Compact HealthBar
+        local healthBar = frame.healthBar or frame.HealthBar
+        if healthBar and healthBar.SetStatusBarColor then
+            healthBar:SetStatusBarColor(color.r, color.g, color.b)
+        end
+
+        -- 2. Class-color Compact Name Text
+        local nameFs = frame.name or frame.Name
+        if nameFs and nameFs.SetTextColor then
+            nameFs:SetTextColor(color.r, color.g, color.b)
+        end
+
+        -- 3. Circular Class Badge Button with Spec Tooltip
+        local badge = frame.nkClassBadge
+        if not badge then
+            badge = CreateFrame("Button", nil, frame)
+            badge:SetSize(18, 18)
+            badge:SetFrameLevel((frame:GetFrameLevel() or 1) + 25)
+
+            local icon = badge:CreateTexture(nil, "ARTWORK")
+            icon:SetAllPoints(badge)
+            badge.icon = icon
+
+            local border = badge:CreateTexture(nil, "OVERLAY")
+            border:SetTexture("Interface\\Minimap\\MiniMap-TrackingBorder")
+            border:SetSize(32, 32)
+            border:SetPoint("CENTER", badge, "CENTER", 5, -4)
+            badge.border = border
+
+            badge:SetPoint("TOPLEFT", frame, "TOPLEFT", 2, -2)
+
+            badge:SetScript("OnEnter", function(self)
+                if not IsClassFeaturesEnabled() then return end
+                local u = self.unit
+                if u and UnitExists(u) then
+                    ShowPortraitTooltip(self, u)
+                end
+            end)
+            badge:SetScript("OnLeave", function(self)
+                if currentTooltipOwner == self then
+                    currentTooltipOwner = nil
+                    currentTooltipUnit = nil
+                end
+                GameTooltip:Hide()
+            end)
+            badge:SetScript("OnClick", function(self)
+                local u = self.unit
+                if u and UnitExists(u) and not (InCombatLockdown and InCombatLockdown()) then
+                    pcall(TargetUnit, u)
+                end
+            end)
+
+            frame.nkClassBadge = badge
+        end
+
+        badge.unit = unit
+        ApplyClassTextureToIcon(badge.icon, class)
+        badge:Show()
+
+        -- 4. Permanent Auras (Buffs & Debuffs)
+        UpdateCompactPartyAuras(frame)
+    else
+        if frame.nkClassBadge then frame.nkClassBadge:Hide() end
+        if frame.nkPermanentAuras then frame.nkPermanentAuras:Hide() end
+    end
+end
+
 local function UpdateAllPartyMembers()
     for i = 1, 4 do
         local frame = _G["PartyMemberFrame" .. i]
         if frame then
             UpdatePartyMember(frame)
         end
+    end
+    -- Raid-style / Compact party frames
+    if CompactPartyFrame and CompactPartyFrame:IsShown() then
+        for i = 1, 5 do
+            local f = _G["CompactPartyFrameMember" .. i]
+            if f then
+                UpdateCompactPartyFrame(f)
+            end
+        end
+    end
+    if CompactRaidFrameContainer and CompactRaidFrameContainer:IsShown() and CompactRaidFrameContainer_ApplyToFrames then
+        pcall(CompactRaidFrameContainer_ApplyToFrames, CompactRaidFrameContainer, "normal", function(f)
+            if f then UpdateCompactPartyFrame(f) end
+        end)
     end
 end
 
@@ -925,31 +1150,50 @@ local function HookBlizzardUnitFrames()
         end)
     end
 
-    -- Nameplate hooks
+    -- CompactUnitFrame (Raid-Style Party & Raid frames + Nameplates)
     if CompactUnitFrame_UpdateName then
         hooksecurefunc("CompactUnitFrame_UpdateName", function(frame)
             if not frame or IsForbiddenObj(frame) then return end
-            local unit = frame.unit
-            if unit and unit:find("^nameplate%d+$") then
+            local unit = frame.unit or frame.displayedUnit
+            if not unit then return end
+            if unit:find("^nameplate%d+$") then
                 UpdateNameplateUnit(unit)
+            elseif unit:find("^party%d+$") or unit:find("^raid%d+$") or unit == "player" then
+                UpdateCompactPartyFrame(frame)
             end
         end)
     end
     if CompactUnitFrame_UpdateHealth then
         hooksecurefunc("CompactUnitFrame_UpdateHealth", function(frame)
             if not frame or IsForbiddenObj(frame) then return end
-            local unit = frame.unit
-            if unit and unit:find("^nameplate%d+$") then
+            local unit = frame.unit or frame.displayedUnit
+            if not unit then return end
+            if unit:find("^nameplate%d+$") then
                 UpdateNameplateUnit(unit)
+            elseif unit:find("^party%d+$") or unit:find("^raid%d+$") or unit == "player" then
+                UpdateCompactPartyFrame(frame)
             end
         end)
     end
     if CompactUnitFrame_UpdateHealthColor then
         hooksecurefunc("CompactUnitFrame_UpdateHealthColor", function(frame)
             if not frame or IsForbiddenObj(frame) then return end
-            local unit = frame.unit
-            if unit and unit:find("^nameplate%d+$") then
+            local unit = frame.unit or frame.displayedUnit
+            if not unit then return end
+            if unit:find("^nameplate%d+$") then
                 UpdateNameplateUnit(unit)
+            elseif unit:find("^party%d+$") or unit:find("^raid%d+$") or unit == "player" then
+                UpdateCompactPartyFrame(frame)
+            end
+        end)
+    end
+    if CompactUnitFrame_UpdateStatusText then
+        hooksecurefunc("CompactUnitFrame_UpdateStatusText", function(frame)
+            if not frame or IsForbiddenObj(frame) then return end
+            local unit = frame.unit or frame.displayedUnit
+            if not unit then return end
+            if unit:find("^party%d+$") or unit:find("^raid%d+$") or unit == "player" then
+                UpdateCompactPartyFrame(frame)
             end
         end)
     end
@@ -1012,10 +1256,27 @@ evFrame:SetScript("OnEvent", function(self, event, arg1, ...)
                 UpdateNameplateUnit(arg1)
             end
         elseif event == "UNIT_AURA" then
-            if arg1 and arg1:match("^party%d+$") then
-                local num = arg1:match("^party(%d+)$")
-                local f = _G["PartyMemberFrame" .. num]
-                if f then UpdatePartyAuras(f) end
+            if arg1 then
+                if arg1:match("^party%d+$") then
+                    local num = arg1:match("^party(%d+)$")
+                    local f = _G["PartyMemberFrame" .. num]
+                    if f then UpdatePartyAuras(f) end
+                end
+                if CompactPartyFrame and CompactPartyFrame:IsShown() then
+                    for i = 1, 5 do
+                        local f = _G["CompactPartyFrameMember" .. i]
+                        if f and (f.unit == arg1 or f.displayedUnit == arg1) then
+                            UpdateCompactPartyAuras(f)
+                        end
+                    end
+                end
+                if CompactRaidFrameContainer and CompactRaidFrameContainer:IsShown() and CompactRaidFrameContainer_ApplyToFrames then
+                    pcall(CompactRaidFrameContainer_ApplyToFrames, CompactRaidFrameContainer, "normal", function(f)
+                        if f and (f.unit == arg1 or f.displayedUnit == arg1) then
+                            UpdateCompactPartyAuras(f)
+                        end
+                    end)
+                end
             end
         elseif event == "INSPECT_READY" then
             HandleInspectReady(arg1)

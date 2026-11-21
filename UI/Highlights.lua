@@ -139,6 +139,41 @@ local MODIFIER_WORDS = {
     ["brigand"] = true, ["brigante"] = true, ["briganti"] = true,
     ["thief"] = true, ["tagliaborse"] = true, ["cutpurse"] = true,
     ["footpad"] = true, ["defias"] = true,
+    ["geomancer"] = true, ["geomante"] = true, ["geomanti"] = true,
+    ["mystic"] = true, ["mistico"] = true, ["mistici"] = true,
+    ["warlock"] = true, ["stregone"] = true, ["stregoni"] = true,
+    ["priest"] = true, ["sacerdote"] = true, ["sacerdoti"] = true,
+    ["acolyte"] = true, ["accolito"] = true, ["accoliti"] = true,
+    ["berserker"] = true, ["champion"] = true, ["campione"] = true, ["campioni"] = true,
+    ["defender"] = true, ["difensore"] = true, ["difensori"] = true,
+    ["marksman"] = true, ["tiratore"] = true, ["tiratori"] = true,
+    ["poacher"] = true, ["taskmaster"] = true, ["overseer"] = true,
+    ["slaver"] = true, ["brute"] = true, ["bruto"] = true, ["bruti"] = true,
+    ["enforcer"] = true, ["brawler"] = true, ["thug"] = true,
+    ["evoker"] = true, ["evocatore"] = true, ["apprentice"] = true, ["apprendista"] = true,
+    ["adept"] = true, ["adepto"] = true, ["sorcerer"] = true, ["necromancer"] = true, ["negromante"] = true,
+    ["witch"] = true, ["strega"] = true, ["witchdoctor"] = true, ["hexxer"] = true,
+    ["shadowcaster"] = true, ["assassin"] = true, ["assassino"] = true,
+    ["bodyguard"] = true, ["captain"] = true, ["capitano"] = true,
+    ["lieutenant"] = true, ["tenente"] = true, ["commander"] = true, ["comandante"] = true,
+    ["headhunter"] = true, ["tracker"] = true, ["pathfinder"] = true,
+    ["skirmisher"] = true, ["slayer"] = true, ["butcher"] = true,
+    -- Creature types / States / Habitats
+    ["skeletal"] = true, ["scheletrico"] = true, ["scheletrici"] = true,
+    ["ghoul"] = true, ["zombie"] = true, ["ghost"] = true, ["fantasma"] = true,
+    ["wraith"] = true, ["spettro"] = true, ["shade"] = true, ["ombra"] = true,
+    ["banshee"] = true, ["mummy"] = true, ["mummia"] = true,
+    ["blood"] = true, ["sangue"] = true, ["venom"] = true, ["veleno"] = true,
+    ["dread"] = true, ["plague"] = true, ["peste"] = true,
+    ["frost"] = true, ["gelo"] = true, ["ice"] = true, ["ghiaccio"] = true,
+    ["fire"] = true, ["fuoco"] = true, ["flame"] = true, ["fiamma"] = true,
+    ["storm"] = true, ["tempesta"] = true, ["earth"] = true, ["terra"] = true,
+    ["stone"] = true, ["pietra"] = true, ["rock"] = true, ["roccia"] = true,
+    ["mountain"] = true, ["montagna"] = true, ["forest"] = true, ["foresta"] = true,
+    ["jungle"] = true, ["giungla"] = true, ["swamp"] = true, ["palude"] = true,
+    ["marsh"] = true, ["acquitrino"] = true, ["river"] = true, ["fiume"] = true,
+    ["sea"] = true, ["mare"] = true, ["coastal"] = true, ["costiero"] = true,
+    ["dune"] = true, ["timber"] = true, ["crag"] = true, ["ridge"] = true, ["cliff"] = true,
     -- Colors
     ["black"] = true, ["nero"] = true, ["neri"] = true, ["nera"] = true, ["nere"] = true,
     ["red"] = true, ["rosso"] = true, ["rossi"] = true, ["rossa"] = true, ["rosse"] = true,
@@ -347,6 +382,9 @@ local function ExtractNpcFromStep(step)
         or txt:match("[Aa]ccetta .- da%s+([^,%.%(%)]+)")
         or txt:match("[Pp]arla con%s+([^,%.%(%)]+)")
     if npc then
+        npc = npc:gsub("%s+in%s+.+$", "")
+        npc = npc:gsub("%s+at%s+.+$", "")
+        npc = npc:gsub("%s+a%s+.+$", "")
         npc = npc:gsub("^%s*(.-)%s*$", "%1")
         if npc ~= "" then return npc end
     end
