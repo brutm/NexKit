@@ -332,6 +332,27 @@ local function MatchesObjTable(lowerName, list)
     return false, nil, nil
 end
 
+local function ExtractNpcFromStep(step)
+    if not step then return nil end
+    if Plain(step.npc) and step.npc ~= "" then
+        return step.npc
+    end
+    local txt = step.text
+    if not Plain(txt) or txt == "" then return nil end
+    local npc = txt:match("[Tt]urn in .- to%s+([^,%.%(%)]+)")
+        or txt:match("[Aa]ccept .- from%s+([^,%.%(%)]+)")
+        or txt:match("[Tt]alk to%s+([^,%.%(%)]+)")
+        or txt:match("[Ss]peak with%s+([^,%.%(%)]+)")
+        or txt:match("[Cc]onsegna .- a%s+([^,%.%(%)]+)")
+        or txt:match("[Aa]ccetta .- da%s+([^,%.%(%)]+)")
+        or txt:match("[Pp]arla con%s+([^,%.%(%)]+)")
+    if npc then
+        npc = npc:gsub("^%s*(.-)%s*$", "%1")
+        if npc ~= "" then return npc end
+    end
+    return nil
+end
+
 local function RebuildQuestLookup()
     for k in pairs(readyQuestTitles) do readyQuestTitles[k] = nil end
     for k in pairs(readyQuestIds) do readyQuestIds[k] = nil end
@@ -350,8 +371,9 @@ local function RebuildQuestLookup()
         local step = FP.activeRoute.steps[FP.currentStepIndex]
         if step then
             stepAction = step.action
-            if Plain(step.npc) and step.npc ~= "" then
-                stepNpcLower = string.lower((step.npc:gsub("^%s*(.-)%s*$", "%1")))
+            local rawNpc = ExtractNpcFromStep(step)
+            if rawNpc then
+                stepNpcLower = string.lower((rawNpc:gsub("^%s*(.-)%s*$", "%1")))
             end
         end
     end
@@ -407,6 +429,27 @@ local function RebuildQuestLookup()
             if isReady then
                 readyIds[qid] = true
                 readyQuestIds[qid] = cleanTitle
+                if GetQuestLogQuestText then
+                    local qDesc, qObj = SafeCall(GetQuestLogQuestText)
+                    local fullText = (qObj or "") .. " " .. (qDesc or "")
+                    local npc = fullText:match("[Ff]ai rapporto a%s+([^,%.%(%)]+)")
+                        or fullText:match("[Rr]eport to%s+([^,%.%(%)]+)")
+                        or fullText:match("[Tt]orna da%s+([^,%.%(%)]+)")
+                        or fullText:match("[Rr]eturn to%s+([^,%.%(%)]+)")
+                        or fullText:match("[Pp]arla con%s+([^,%.%(%)]+)")
+                        or fullText:match("[Ss]peak with%s+([^,%.%(%)]+)")
+                    if npc then
+                        local npcClean = string.lower((npc:gsub("^%s*(.-)%s*$", "%1")))
+                        npcClean = npcClean:gsub("%s+a%s+.+$", "")
+                        npcClean = npcClean:gsub("%s+in%s+.+$", "")
+                        npcClean = npcClean:gsub("%s+at%s+.+$", "")
+                        npcClean = npcClean:gsub("^%s*(.-)%s*$", "%1")
+                        if npcClean ~= "" then
+                            readyNpcNames[npcClean] = true
+                            readyNpcTitles[npcClean] = cleanTitle
+                        end
+                    end
+                end
             else
                 incompleteQuestIds[qid] = cleanTitle
                 hasAnyIncompleteQuest = true
@@ -489,10 +532,13 @@ local function RebuildQuestLookup()
         for routeId, route in pairs(FP.routes) do
             if routeId ~= FP.QUEST_SYNC_ROUTE_ID and route.steps then
                 for _, st in ipairs(route.steps) do
-                    if st.action == "TURNIN" and st.questId and readyIds[st.questId] and Plain(st.npc) and st.npc ~= "" then
-                        local npcClean = string.lower((st.npc:gsub("^%s*(.-)%s*$", "%1")))
-                        readyNpcNames[npcClean] = true
-                        readyNpcTitles[npcClean] = FormatQuestTitle(st.title) or FormatQuestTitle(st.questTitle)
+                    if st.action == "TURNIN" and st.questId and readyIds[st.questId] then
+                        local npc = ExtractNpcFromStep(st)
+                        if npc then
+                            local npcClean = string.lower((npc:gsub("^%s*(.-)%s*$", "%1")))
+                            readyNpcNames[npcClean] = true
+                            readyNpcTitles[npcClean] = FormatQuestTitle(st.title) or FormatQuestTitle(st.questTitle) or FormatQuestTitle(st.text)
+                        end
                     end
                 end
             end
@@ -610,27 +656,44 @@ local function InspectUnitTooltip(unit, lowerName)
 
     for _, line in ipairs(lines) do
         local raw = line.text
-        local norm = CleanTitle(raw)
         local lineQid = line.lineQid
         local lineType = line.lineType
-        local isQuestTitleLine = (enumQuestTitle ~= nil) and (lineType == enumQuestTitle)
 
-        if lineQid and readyQuestIds[lineQid] then
-            hasReadyTitle = true
-            lastSeenTitle = (type(readyQuestIds[lineQid]) == "string") and readyQuestIds[lineQid] or raw
-        elseif lineQid and incompleteQuestIds[lineQid] then
-            sawIncompleteTitle = true
-            lastSeenTitle = (type(incompleteQuestIds[lineQid]) == "string") and incompleteQuestIds[lineQid] or raw
+        -- Filter out NPC guild/title (<...>), level, faction, and excluded tooltip line types
+        local isGuildOrTitle = raw:match("^%s*<.+>%s*$") ~= nil
+        local isLevelLine = raw:match("^[Ll]evel%s+%d+") or raw:match("^[Ll]ivello%s+%d+")
+        local isFactionLine = (raw == "Alliance" or raw == "Horde" or raw == "Alleanza" or raw == "Orda")
+        local isExcludedLineType = false
+        if Enum and Enum.TooltipDataLineType and lineType then
+            if lineType == Enum.TooltipDataLineType.UnitGuild
+               or lineType == Enum.TooltipDataLineType.UnitLevel
+               or lineType == Enum.TooltipDataLineType.None then
+                isExcludedLineType = true
+            end
         end
 
-        if readyQuestTitles[norm] then
-            hasReadyTitle = true
-            lastSeenTitle = (type(readyQuestTitles[norm]) == "string") and readyQuestTitles[norm] or raw
-        elseif incompleteQuestTitles[norm] then
-            sawIncompleteTitle = true
-            lastSeenTitle = (type(incompleteQuestTitles[norm]) == "string") and incompleteQuestTitles[norm] or raw
-        elseif isQuestTitleLine then
-            lastSeenTitle = FormatQuestTitle(raw) or raw
+        local isQuestCandidate = not isGuildOrTitle and not isLevelLine and not isFactionLine and not isExcludedLineType
+        local norm = isQuestCandidate and CleanTitle(raw) or ""
+        local isQuestTitleLine = isQuestCandidate and ((enumQuestTitle ~= nil) and (lineType == enumQuestTitle))
+
+        if isQuestCandidate then
+            if lineQid and readyQuestIds[lineQid] then
+                hasReadyTitle = true
+                lastSeenTitle = (type(readyQuestIds[lineQid]) == "string") and readyQuestIds[lineQid] or raw
+            elseif lineQid and incompleteQuestIds[lineQid] then
+                sawIncompleteTitle = true
+                lastSeenTitle = (type(incompleteQuestIds[lineQid]) == "string") and incompleteQuestIds[lineQid] or raw
+            end
+
+            if readyQuestTitles[norm] then
+                hasReadyTitle = true
+                lastSeenTitle = (type(readyQuestTitles[norm]) == "string") and readyQuestTitles[norm] or raw
+            elseif incompleteQuestTitles[norm] then
+                sawIncompleteTitle = true
+                lastSeenTitle = (type(incompleteQuestTitles[norm]) == "string") and incompleteQuestTitles[norm] or raw
+            elseif isQuestTitleLine then
+                lastSeenTitle = FormatQuestTitle(raw) or raw
+            end
         end
 
         local cur, max = raw:match("(%d+)%s*/%s*(%d+)")
@@ -696,17 +759,15 @@ local function ClassifyUnit(unit)
         end
     end
 
-    -- 2. Ready turn-in NPC from route metadata
+    -- 2. Ready turn-in NPC from route metadata or quest text
     if not canAttack and lowerName and readyNpcNames[lowerName] then
         return "TURNIN", readyNpcTitles[lowerName]
     end
 
-    -- 3. Friendly NPC Tooltip inspection
+    -- 3. Friendly NPC Tooltip inspection (never treat friendly tooltips as TURNIN: only active incomplete objectives)
     if not canAttack then
-        local hasReadyTitle, hasIncompleteObj, _, _, tipQuest = InspectUnitTooltip(unit, lowerName)
-        if hasReadyTitle then
-            return "TURNIN", tipQuest
-        elseif hasIncompleteObj then
+        local _, hasIncompleteObj, _, _, tipQuest = InspectUnitTooltip(unit, lowerName)
+        if hasIncompleteObj then
             return "OBJECTIVE", tipQuest
         end
         return nil, nil
