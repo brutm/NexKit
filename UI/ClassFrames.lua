@@ -288,17 +288,31 @@ local function GetPartyUnitDebuffs(unit)
 
     for i = 1, 16 do
         local name, icon, count, dType, duration, expirationTime, spellId
-        if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
-            local aura = C_UnitAuras.GetAuraDataByIndex(unit, i, "HARMFUL")
-            if not aura then break end
-            name, icon, count, dType, duration, expirationTime, spellId = aura.name, aura.icon, aura.applications, aura.dispelName, aura.duration, aura.expirationTime, aura.spellId
-        elseif UnitDebuff then
-            local _
-            name, icon, count, dType, duration, expirationTime, _, _, _, spellId = UnitDebuff(unit, i)
-            if not name then break end
-        else
-            break
+        local found = false
+
+        -- 1. Try native Classic UnitDebuff first (safe, fast, never triggers taint error)
+        if UnitDebuff then
+            local okD, dName, dIcon, dCount, dDispel, dDur, dExp, _, _, _, dSpellId = pcall(UnitDebuff, unit, i)
+            if okD and dName then
+                name, icon, count, dType, duration, expirationTime, spellId = dName, dIcon, dCount, dDispel, dDur, dExp, dSpellId
+                found = true
+            elseif okD and not dName then
+                break -- End of debuffs
+            end
         end
+
+        -- 2. Fallback to C_UnitAuras.GetAuraDataByIndex (wrapped in pcall to protect against secret/taint restrictions)
+        if not found and C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
+            local okC, aura = pcall(C_UnitAuras.GetAuraDataByIndex, unit, i, "HARMFUL")
+            if okC and type(aura) == "table" and aura.name then
+                name, icon, count, dType, duration, expirationTime, spellId = aura.name, aura.icon, aura.applications, aura.dispelName, aura.duration, aura.expirationTime, aura.spellId
+                found = true
+            elseif okC and not aura then
+                break -- End of debuffs
+            end
+        end
+
+        if not found then break end
 
         local canDispel = (dType and dispels[dType]) and true or false
         debuffs[#debuffs + 1] = {
@@ -331,18 +345,31 @@ local function GetPartyUnitBuffs(unit)
 
     for i = 1, 32 do
         local name, icon, count, duration, expirationTime, source, spellId
-        if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
-            local aura = C_UnitAuras.GetAuraDataByIndex(unit, i, "HELPFUL")
-            if not aura then break end
-            source = aura.sourceUnit
-            name, icon, count, duration, expirationTime, spellId = aura.name, aura.icon, aura.applications, aura.duration, aura.expirationTime, aura.spellId
-        elseif UnitBuff then
-            local _
-            name, icon, count, _, duration, expirationTime, source, _, _, spellId = UnitBuff(unit, i)
-            if not name then break end
-        else
-            break
+        local found = false
+
+        -- 1. Try native Classic UnitBuff first (safe, fast, never triggers taint error)
+        if UnitBuff then
+            local okB, bName, bIcon, bCount, _, bDur, bExp, bSrc, _, _, bSpellId = pcall(UnitBuff, unit, i)
+            if okB and bName then
+                name, icon, count, duration, expirationTime, source, spellId = bName, bIcon, bCount, bDur, bExp, bSrc, bSpellId
+                found = true
+            elseif okB and not bName then
+                break -- End of buffs
+            end
         end
+
+        -- 2. Fallback to C_UnitAuras.GetAuraDataByIndex (wrapped in pcall to protect against secret/taint restrictions)
+        if not found and C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
+            local okC, aura = pcall(C_UnitAuras.GetAuraDataByIndex, unit, i, "HELPFUL")
+            if okC and type(aura) == "table" and aura.name then
+                name, icon, count, duration, expirationTime, source, spellId = aura.name, aura.icon, aura.applications, aura.duration, aura.expirationTime, aura.sourceUnit, aura.spellId
+                found = true
+            elseif okC and not aura then
+                break -- End of buffs
+            end
+        end
+
+        if not found then break end
 
         local isPlayerBuff = (source == "player") or (source == nil and name and PLAYER_BUFF_SPELLS[name])
         buffs[#buffs + 1] = {
@@ -399,8 +426,9 @@ local function UpdatePartyAuras(frame)
     if not container then
         container = CreateFrame("Frame", nil, frame)
         container:SetSize(160, 20)
-        -- Positioned permanently to the right of the party frame (clean row, never collides with member below!)
-        container:SetPoint("TOPLEFT", frame, "TOPRIGHT", 4, -8)
+        -- Positioned permanently below the health/mana bar (starting at X=44, Y=-2)
+        -- This is the exact location where Blizzard shows buffs on hover, but ALWAYS visible without mouse hover!
+        container:SetPoint("TOPLEFT", frame, "BOTTOMLEFT", 44, -2)
         container:SetFrameLevel(frame:GetFrameLevel() + 25)
         frame.nkPermanentAuras = container
 
@@ -531,8 +559,17 @@ local function UpdatePartyMember(frame)
         return
     end
 
-    local id = frame.GetID and frame:GetID()
-    local unit = frame.unit or (id and ("party" .. id))
+    local unit = frame.unit
+    if not unit or unit == "" then
+        local id = frame.GetID and frame:GetID()
+        if id and id > 0 then
+            unit = "party" .. id
+        else
+            local num = frame:GetName() and frame:GetName():match("PartyMemberFrame(%d+)")
+            if num then unit = "party" .. num end
+        end
+    end
+
     if not unit or not UnitExists(unit) then
         if frame.nkClassBadge then frame.nkClassBadge:Hide() end
         if frame.nkPermanentAuras then frame.nkPermanentAuras:Hide() end
@@ -540,6 +577,18 @@ local function UpdatePartyMember(frame)
     end
 
     local color, class = GetUnitClassColor(unit)
+    if not color or not class then
+        -- If player data is not yet cached by client, retry in 0.2s
+        if C_Timer and C_Timer.After then
+            C_Timer.After(0.2, function()
+                if frame and not IsForbiddenObj(frame) then
+                    UpdatePartyMember(frame)
+                end
+            end)
+        end
+        return
+    end
+
     if color and class then
         -- 1. Class-color Party Member Name text (requested: "colore della classe dove c'è il nome nel party")
         local nameFs = _G[frame:GetName() .. "Name"] or frame.name
@@ -586,7 +635,7 @@ local function UpdatePartyMember(frame)
         if not badge then
             badge = CreateFrame("Button", nil, frame)
             badge:SetSize(22, 22)
-            badge:SetFrameLevel(frame:GetFrameLevel() + 25)
+            badge:SetFrameLevel(frame:GetFrameLevel() + 30)
 
             local icon = badge:CreateTexture(nil, "ARTWORK")
             icon:SetAllPoints(badge)
@@ -619,17 +668,19 @@ local function UpdatePartyMember(frame)
                 end
             end)
 
-            badge:SetPoint("CENTER", frame, "TOPLEFT", 14, -14)
-
             frame.nkClassBadge = badge
         end
+
+        local portrait = _G[frame:GetName() .. "Portrait"] or frame
+        badge:ClearAllPoints()
+        badge:SetPoint("BOTTOMLEFT", portrait, "BOTTOMLEFT", -2, -2)
 
         badge.unit = unit
         ApplyClassTextureToIcon(badge.icon, class)
         badge:Show()
 
         -- 4. Update Party Auras (Permanently visible: Player Buffs + Dispellable Debuffs)
-        UpdatePartyAuras(frame)
+        pcall(UpdatePartyAuras, frame)
     else
         if frame.nkClassBadge then frame.nkClassBadge:Hide() end
         if frame.nkPermanentAuras then frame.nkPermanentAuras:Hide() end
@@ -763,7 +814,7 @@ local function UpdateCompactPartyAuras(frame)
     end
 end
 
-local function UpdateCompactPartyFrame(frame)
+local function UpdateCompactPartyFrame(frame, includeAuras)
     if not frame or IsForbiddenObj(frame) then return end
     local unit = frame.unit or frame.displayedUnit
     if not unit or not UnitExists(unit) or not UnitIsPlayer(unit) then
@@ -839,8 +890,10 @@ local function UpdateCompactPartyFrame(frame)
         ApplyClassTextureToIcon(badge.icon, class)
         badge:Show()
 
-        -- 4. Permanent Auras (Buffs & Debuffs)
-        UpdateCompactPartyAuras(frame)
+        -- 4. Permanent Auras (Buffs & Debuffs) - only updated when requested to prevent taint in name/health hooks
+        if includeAuras then
+            pcall(UpdateCompactPartyAuras, frame)
+        end
     else
         if frame.nkClassBadge then frame.nkClassBadge:Hide() end
         if frame.nkPermanentAuras then frame.nkPermanentAuras:Hide() end
@@ -859,13 +912,13 @@ local function UpdateAllPartyMembers()
         for i = 1, 5 do
             local f = _G["CompactPartyFrameMember" .. i]
             if f then
-                UpdateCompactPartyFrame(f)
+                UpdateCompactPartyFrame(f, true)
             end
         end
     end
     if CompactRaidFrameContainer and CompactRaidFrameContainer:IsShown() and CompactRaidFrameContainer_ApplyToFrames then
         pcall(CompactRaidFrameContainer_ApplyToFrames, CompactRaidFrameContainer, "normal", function(f)
-            if f then UpdateCompactPartyFrame(f) end
+            if f then UpdateCompactPartyFrame(f, true) end
         end)
     end
 end
@@ -1112,6 +1165,33 @@ local function HookBlizzardUnitFrames()
             UpdatePartyMember(frame)
         end)
     end
+    if PartyMemberFrame_UpdateArt then
+        hooksecurefunc("PartyMemberFrame_UpdateArt", function(frame)
+            UpdatePartyMember(frame)
+        end)
+    end
+    if PartyMemberFrame_UpdateOnlineStatus then
+        hooksecurefunc("PartyMemberFrame_UpdateOnlineStatus", function(frame)
+            UpdatePartyMember(frame)
+        end)
+    end
+    if PartyMemberBuffTooltip and not PartyMemberBuffTooltip.nkHooked then
+        PartyMemberBuffTooltip.nkHooked = true
+        PartyMemberBuffTooltip:HookScript("OnShow", function(self)
+            if IsClassFeaturesEnabled() then
+                self:Hide()
+            end
+        end)
+    end
+    for i = 1, 4 do
+        local f = _G["PartyMemberFrame" .. i]
+        if f and f.HookScript and not f.nkShowHooked then
+            f.nkShowHooked = true
+            f:HookScript("OnShow", function(self)
+                UpdatePartyMember(self)
+            end)
+        end
+    end
     if PartyMemberFrame_OnEnter then
         hooksecurefunc("PartyMemberFrame_OnEnter", function(self)
             if not IsClassFeaturesEnabled() then return end
@@ -1151,6 +1231,7 @@ local function HookBlizzardUnitFrames()
     end
 
     -- CompactUnitFrame (Raid-Style Party & Raid frames + Nameplates)
+    -- Visual updates only (includeAuras = false) to prevent taint/secret restrictions in internal Blizzard hooks
     if CompactUnitFrame_UpdateName then
         hooksecurefunc("CompactUnitFrame_UpdateName", function(frame)
             if not frame or IsForbiddenObj(frame) then return end
@@ -1159,7 +1240,7 @@ local function HookBlizzardUnitFrames()
             if unit:find("^nameplate%d+$") then
                 UpdateNameplateUnit(unit)
             elseif unit:find("^party%d+$") or unit:find("^raid%d+$") or unit == "player" then
-                UpdateCompactPartyFrame(frame)
+                UpdateCompactPartyFrame(frame, false)
             end
         end)
     end
@@ -1171,7 +1252,7 @@ local function HookBlizzardUnitFrames()
             if unit:find("^nameplate%d+$") then
                 UpdateNameplateUnit(unit)
             elseif unit:find("^party%d+$") or unit:find("^raid%d+$") or unit == "player" then
-                UpdateCompactPartyFrame(frame)
+                UpdateCompactPartyFrame(frame, false)
             end
         end)
     end
@@ -1183,7 +1264,7 @@ local function HookBlizzardUnitFrames()
             if unit:find("^nameplate%d+$") then
                 UpdateNameplateUnit(unit)
             elseif unit:find("^party%d+$") or unit:find("^raid%d+$") or unit == "player" then
-                UpdateCompactPartyFrame(frame)
+                UpdateCompactPartyFrame(frame, false)
             end
         end)
     end
@@ -1193,7 +1274,7 @@ local function HookBlizzardUnitFrames()
             local unit = frame.unit or frame.displayedUnit
             if not unit then return end
             if unit:find("^party%d+$") or unit:find("^raid%d+$") or unit == "player" then
-                UpdateCompactPartyFrame(frame)
+                UpdateCompactPartyFrame(frame, false)
             end
         end)
     end
@@ -1260,20 +1341,20 @@ evFrame:SetScript("OnEvent", function(self, event, arg1, ...)
                 if arg1:match("^party%d+$") then
                     local num = arg1:match("^party(%d+)$")
                     local f = _G["PartyMemberFrame" .. num]
-                    if f then UpdatePartyAuras(f) end
+                    if f then pcall(UpdatePartyAuras, f) end
                 end
                 if CompactPartyFrame and CompactPartyFrame:IsShown() then
                     for i = 1, 5 do
                         local f = _G["CompactPartyFrameMember" .. i]
                         if f and (f.unit == arg1 or f.displayedUnit == arg1) then
-                            UpdateCompactPartyAuras(f)
+                            pcall(UpdateCompactPartyAuras, f)
                         end
                     end
                 end
                 if CompactRaidFrameContainer and CompactRaidFrameContainer:IsShown() and CompactRaidFrameContainer_ApplyToFrames then
                     pcall(CompactRaidFrameContainer_ApplyToFrames, CompactRaidFrameContainer, "normal", function(f)
                         if f and (f.unit == arg1 or f.displayedUnit == arg1) then
-                            UpdateCompactPartyAuras(f)
+                            pcall(UpdateCompactPartyAuras, f)
                         end
                     end)
                 end
