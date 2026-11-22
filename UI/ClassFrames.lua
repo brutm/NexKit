@@ -37,10 +37,54 @@ local function IsClassFeaturesEnabled()
     return GetSettings().showClassColorsAndIcons ~= false
 end
 
+local LOCALIZED_CLASS_MAP = {
+    -- Italian
+    ["Guerriero"] = "WARRIOR", ["Guerriera"] = "WARRIOR",
+    ["Mago"] = "MAGE", ["Maga"] = "MAGE",
+    ["Ladro"] = "ROGUE", ["Ladra"] = "ROGUE",
+    ["Druido"] = "DRUID", ["Druida"] = "DRUID",
+    ["Cacciatore"] = "HUNTER", ["Cacciatrice"] = "HUNTER",
+    ["Sciamano"] = "SHAMAN", ["Sciamana"] = "SHAMAN",
+    ["Sacerdote"] = "PRIEST", ["Sacerdotessa"] = "PRIEST",
+    ["Stregone"] = "WARLOCK", ["Stregona"] = "WARLOCK",
+    ["Paladino"] = "PALADIN", ["Paladina"] = "PALADIN",
+    -- German
+    ["Krieger"] = "WARRIOR", ["Magier"] = "MAGE", ["Schurke"] = "ROGUE",
+    ["Druide"] = "DRUID", ["Jäger"] = "HUNTER", ["Schamane"] = "SHAMAN",
+    ["Priester"] = "PRIEST", ["Hexenmeister"] = "WARLOCK",
+    -- French
+    ["Guerrier"] = "WARRIOR", ["Mage"] = "MAGE", ["Voleur"] = "ROGUE",
+    ["Druide"] = "DRUID", ["Chasseur"] = "HUNTER", ["Chaman"] = "SHAMAN",
+    ["Prêtre"] = "PRIEST", ["Démoniste"] = "WARLOCK",
+    -- Spanish
+    ["Guerrero"] = "WARRIOR", ["Pícaro"] = "ROGUE",
+    ["Cazador"] = "HUNTER", ["Chamán"] = "SHAMAN",
+    ["Sacerdote"] = "PRIEST", ["Brujo"] = "WARLOCK",
+    -- Russian
+    ["Воин"] = "WARRIOR", ["Маг"] = "MAGE", ["Разбойник"] = "ROGUE",
+    ["Друид"] = "DRUID", ["Охотник"] = "HUNTER", ["Шаман"] = "SHAMAN",
+    ["Жрец"] = "PRIEST", ["Чернокнижник"] = "WARLOCK", ["Паладин"] = "PALADIN",
+}
+
 local function GetUnitClassColor(unit)
-    if not unit or not UnitExists(unit) or not UnitIsPlayer(unit) then return nil, nil end
-    local ok, _, class = pcall(UnitClass, unit)
-    if not ok or not class then return nil, nil end
+    if not unit or not UnitExists(unit) then return nil, nil end
+    local isPartyOrPlayer = (unit == "player") or (unit:match("^party%d+$") ~= nil)
+    if not isPartyOrPlayer and not UnitIsPlayer(unit) then
+        return nil, nil
+    end
+
+    local ok, locClass, class = pcall(UnitClass, unit)
+    if not ok then return nil, nil end
+
+    if not class or class == "" then
+        if locClass and LOCALIZED_CLASS_MAP[locClass] then
+            class = LOCALIZED_CLASS_MAP[locClass]
+        end
+    end
+
+    if not class or class == "" then return nil, nil end
+
+    class = string.upper(class)
     local color = (RAID_CLASS_COLORS and RAID_CLASS_COLORS[class])
         or (C_ClassColor and C_ClassColor.GetClassColor and C_ClassColor.GetClassColor(class))
         or { r = 0.8, g = 0.8, b = 0.8 }
@@ -429,7 +473,8 @@ local function UpdatePartyAuras(frame)
         -- Positioned permanently below the health/mana bar (starting at X=44, Y=-2)
         -- This is the exact location where Blizzard shows buffs on hover, but ALWAYS visible without mouse hover!
         container:SetPoint("TOPLEFT", frame, "BOTTOMLEFT", 44, -2)
-        container:SetFrameLevel(frame:GetFrameLevel() + 25)
+        container:SetFrameStrata("MEDIUM")
+        container:SetFrameLevel(45)
         frame.nkPermanentAuras = container
 
         container.slots = {}
@@ -578,9 +623,10 @@ local function UpdatePartyMember(frame)
 
     local color, class = GetUnitClassColor(unit)
     if not color or not class then
-        -- If player data is not yet cached by client, retry in 0.2s
-        if C_Timer and C_Timer.After then
-            C_Timer.After(0.2, function()
+        -- If player data is not yet cached by client, retry up to 10 times every 0.3s
+        frame.nkRetryCount = (frame.nkRetryCount or 0) + 1
+        if frame.nkRetryCount <= 10 and C_Timer and C_Timer.After then
+            C_Timer.After(0.3, function()
                 if frame and not IsForbiddenObj(frame) then
                     UpdatePartyMember(frame)
                 end
@@ -588,6 +634,7 @@ local function UpdatePartyMember(frame)
         end
         return
     end
+    frame.nkRetryCount = 0
 
     if color and class then
         -- 1. Class-color Party Member Name text (requested: "colore della classe dove c'è il nome nel party")
@@ -635,7 +682,8 @@ local function UpdatePartyMember(frame)
         if not badge then
             badge = CreateFrame("Button", nil, frame)
             badge:SetSize(22, 22)
-            badge:SetFrameLevel(frame:GetFrameLevel() + 30)
+            badge:SetFrameStrata("HIGH")
+            badge:SetFrameLevel(60)
 
             local icon = badge:CreateTexture(nil, "ARTWORK")
             icon:SetAllPoints(badge)
@@ -673,7 +721,10 @@ local function UpdatePartyMember(frame)
 
         local portrait = _G[frame:GetName() .. "Portrait"] or frame
         badge:ClearAllPoints()
-        badge:SetPoint("BOTTOMLEFT", portrait, "BOTTOMLEFT", -2, -2)
+        -- Anchor to TOPLEFT of portrait so it NEVER collides with Blizzard's Alliance/Horde PvP crest at BOTTOMLEFT!
+        badge:SetPoint("TOPLEFT", portrait, "TOPLEFT", -4, 4)
+        badge:SetFrameStrata("HIGH")
+        badge:SetFrameLevel(60)
 
         badge.unit = unit
         ApplyClassTextureToIcon(badge.icon, class)
@@ -1175,6 +1226,17 @@ local function HookBlizzardUnitFrames()
             UpdatePartyMember(frame)
         end)
     end
+    if PartyMemberFrameMixin then
+        if type(PartyMemberFrameMixin.UpdateMember) == "function" then
+            hooksecurefunc(PartyMemberFrameMixin, "UpdateMember", function(frame) UpdatePartyMember(frame) end)
+        end
+        if type(PartyMemberFrameMixin.UpdateHealth) == "function" then
+            hooksecurefunc(PartyMemberFrameMixin, "UpdateHealth", function(frame) UpdatePartyMember(frame) end)
+        end
+        if type(PartyMemberFrameMixin.UpdateArt) == "function" then
+            hooksecurefunc(PartyMemberFrameMixin, "UpdateArt", function(frame) UpdatePartyMember(frame) end)
+        end
+    end
     if PartyMemberBuffTooltip and not PartyMemberBuffTooltip.nkHooked then
         PartyMemberBuffTooltip.nkHooked = true
         PartyMemberBuffTooltip:HookScript("OnShow", function(self)
@@ -1185,11 +1247,27 @@ local function HookBlizzardUnitFrames()
     end
     for i = 1, 4 do
         local f = _G["PartyMemberFrame" .. i]
-        if f and f.HookScript and not f.nkShowHooked then
-            f.nkShowHooked = true
-            f:HookScript("OnShow", function(self)
-                UpdatePartyMember(self)
-            end)
+        if f then
+            if f.HookScript and not f.nkShowHooked then
+                f.nkShowHooked = true
+                f:HookScript("OnShow", function(self)
+                    UpdatePartyMember(self)
+                end)
+            end
+            if f.HookScript and not f.nkEventHooked then
+                f.nkEventHooked = true
+                f:HookScript("OnEvent", function(self, event, ...)
+                    UpdatePartyMember(self)
+                end)
+            end
+            if type(f.UpdateMember) == "function" and not f.nkUpdateMemberHooked then
+                f.nkUpdateMemberHooked = true
+                hooksecurefunc(f, "UpdateMember", function(self) UpdatePartyMember(self) end)
+            end
+            if type(f.UpdateHealth) == "function" and not f.nkUpdateHealthHooked then
+                f.nkUpdateHealthHooked = true
+                hooksecurefunc(f, "UpdateHealth", function(self) UpdatePartyMember(self) end)
+            end
         end
     end
     if PartyMemberFrame_OnEnter then
@@ -1289,6 +1367,13 @@ SafeRegisterEvent(evFrame, "PLAYER_LOGIN")
 SafeRegisterEvent(evFrame, "PLAYER_ENTERING_WORLD")
 SafeRegisterEvent(evFrame, "GROUP_ROSTER_UPDATE")
 SafeRegisterEvent(evFrame, "PARTY_MEMBERS_CHANGED")
+SafeRegisterEvent(evFrame, "PARTY_LEADER_CHANGED")
+SafeRegisterEvent(evFrame, "PARTY_MEMBER_ENABLE")
+SafeRegisterEvent(evFrame, "PARTY_MEMBER_DISABLE")
+SafeRegisterEvent(evFrame, "RAID_ROSTER_UPDATE")
+SafeRegisterEvent(evFrame, "UNIT_CONNECTION")
+SafeRegisterEvent(evFrame, "UNIT_PORTRAIT_UPDATE")
+SafeRegisterEvent(evFrame, "ZONE_CHANGED_NEW_AREA")
 SafeRegisterEvent(evFrame, "PLAYER_TARGET_CHANGED")
 SafeRegisterEvent(evFrame, "NAME_PLATE_UNIT_ADDED")
 SafeRegisterEvent(evFrame, "NAME_PLATE_UNIT_REMOVED")
@@ -1306,9 +1391,17 @@ evFrame:SetScript("OnEvent", function(self, event, arg1, ...)
             HookBlizzardUnitFrames()
             UpdateAllPartyMembers()
             UpdateTargetFrame()
-        elseif event == "PLAYER_ENTERING_WORLD" or event == "GROUP_ROSTER_UPDATE" or event == "PARTY_MEMBERS_CHANGED" then
+        elseif event == "PLAYER_ENTERING_WORLD" or event == "GROUP_ROSTER_UPDATE" or event == "PARTY_MEMBERS_CHANGED"
+            or event == "PARTY_LEADER_CHANGED" or event == "PARTY_MEMBER_ENABLE" or event == "PARTY_MEMBER_DISABLE"
+            or event == "RAID_ROSTER_UPDATE" or event == "UNIT_CONNECTION" or event == "ZONE_CHANGED_NEW_AREA" then
             UpdateAllPartyMembers()
             UpdateTargetFrame()
+        elseif event == "UNIT_PORTRAIT_UPDATE" then
+            if arg1 and arg1:match("^party%d+$") then
+                local num = arg1:match("^party(%d+)$")
+                local f = _G["PartyMemberFrame" .. num]
+                if f then UpdatePartyMember(f) end
+            end
         elseif event == "PLAYER_TARGET_CHANGED" then
             UpdateTargetFrame()
             if UnitExists("target") and UnitIsPlayer("target") then
@@ -1369,6 +1462,21 @@ evFrame:SetScript("OnEvent", function(self, event, arg1, ...)
     end)
 end)
 
+-- Lightweight polling ticker while in party (refreshes party frames every 0.5s so class info, colors, badges and permanent auras are NEVER delayed or lost)
+local partyElapsed = 0
+evFrame:SetScript("OnUpdate", function(self, elapsed)
+    partyElapsed = partyElapsed + (elapsed or 0)
+    if partyElapsed >= 0.5 then
+        partyElapsed = 0
+        if IsClassFeaturesEnabled() then
+            local inGroup = (IsInGroup and IsInGroup()) or (GetNumGroupMembers and GetNumGroupMembers() > 0)
+            if inGroup then
+                UpdateAllPartyMembers()
+            end
+        end
+    end
+end)
+
 function FP:RefreshClassFrames()
     UpdateAllPartyMembers()
     UpdateTargetFrame()
@@ -1380,6 +1488,26 @@ function FP:RefreshClassFrames()
                     UpdateNameplateUnit(plate.UnitFrame.unit)
                 end
             end
+        end
+    end
+end
+
+function FP:DumpPartyStatus()
+    local enabled = IsClassFeaturesEnabled()
+    local inGrp = (IsInGroup and IsInGroup()) or false
+    local nMembers = (GetNumGroupMembers and GetNumGroupMembers()) or 0
+    FP:Print(string.format("ClassFrames: %s | InGroup: %s | Members: %d", enabled and "|cff00ff00ON|r" or "|cffff0000OFF|r", tostring(inGrp), nMembers))
+    for i = 1, 4 do
+        local f = _G["PartyMemberFrame" .. i]
+        if f then
+            local u = f.unit or ("party" .. i)
+            local exists = UnitExists(u)
+            local name = UnitName(u) or "n/a"
+            local _, engClass = UnitClass(u)
+            local badgeShown = (f.nkClassBadge and f.nkClassBadge:IsShown()) and true or false
+            local aurasShown = (f.nkPermanentAuras and f.nkPermanentAuras:IsShown()) and true or false
+            FP:Print(string.format("  Party%d: shown=%s unit=%s exists=%s name=%s class=%s badge=%s auras=%s",
+                i, tostring(f:IsShown()), u, tostring(exists), name, tostring(engClass), tostring(badgeShown), tostring(aurasShown)))
         end
     end
 end

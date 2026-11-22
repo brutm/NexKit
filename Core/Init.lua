@@ -632,12 +632,18 @@ local function HandleSlashCommand(input)
             if FP.RefreshZonePOIs then FP:RefreshZonePOIs() end
             FP:Print("Zone POIs: " .. (NexusKitDB.settings.showZonePOIs and "|cff00ff00ON|r" or "|cffff0000OFF|r"))
         end
-    elseif cmd == "classframes" or cmd == "classcolors" or cmd == "classicons" then
+    elseif cmd == "classframes" or cmd == "classcolors" or cmd == "classicons" or cmd == "party" then
         if NexusKitDB and NexusKitDB.settings then
             NexusKitDB.settings.showClassColorsAndIcons = not (NexusKitDB.settings.showClassColorsAndIcons ~= false)
             if FP.RefreshClassFrames then FP:RefreshClassFrames() end
             local st = NexusKitDB.settings.showClassColorsAndIcons and "|cff00ff00ATTIVATI|r" or "|cffff0000DISATTIVATI|r"
             FP:Print("Colori & Icone di Classe: " .. st)
+        end
+    elseif cmd == "testparty" then
+        if FP.DumpPartyStatus then
+            FP:DumpPartyStatus()
+        else
+            FP:Print("Modulo ClassFrames non disponibile.")
         end
     elseif cmd == "questalert" or cmd == "starteralert" then
         if NexusKitDB and NexusKitDB.settings then
