@@ -33,7 +33,7 @@ local function GetRotationAlpha()
 end
 
 local function GetRotationMode()
-    return GetSettings().rotationMode or "combat"
+    return GetSettings().rotationMode or "always"
 end
 
 local function IsQueueVisible()
@@ -122,6 +122,61 @@ local function IsSpellKnownCompat(spellID)
     return false
 end
 
+local spellbookByName = {}
+local spellbookLoaded = false
+
+local function RebuildSpellbookCache()
+    spellbookByName = {}
+    if C_SpellBook and C_SpellBook.GetNumSpellBookSkillLines and C_SpellBook.GetSpellBookSkillLineInfo and C_SpellBook.GetSpellBookItemInfo then
+        local bank = (Enum and Enum.SpellBookSpellBank and Enum.SpellBookSpellBank.Player) or 0
+        local spellType = (Enum and Enum.SpellBookItemType and Enum.SpellBookItemType.Spell) or 1
+        local numLines = SafeCall(C_SpellBook.GetNumSpellBookSkillLines) or 0
+        for l = 1, numLines do
+            local lineInfo = SafeCall(C_SpellBook.GetSpellBookSkillLineInfo, l)
+            if type(lineInfo) == "table" and not lineInfo.shouldHide and (not lineInfo.offSpecID or lineInfo.offSpecID == 0) then
+                local offset = lineInfo.itemIndexOffset or 0
+                local numSlots = lineInfo.numSpellBookItems or 0
+                for s = offset + 1, offset + numSlots do
+                    local itemInfo = SafeCall(C_SpellBook.GetSpellBookItemInfo, s, bank)
+                    if type(itemInfo) == "table"
+                        and (itemInfo.itemType == spellType or itemInfo.itemType == "SPELL")
+                        and not itemInfo.isPassive
+                        and not itemInfo.isOffSpec
+                        and IsAccessible(itemInfo.spellID)
+                        and IsAccessible(itemInfo.name)
+                    then
+                        spellbookByName[string.lower(itemInfo.name)] = itemInfo.spellID
+                    end
+                end
+            end
+        end
+    elseif GetNumSpellTabs and GetSpellTabInfo and GetSpellBookItemName then
+        local bookType = BOOKTYPE_SPELL or "spell"
+        local numTabs = SafeCall(GetNumSpellTabs) or 0
+        for t = 1, numTabs do
+            local _, _, offset, numSlots, _, offSpecID = SafeCall(GetSpellTabInfo, t)
+            if (not offSpecID or offSpecID == 0) and offset and numSlots then
+                for s = offset + 1, offset + numSlots do
+                    local sName = SafeCall(GetSpellBookItemName, s, bookType)
+                    local sType, sid = nil, nil
+                    if GetSpellBookItemInfo then
+                        sType, sid = SafeCall(GetSpellBookItemInfo, s, bookType)
+                    end
+                    if IsAccessible(sName) and sName ~= "" and (sType == "SPELL" or sType == nil) then
+                        local key = string.lower(sName)
+                        if sid and IsAccessible(sid) then
+                            spellbookByName[key] = sid
+                        elseif not spellbookByName[key] then
+                            spellbookByName[key] = true
+                        end
+                    end
+                end
+            end
+        end
+    end
+    spellbookLoaded = true
+end
+
 local function GetSpellCooldownCompat(spellID)
     if not spellID then return 0, 0, true end
     local start, dur, enable = 0, 0, 1
@@ -168,7 +223,7 @@ end
 
 local function IsSpellInRangeCompat(spellID, unit)
     unit = unit or "target"
-    if not spellID or not UnitExists(unit) then return nil end
+    if not spellID or not SafeBoolean(UnitExists(unit), false) then return nil end
     if C_Spell and C_Spell.IsSpellInRange then
         local inRange = SafeCall(C_Spell.IsSpellInRange, spellID, unit)
         if IsAccessible(inRange) then return inRange end
@@ -180,26 +235,36 @@ local function IsSpellInRangeCompat(spellID, unit)
 end
 
 local function UnitHasAuraNamed(unit, spellNames)
-    if not unit or not UnitExists(unit) or not spellNames then return false end
+    if not unit or not SafeBoolean(UnitExists(unit), false) or not spellNames then return false end
     if type(spellNames) == "string" then spellNames = { spellNames } end
 
-    for i = 1, 32 do
-        local name = nil
+    for i = 1, 40 do
+        local name, spellId = nil, nil
         if UnitBuff then
-            local ok, bName = pcall(UnitBuff, unit, i)
-            if ok and bName then name = bName end
+            local ok, bName, _, _, _, _, _, _, _, _, sid = pcall(UnitBuff, unit, i)
+            if ok and IsAccessible(bName) then name = bName end
+            if ok and IsAccessible(sid) then spellId = sid end
         end
         if not name and C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
             local ok, a = pcall(C_UnitAuras.GetAuraDataByIndex, unit, i, "HELPFUL")
-            if ok and a and a.name then name = a.name end
+            if ok and type(a) == "table" then
+                if IsAccessible(a.name) then name = a.name end
+                if IsAccessible(a.spellId) then spellId = a.spellId end
+            end
         end
         if name then
+            local lowName = string.lower(name)
             for _, targetName in ipairs(spellNames) do
-                if name == targetName or (string.find(name, targetName, 1, true)) then
+                if type(targetName) == "number" and spellId == targetName then
                     return true
+                elseif type(targetName) == "string" then
+                    local lowTarget = string.lower(targetName)
+                    if lowName == lowTarget or lowName:find(lowTarget, 1, true) then
+                        return true
+                    end
                 end
             end
-        else
+        elseif i > 8 then
             break
         end
     end
@@ -207,26 +272,36 @@ local function UnitHasAuraNamed(unit, spellNames)
 end
 
 local function UnitHasDebuffNamed(unit, spellNames)
-    if not unit or not UnitExists(unit) or not spellNames then return false end
+    if not unit or not SafeBoolean(UnitExists(unit), false) or not spellNames then return false end
     if type(spellNames) == "string" then spellNames = { spellNames } end
 
-    for i = 1, 32 do
-        local name = nil
+    for i = 1, 40 do
+        local name, spellId = nil, nil
         if UnitDebuff then
-            local ok, dName = pcall(UnitDebuff, unit, i)
-            if ok and dName then name = dName end
+            local ok, dName, _, _, _, _, _, _, _, _, sid = pcall(UnitDebuff, unit, i)
+            if ok and IsAccessible(dName) then name = dName end
+            if ok and IsAccessible(sid) then spellId = sid end
         end
         if not name and C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
             local ok, a = pcall(C_UnitAuras.GetAuraDataByIndex, unit, i, "HARMFUL")
-            if ok and a and a.name then name = a.name end
+            if ok and type(a) == "table" then
+                if IsAccessible(a.name) then name = a.name end
+                if IsAccessible(a.spellId) then spellId = a.spellId end
+            end
         end
         if name then
+            local lowName = string.lower(name)
             for _, targetName in ipairs(spellNames) do
-                if name == targetName or (string.find(name, targetName, 1, true)) then
+                if type(targetName) == "number" and spellId == targetName then
                     return true
+                elseif type(targetName) == "string" then
+                    local lowTarget = string.lower(targetName)
+                    if lowName == lowTarget or lowName:find(lowTarget, 1, true) then
+                        return true
+                    end
                 end
             end
-        else
+        elseif i > 8 then
             break
         end
     end
@@ -319,10 +394,10 @@ local function GetPlayerCombatContext()
         end
     end
 
-    local inCombat = InCombatLockdown and InCombatLockdown() or false
-    local hasTarget = UnitExists("target")
-    local targetHostile = hasTarget and UnitCanAttack("player", "target")
-    local targetDead = hasTarget and (UnitIsDead("target") or UnitIsGhost("target"))
+    local inCombat = SafeBoolean(InCombatLockdown and InCombatLockdown(), false)
+    local hasTarget = SafeBoolean(UnitExists("target"), false)
+    local targetHostile = hasTarget and SafeBoolean(UnitCanAttack("player", "target"), false)
+    local targetDead = hasTarget and (SafeBoolean(UnitIsDead("target"), false) or SafeBoolean(UnitIsGhost("target"), false))
 
     local targetHp = 100
     if hasTarget and not targetDead and UnitHealth and UnitHealthMax then
@@ -359,11 +434,28 @@ end
 -- Class Rotation Rules
 -------------------------------------------------------------------------------
 local function FindBestSpellInRanks(rankList)
-    if not rankList then return nil end
+    if not spellbookLoaded then
+        RebuildSpellbookCache()
+    end
+    if type(rankList) ~= "table" then return nil end
+
+    -- 1. Try direct rank spell IDs
     for i = #rankList, 1, -1 do
         local sid = rankList[i]
         if IsSpellKnownCompat(sid) then
             return sid
+        end
+    end
+
+    -- 2. Try spellbook cache by name (for WoW Forever and client discrepancies)
+    for i = #rankList, 1, -1 do
+        local baseName = GetSpellNameCompat(rankList[i])
+        if baseName then
+            local found = spellbookByName[string.lower(baseName)]
+            if found then
+                local castID = (type(found) == "number") and found or rankList[i]
+                return castID
+            end
         end
     end
     return nil
@@ -388,6 +480,7 @@ local function BuildRotation(ctx)
             icon      = icon,
             isReady   = isReady,
             remaining = remaining,
+            duration  = dur,
             noMana    = noMana,
             inRange   = inRange,
             keybind   = keybind,
@@ -424,56 +517,72 @@ local function BuildRotation(ctx)
         local consecrate = FindBestSpellInRanks({ 26573, 20116, 20922, 20923, 20924, 27173 })
         local hammerOfWrath = FindBestSpellInRanks({ 24275, 24274, 24239, 27180 })
         local exorcism   = FindBestSpellInRanks({ 879, 5614, 5615, 10312, 10313, 10314, 27138 })
+        local hammerOfJustice = FindBestSpellInRanks({ 853, 5588, 5589, 10308 })
+
+        -- 0. Seal Activation (If missing, always top priority)
+        if not activeSeal then
+            local preferredSeal = (isRet and sealCommand) or (isHoly and sealWisdom) or sealRighteous or sealCrusader
+            if preferredSeal then
+                AddCandidate(preferredSeal, "SIGILLO", "Attiva il Sigillo per il combattimento")
+            end
+        end
 
         if isProt then
             -- Protection Paladin Priority:
             -- 1. Holy Shield (keep up 30% block + Holy reflection)
             if holyShield and not UnitHasAuraNamed("player", { "Holy Shield", "Scudo Sacro" }) then
-                AddCandidate(holyShield, "DEFENSE", "Holy Shield: Mantieni attivo il 30% di parata & danno sacro")
+                AddCandidate(holyShield, "DIFESA", "Holy Shield: Mantieni attivo il 30% di parata & danno sacro")
             end
             -- 2. Hammer of Wrath (Execute < 20% HP)
-            if hammerOfWrath and ctx.targetHp <= 20 then
-                AddCandidate(hammerOfWrath, "EXECUTE", "Hammer of Wrath: Bersaglio < 20% salute")
+            if hammerOfWrath and ctx.targetHp <= 20 and ctx.hasTarget and not ctx.targetDead then
+                AddCandidate(hammerOfWrath, "ESECUZIONE", "Hammer of Wrath: Bersaglio < 20% salute")
             end
-            -- 3. Judgement (if active seal and in range)
+            -- 3. Judgement (if active seal)
             if judgement and activeSeal then
-                AddCandidate(judgement, "JUDGE", "Judgement: Scarica il sigillo sul bersaglio")
+                AddCandidate(judgement, "GIUDIZIO", "Judgement: Scarica il sigillo sul bersaglio")
             end
-            -- 4. Re-apply Seal of Righteousness if missing
-            if not activeSeal and sealRighteous then
-                AddCandidate(sealRighteous, "SEAL", "Sigillo dell'Integrità: Minaccia e danno sacro su colpo")
-            end
-            -- 5. Consecration (AoE / Tank Threat)
+            -- 4. Consecration (AoE / Tank Threat)
             if consecrate and ctx.power >= 135 then
-                AddCandidate(consecrate, "THREAT", "Consacrazione: Minaccia ad area sul terreno")
+                AddCandidate(consecrate, "MINACCIA", "Consacrazione: Minaccia ad area sul terreno")
+            end
+            -- 5. Hammer of Justice (Stun / Control)
+            if hammerOfJustice and ctx.hasTarget and ctx.targetHostile and not ctx.targetDead then
+                AddCandidate(hammerOfJustice, "STUN", "Martello della Giustizia: Stordisce il bersaglio")
             end
             -- 6. Exorcism if Demon/Undead
             local cType = UnitCreatureType("target")
             if exorcism and (cType == "Undead" or cType == "Non Morto" or cType == "Demon" or cType == "Demone") then
                 AddCandidate(exorcism, "BURST", "Esorcismo: Danno sacro istantaneo contro Non Morti e Demoni")
             end
+            -- 7. Fallback Seal renewal
+            if sealRighteous then
+                AddCandidate(sealRighteous, "SIGILLO", "Rinnova Sigillo dell'Integrità")
+            end
         elseif isRet then
             -- Retribution Paladin Priority:
-            if hammerOfWrath and ctx.targetHp <= 20 then
-                AddCandidate(hammerOfWrath, "EXECUTE", "Hammer of Wrath: Esecuzione < 20%")
+            if hammerOfWrath and ctx.targetHp <= 20 and ctx.hasTarget and not ctx.targetDead then
+                AddCandidate(hammerOfWrath, "ESECUZIONE", "Hammer of Wrath: Esecuzione < 20%")
             end
             local bestSeal = sealCommand or sealRighteous
             if bestSeal and not activeSeal then
-                AddCandidate(bestSeal, "SEAL", "Sigillo del Comando: Danno burst su colpo")
+                AddCandidate(bestSeal, "SIGILLO", "Sigillo del Comando: Danno burst su colpo")
             end
             if judgement and activeSeal then
-                AddCandidate(judgement, "BURST", "Giudizio sul bersaglio")
+                AddCandidate(judgement, "GIUDIZIO", "Giudizio sul bersaglio")
             end
             if consecrate and ctx.power >= 250 then
                 AddCandidate(consecrate, "AOE", "Consacrazione")
+            end
+            if hammerOfJustice and ctx.hasTarget and ctx.targetHostile and not ctx.targetDead then
+                AddCandidate(hammerOfJustice, "STUN", "Martello della Giustizia")
             end
         else
             -- Holy / General Paladin:
             local holyShock = FindBestSpellInRanks({ 20473, 20929, 20930, 27174 })
             if holyShock then AddCandidate(holyShock, "SHOCK", "Holy Shock istantaneo") end
-            if judgement and activeSeal then AddCandidate(judgement, "JUDGE", "Giudizio") end
+            if judgement and activeSeal then AddCandidate(judgement, "GIUDIZIO", "Giudizio") end
             if not activeSeal and (sealWisdom or sealRighteous) then
-                AddCandidate(sealWisdom or sealRighteous, "SEAL", "Sigillo per mana / danno")
+                AddCandidate(sealWisdom or sealRighteous, "SIGILLO", "Sigillo per mana / danno")
             end
         end
 
@@ -853,8 +962,11 @@ local function UpdateRotationUI()
 
         -- Cooldown indicator
         if not first.isReady and first.remaining > 0 then
-            mainCooldown:SetCooldown(GetTime() - (10 - first.remaining), 10)
+            local dur = first.duration or 10
+            local start = (GetTime() + first.remaining) - dur
+            mainCooldown:SetCooldown(start, dur)
             mainIcon:SetVertexColor(0.6, 0.6, 0.6)
+            mainBorder:SetVertexColor(0.8, 0.5, 0.2, 0.9)
         else
             mainCooldown:Clear()
             -- Out of range check
@@ -872,9 +984,9 @@ local function UpdateRotationUI()
         mainSlot:Show()
     else
         mainIcon:SetTexture("Interface\\Icons\\INV_Misc_QuestionMark")
-        mainIcon:SetVertexColor(0.5, 0.5, 0.5)
-        mainBorder:SetVertexColor(0.4, 0.4, 0.4, 0.6)
-        mainBadge:SetText("ATTACCA")
+        mainIcon:SetVertexColor(0.8, 0.8, 0.8)
+        mainBorder:SetVertexColor(0.5, 0.5, 0.5, 0.8)
+        mainBadge:SetText("ATTESA")
         mainKeybind:Hide()
         mainCooldown:Clear()
         mainSlot:Show()
@@ -909,8 +1021,15 @@ SafeRegisterEvent(evFrame, "UNIT_POWER_UPDATE")
 SafeRegisterEvent(evFrame, "ACTIONBAR_SLOT_CHANGED")
 SafeRegisterEvent(evFrame, "UPDATE_BINDINGS")
 SafeRegisterEvent(evFrame, "SPELL_UPDATE_COOLDOWN")
+SafeRegisterEvent(evFrame, "SPELLS_CHANGED")
+SafeRegisterEvent(evFrame, "LEARNED_SPELL_IN_TAB")
+SafeRegisterEvent(evFrame, "CHARACTER_POINTS_CHANGED")
+SafeRegisterEvent(evFrame, "PLAYER_TALENT_UPDATE")
 
 evFrame:SetScript("OnEvent", function(self, event, ...)
+    if event == "SPELLS_CHANGED" or event == "LEARNED_SPELL_IN_TAB" or event == "PLAYER_TALENT_UPDATE" or event == "PLAYER_LOGIN" then
+        spellbookLoaded = false
+    end
     pcall(UpdateRotationUI)
 end)
 

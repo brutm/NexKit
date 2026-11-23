@@ -482,7 +482,7 @@ local SV_DEFAULTS = {
         rotationLocked          = true,
         rotationScale           = 1.0,
         rotationAlpha           = 1.0,
-        rotationMode            = "combat",
+        rotationMode            = "always",
         rotationShowQueue       = true,
         rotationPos             = nil,
     },

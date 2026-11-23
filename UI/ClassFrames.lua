@@ -757,10 +757,9 @@ local function UpdatePartyMember(frame)
 
     local frameName = frame.GetName and frame:GetName()
 
-    -- 1. Class Icon on Portrait (Replaces 3D model portrait with circular class icon, like Leatrix Plus / EasyFrames)
+    -- 1. Normal Portrait (Keep 2D/3D character face, update online status)
     local portrait = frame.portrait or (frameName and _G[frameName .. "Portrait"])
     if portrait then
-        ApplyClassIconToPortrait(portrait, class)
         local isConn = true
         if UnitIsConnected then
             local okC, conn = pcall(UnitIsConnected, unit)
@@ -1702,7 +1701,7 @@ local function UpdateNameplateUnit(unit)
         local badge = host.nkClassBadge
         if not badge then
             badge = CreateFrame("Frame", nil, host)
-            badge:SetSize(18, 18)
+            badge:SetSize(22, 22)
             badge:EnableMouse(false)
 
             local icon = badge:CreateTexture(nil, "ARTWORK")
@@ -1711,8 +1710,8 @@ local function UpdateNameplateUnit(unit)
 
             local border = badge:CreateTexture(nil, "OVERLAY")
             border:SetTexture("Interface\\Minimap\\MiniMap-TrackingBorder")
-            border:SetSize(32, 32)
-            border:SetPoint("CENTER", badge, "CENTER", 5, -4)
+            border:SetSize(36, 36)
+            border:SetPoint("CENTER", badge, "CENTER", 5.5, -4.5)
             badge.border = border
 
             host.nkClassBadge = badge
@@ -1723,13 +1722,10 @@ local function UpdateNameplateUnit(unit)
         badge:SetFrameLevel(baseLevel + 25)
 
         badge:ClearAllPoints()
-        if healthBar and healthBar:IsShown() then
-            badge:SetPoint("RIGHT", healthBar, "LEFT", -3, 0)
-        elseif nameFs and nameFs:IsShown() then
-            badge:SetPoint("RIGHT", nameFs, "LEFT", -3, 0)
-        else
-            badge:SetPoint("LEFT", host, "LEFT", -16, 0)
-        end
+        local anchor = (healthBar and healthBar:IsShown() and healthBar)
+            or (nameFs and nameFs:IsShown() and nameFs)
+            or host
+        badge:SetPoint("BOTTOM", anchor, "TOP", 0, 4)
 
         ApplyClassTextureToIcon(badge.icon, class)
         badge:Show()
@@ -1831,34 +1827,7 @@ local function HookBlizzardUnitFrames()
         end)
     end
 
-    if SetPortraitTexture then
-        hooksecurefunc("SetPortraitTexture", function(portrait, unit)
-            if not IsClassFeaturesEnabled() or not portrait or not unit then return end
-            if type(unit) == "string" and unit:match("^party%d+$") and UnitExists(unit) then
-                local color, class = GetUnitClassColor(unit)
-                if class then
-                    ApplyClassIconToPortrait(portrait, class)
-                end
-            end
-        end)
-    end
-
-    if UnitFramePortrait_Update then
-        hooksecurefunc("UnitFramePortrait_Update", function(self)
-            if not IsClassFeaturesEnabled() or not self then return end
-            local unit = self.unit
-            if unit and type(unit) == "string" and unit:match("^party%d+$") and UnitExists(unit) then
-                local portrait = self.portrait or (self.GetName and _G[self:GetName() .. "Portrait"])
-                if portrait then
-                    local color, class = GetUnitClassColor(unit)
-                    if class then
-                        ApplyClassIconToPortrait(portrait, class)
-                    end
-                end
-            end
-        end)
-    end
-
+    -- Normal portraits preserved (no class icon override)
     if PartyMemberFrame_UpdateMember then
         hooksecurefunc("PartyMemberFrame_UpdateMember", function(frame)
             UpdatePartyMember(frame)
