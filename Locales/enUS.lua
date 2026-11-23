@@ -481,6 +481,14 @@ local enUS = {
     SETTING_QUEST_STARTER_ALERT_TIP  = "Shows a prompt popup whenever you loot an item in your bags that begins a quest and lets you start it immediately.",
     SETTING_CLASS_FRAMES             = "Class colors & icons for PCs",
     SETTING_CLASS_FRAMES_TIP         = "Colors healthbars by player class and displays circular class badges on Party frames, TargetFrame, and Nameplates.",
+    SETTING_GRID_PARTY               = "Raid-Style Grid Party Frames",
+    SETTING_GRID_PARTY_TIP           = "Displays party members as a compact Raid/Grid frame with full class-colored healthbars, power bars, HoT/buff counters, debuffs, threat borders, and range fading.",
+    SETTING_GRID_LOCKED              = "Lock Grid Party Frame",
+    SETTING_GRID_LOCKED_TIP          = "Unlock to show drag handle and freely move the party grid anywhere on screen.",
+    SETTING_GRID_SOLO                = "Show Grid Frame when Solo (Test)",
+    SETTING_GRID_SOLO_TIP            = "Shows the player frame to preview and position the grid even when not in a party.",
+    SETTING_GRID_SCALE               = "Grid Party Frame Scale",
+    SETTING_GRID_SCALE_TIP           = "Adjusts the overall scale of the party grid.",
 }
 
 FP.Locales["enUS"] = enUS

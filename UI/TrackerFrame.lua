@@ -1480,6 +1480,34 @@ local SETTINGS_CONTROLS = {
             end,
         },
         {
+            kind = "checkbox", key = "useGridPartyFrames", default = true,
+            labelKey = "SETTING_GRID_PARTY", tipKey = "SETTING_GRID_PARTY_TIP", fallback = "Raid-Style Grid Party Frames",
+            onChange = function()
+                if FP.RefreshClassFrames then FP:RefreshClassFrames() end
+            end,
+        },
+        {
+            kind = "checkbox", key = "gridPartyLocked", default = true,
+            labelKey = "SETTING_GRID_LOCKED", tipKey = "SETTING_GRID_LOCKED_TIP", fallback = "Lock Grid Party Frame position",
+            onChange = function()
+                if FP.RefreshPartyGridLock then FP:RefreshPartyGridLock() end
+            end,
+        },
+        {
+            kind = "checkbox", key = "gridPartyShowSolo", default = false,
+            labelKey = "SETTING_GRID_SOLO", tipKey = "SETTING_GRID_SOLO_TIP", fallback = "Show Grid Frame when Solo (Test)",
+            onChange = function()
+                if FP.RefreshClassFrames then FP:RefreshClassFrames() end
+            end,
+        },
+        {
+            kind = "slider", key = "gridPartyScale", default = 1.0, min = 0.70, max = 1.50, step = 0.05, fmt = "%.2fx",
+            labelKey = "SETTING_GRID_SCALE", tipKey = "SETTING_GRID_SCALE_TIP", fallback = "Grid Party Scale",
+            onChange = function(v)
+                if FP.SetPartyGridScale then FP:SetPartyGridScale(v) end
+            end,
+        },
+        {
             kind = "locale", key = "locale", labelKey = "SETTING_LANGUAGE", fallback = "Language",
         },
     },

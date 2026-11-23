@@ -955,26 +955,501 @@ local function UpdateCompactPartyFrame(frame, includeAuras)
     end
 end
 
-local function UpdateAllPartyMembers()
-    for i = 1, 4 do
-        local frame = _G["PartyMemberFrame" .. i]
-        if frame then
-            UpdatePartyMember(frame)
+-------------------------------------------------------------------------------
+-- 1c. Raid-Style Grid Party Frames (Grid / Incursione Stile)
+-------------------------------------------------------------------------------
+local function IsGridPartyEnabled()
+    return IsClassFeaturesEnabled() and GetSettings().useGridPartyFrames ~= false
+end
+
+local GRID_UNITS = { "player", "party1", "party2", "party3", "party4" }
+local gridMembers = {}
+local gridContainer = CreateFrame("Frame", "NexusKitPartyGrid", UIParent)
+gridContainer:SetSize(114, 240)
+gridContainer:SetClampedToScreen(true)
+gridContainer:SetMovable(true)
+gridContainer:SetPoint("LEFT", UIParent, "LEFT", 30, 40)
+gridContainer:Hide()
+
+local dragBar = CreateFrame("Frame", nil, gridContainer, "BackdropTemplate")
+dragBar:SetSize(114, 18)
+dragBar:SetPoint("BOTTOMLEFT", gridContainer, "TOPLEFT", 0, 2)
+dragBar:SetBackdrop({
+    bgFile = "Interface\\Buttons\\WHITE8x8",
+    edgeFile = "Interface\\Buttons\\WHITE8x8",
+    edgeSize = 1,
+})
+dragBar:SetBackdropColor(0.08, 0.08, 0.08, 0.88)
+dragBar:SetBackdropBorderColor(0.25, 0.25, 0.25, 1)
+
+local dragText = dragBar:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+dragText:SetPoint("CENTER", dragBar, "CENTER", 0, 0)
+dragText:SetText("Griglia Party [Sposta]")
+dragText:SetTextColor(0, 1, 0.6, 1)
+
+dragBar:EnableMouse(true)
+dragBar:RegisterForDrag("LeftButton")
+dragBar:SetScript("OnDragStart", function()
+    gridContainer:StartMoving()
+end)
+dragBar:SetScript("OnDragStop", function()
+    gridContainer:StopMovingOrSizing()
+    local point, _, relPoint, x, y = gridContainer:GetPoint()
+    local s = GetSettings()
+    s.gridPartyPos = { point = point, relPoint = relPoint, x = x, y = y }
+end)
+dragBar:Hide()
+
+local function CheckUnitRange(unit)
+    if not unit or not UnitExists(unit) then return false end
+    if UnitIsUnit(unit, "player") then return true end
+    if UnitInRange then
+        local inRange, checked = UnitInRange(unit)
+        if checked then return inRange end
+    end
+    if CheckInteractDistance then
+        return CheckInteractDistance(unit, 4) or CheckInteractDistance(unit, 1)
+    end
+    return true
+end
+
+for i = 1, 5 do
+    local unit = GRID_UNITS[i]
+    local btn = CreateFrame("Button", "NKPartyGridMember" .. i, gridContainer, "SecureUnitButtonTemplate")
+    btn:SetSize(114, 44)
+    btn:SetAttribute("type1", "target")
+    btn:SetAttribute("unit", unit)
+    btn:RegisterForClicks("AnyUp", "AnyDown")
+    btn.unit = unit
+
+    btn:SetPoint("TOPLEFT", gridContainer, "TOPLEFT", 0, -((i - 1) * 47))
+
+    -- 1px cell border
+    local border = CreateFrame("Frame", nil, btn, "BackdropTemplate")
+    border:SetAllPoints(btn)
+    border:SetBackdrop({
+        edgeFile = "Interface\\Buttons\\WHITE8x8",
+        edgeSize = 1,
+    })
+    border:SetBackdropBorderColor(0.12, 0.12, 0.12, 0.95)
+    btn.border = border
+
+    -- Threat / Aggro Border (Red)
+    local threatBorder = CreateFrame("Frame", nil, btn, "BackdropTemplate")
+    threatBorder:SetPoint("TOPLEFT", btn, "TOPLEFT", -1, 1)
+    threatBorder:SetPoint("BOTTOMRIGHT", btn, "BOTTOMRIGHT", 1, -1)
+    threatBorder:SetBackdrop({
+        edgeFile = "Interface\\Buttons\\WHITE8x8",
+        edgeSize = 2,
+    })
+    threatBorder:SetBackdropBorderColor(1.0, 0.1, 0.1, 1.0)
+    threatBorder:Hide()
+    btn.threatBorder = threatBorder
+
+    -- Target Highlight Border (Gold/White)
+    local targetBorder = CreateFrame("Frame", nil, btn, "BackdropTemplate")
+    targetBorder:SetPoint("TOPLEFT", btn, "TOPLEFT", -1, 1)
+    targetBorder:SetPoint("BOTTOMRIGHT", btn, "BOTTOMRIGHT", 1, -1)
+    targetBorder:SetBackdrop({
+        edgeFile = "Interface\\Buttons\\WHITE8x8",
+        edgeSize = 1.5,
+    })
+    targetBorder:SetBackdropBorderColor(1.0, 0.95, 0.6, 0.95)
+    targetBorder:Hide()
+    btn.targetBorder = targetBorder
+
+    -- Health Bar
+    local hpBar = CreateFrame("StatusBar", nil, btn)
+    hpBar:SetPoint("TOPLEFT", btn, "TOPLEFT", 1, -1)
+    hpBar:SetPoint("BOTTOMRIGHT", btn, "BOTTOMRIGHT", -1, 6)
+    hpBar:SetStatusBarTexture("Interface\\TargetingFrame\\UI-StatusBar")
+    hpBar:SetMinMaxValues(0, 1)
+    hpBar:SetValue(1)
+    btn.hpBar = hpBar
+
+    -- Darkened background for missing health deficit
+    local hpBg = hpBar:CreateTexture(nil, "BACKGROUND")
+    hpBg:SetAllPoints(hpBar)
+    hpBg:SetTexture("Interface\\Buttons\\WHITE8x8")
+    hpBg:SetVertexColor(0.1, 0.1, 0.1, 0.88)
+    btn.hpBg = hpBg
+
+    -- Power Bar (bottom)
+    local powerBar = CreateFrame("StatusBar", nil, btn)
+    powerBar:SetPoint("BOTTOMLEFT", btn, "BOTTOMLEFT", 1, 1)
+    powerBar:SetPoint("BOTTOMRIGHT", btn, "BOTTOMRIGHT", -1, 1)
+    powerBar:SetHeight(5)
+    powerBar:SetStatusBarTexture("Interface\\TargetingFrame\\UI-StatusBar")
+    powerBar:SetMinMaxValues(0, 1)
+    powerBar:SetValue(1)
+    btn.powerBar = powerBar
+
+    local powerBg = powerBar:CreateTexture(nil, "BACKGROUND")
+    powerBg:SetAllPoints(powerBar)
+    powerBg:SetTexture("Interface\\Buttons\\WHITE8x8")
+    powerBg:SetVertexColor(0.05, 0.05, 0.05, 0.9)
+    btn.powerBg = powerBg
+
+    -- Name Text (Crisp white with shadow)
+    local nameText = hpBar:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    nameText:SetPoint("TOPLEFT", hpBar, "TOPLEFT", 4, -3)
+    nameText:SetShadowOffset(1, -1)
+    nameText:SetJustifyH("LEFT")
+    btn.nameText = nameText
+
+    -- Health Deficit / Status Text
+    local hpText = hpBar:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    hpText:SetPoint("TOPRIGHT", hpBar, "TOPRIGHT", -4, -3)
+    hpText:SetShadowOffset(1, -1)
+    hpText:SetJustifyH("RIGHT")
+    btn.hpText = hpText
+
+    -- HoT / Buff Icons (3 slots in the center row)
+    btn.buffSlots = {}
+    for b = 1, 3 do
+        local bBtn = CreateFrame("Button", nil, hpBar)
+        bBtn:SetSize(15, 15)
+        bBtn:SetPoint("CENTER", hpBar, "CENTER", (b - 2) * 17, -3)
+
+        local icon = bBtn:CreateTexture(nil, "ARTWORK")
+        icon:SetAllPoints(bBtn)
+        bBtn.icon = icon
+
+        local bBorder = bBtn:CreateTexture(nil, "OVERLAY")
+        bBorder:SetTexture("Interface\\Buttons\\UI-ActionButton-Border")
+        bBorder:SetTexCoord(0, 1, 0, 1)
+        bBorder:SetPoint("TOPLEFT", bBtn, "TOPLEFT", -2, 2)
+        bBorder:SetPoint("BOTTOMRIGHT", bBtn, "BOTTOMRIGHT", 2, -2)
+        bBorder:SetVertexColor(0.4, 0.4, 0.4, 0.6)
+        bBtn.border = bBorder
+
+        local countFs = bBtn:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        countFs:SetPoint("BOTTOMRIGHT", bBtn, "BOTTOMRIGHT", 2, -1)
+        bBtn.countFs = countFs
+
+        bBtn:SetScript("OnEnter", function(self)
+            if not self.unit or not self.auraIndex then return end
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            GameTooltip:SetUnitBuff(self.unit, self.auraIndex)
+            GameTooltip:Show()
+        end)
+        bBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+        bBtn:Hide()
+
+        btn.buffSlots[b] = bBtn
+    end
+
+    -- Debuff Icons (2 slots in top right)
+    btn.debuffSlots = {}
+    for d = 1, 2 do
+        local dBtn = CreateFrame("Button", nil, hpBar)
+        dBtn:SetSize(16, 16)
+        dBtn:SetPoint("TOPRIGHT", hpBar, "TOPRIGHT", -((d - 1) * 18 + 2), -2)
+
+        local icon = dBtn:CreateTexture(nil, "ARTWORK")
+        icon:SetAllPoints(dBtn)
+        dBtn.icon = icon
+
+        local dBorder = dBtn:CreateTexture(nil, "OVERLAY")
+        dBorder:SetTexture("Interface\\Buttons\\UI-Debuff-Overlays")
+        dBorder:SetTexCoord(0.296875, 0.5703125, 0, 0.515625)
+        dBorder:SetPoint("TOPLEFT", dBtn, "TOPLEFT", -2, 2)
+        dBorder:SetPoint("BOTTOMRIGHT", dBtn, "BOTTOMRIGHT", 2, -2)
+        dBtn.border = dBorder
+
+        local countFs = dBtn:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        countFs:SetPoint("BOTTOMRIGHT", dBtn, "BOTTOMRIGHT", 2, -1)
+        dBtn.countFs = countFs
+
+        dBtn:SetScript("OnEnter", function(self)
+            if not self.unit or not self.auraIndex then return end
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            GameTooltip:SetUnitDebuff(self.unit, self.auraIndex)
+            GameTooltip:Show()
+        end)
+        dBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+        dBtn:Hide()
+
+        btn.debuffSlots[d] = dBtn
+    end
+
+    btn:SetScript("OnEnter", function(self)
+        if self.unit and UnitExists(self.unit) then
+            ShowPortraitTooltip(self, self.unit)
+        end
+    end)
+    btn:SetScript("OnLeave", function(self)
+        if currentTooltipOwner == self then
+            currentTooltipOwner = nil
+            currentTooltipUnit = nil
+        end
+        GameTooltip:Hide()
+    end)
+    btn:SetScript("OnMouseUp", function(self, button)
+        if button == "RightButton" and not (InCombatLockdown and InCombatLockdown()) then
+            local u = self.unit
+            if u and UnitExists(u) then
+                if u == "player" and PlayerFrameDropDown then
+                    ToggleDropDownMenu(1, nil, PlayerFrameDropDown, "cursor")
+                else
+                    local num = u:match("^party(%d+)$")
+                    local dd = num and _G["PartyMemberFrame" .. num .. "DropDown"]
+                    if dd then
+                        ToggleDropDownMenu(1, nil, dd, "cursor")
+                    end
+                end
+            end
+        end
+    end)
+
+    gridMembers[i] = btn
+end
+
+local function UpdateGridMember(btn)
+    if not btn then return end
+    local unit = btn.unit
+    local exists = unit and UnitExists(unit)
+    if not exists then
+        btn:Hide()
+        return
+    end
+
+    btn:Show()
+
+    local color, class = GetUnitClassColor(unit)
+    color = color or { r = 0.6, g = 0.6, b = 0.6 }
+
+    local name = UnitName(unit) or unit
+    if #name > 11 then
+        name = string.sub(name, 1, 9) .. ".."
+    end
+    btn.nameText:SetText(name)
+
+    local hp = UnitHealth(unit) or 0
+    local maxHp = UnitMaxHealth(unit) or 1
+    if issecretvalue and issecretvalue(hp) then hp = 1 end
+    if issecretvalue and issecretvalue(maxHp) then maxHp = 1 end
+    if maxHp <= 0 then maxHp = 1 end
+
+    btn.hpBar:SetMinMaxValues(0, maxHp)
+    btn.hpBar:SetValue(hp)
+
+    local isDead = UnitIsDead(unit) or UnitIsGhost(unit)
+    local isConnected = UnitIsConnected(unit)
+
+    if not isConnected then
+        btn.hpBar:SetStatusBarColor(0.4, 0.4, 0.4)
+        btn.hpBg:SetVertexColor(0.15, 0.15, 0.15, 0.9)
+        btn.hpText:SetText("|cff888888Off|r")
+    elseif isDead then
+        btn.hpBar:SetStatusBarColor(0.25, 0.25, 0.25)
+        btn.hpBg:SetVertexColor(0.1, 0.1, 0.1, 0.9)
+        btn.hpText:SetText(UnitIsGhost(unit) and "|cffaaaaaaFantasma|r" or "|cffff2020Morto|r")
+    else
+        btn.hpBar:SetStatusBarColor(color.r, color.g, color.b)
+        btn.hpBg:SetVertexColor(color.r * 0.22, color.g * 0.22, color.b * 0.22, 0.9)
+        local deficit = maxHp - hp
+        if deficit > 0 then
+            if deficit >= 1000 then
+                btn.hpText:SetText(string.format("-%.1fk", deficit / 1000))
+            else
+                btn.hpText:SetText(string.format("-%d", deficit))
+            end
+            btn.hpText:SetTextColor(1.0, 0.35, 0.35, 1.0)
+        else
+            btn.hpText:SetText("")
         end
     end
-    -- Raid-style / Compact party frames
-    if CompactPartyFrame and CompactPartyFrame:IsShown() then
-        for i = 1, 5 do
-            local f = _G["CompactPartyFrameMember" .. i]
-            if f then
-                UpdateCompactPartyFrame(f, true)
+
+    local power = UnitPower(unit) or 0
+    local maxPower = UnitPowerMax(unit) or 1
+    if issecretvalue and issecretvalue(power) then power = 0 end
+    if issecretvalue and issecretvalue(maxPower) then maxPower = 1 end
+    if maxPower <= 0 then maxPower = 1 end
+
+    btn.powerBar:SetMinMaxValues(0, maxPower)
+    btn.powerBar:SetValue(power)
+
+    local powerType = UnitPowerType(unit)
+    if powerType == 0 then
+        btn.powerBar:SetStatusBarColor(0.18, 0.45, 0.95)
+    elseif powerType == 1 then
+        btn.powerBar:SetStatusBarColor(0.92, 0.2, 0.2)
+    elseif powerType == 3 then
+        btn.powerBar:SetStatusBarColor(0.95, 0.85, 0.15)
+    elseif powerType == 6 then
+        btn.powerBar:SetStatusBarColor(0.0, 0.82, 1.0)
+    else
+        btn.powerBar:SetStatusBarColor(0.5, 0.5, 0.5)
+    end
+
+    -- Threat / Aggro Border (Red)
+    local threat = UnitThreatSituation(unit)
+    if threat and threat >= 3 then
+        btn.threatBorder:Show()
+        btn.threatBorder:SetBackdropBorderColor(1.0, 0.1, 0.1, 1.0)
+    elseif threat and threat >= 2 then
+        btn.threatBorder:Show()
+        btn.threatBorder:SetBackdropBorderColor(1.0, 0.6, 0.0, 1.0)
+    else
+        btn.threatBorder:Hide()
+    end
+
+    -- Target Highlight Border
+    if UnitIsUnit(unit, "target") then
+        btn.targetBorder:Show()
+    else
+        btn.targetBorder:Hide()
+    end
+
+    -- Range Check / Fading
+    local inRange = CheckUnitRange(unit)
+    btn:SetAlpha(inRange and 1.0 or 0.55)
+
+    -- Auras (Buffs & HoTs)
+    local buffs = GetPartyUnitBuffs(unit)
+    for b = 1, 3 do
+        local bBtn = btn.buffSlots[b]
+        if b <= #buffs then
+            local buff = buffs[b]
+            bBtn.unit = unit
+            bBtn.auraIndex = buff.index
+            bBtn.icon:SetTexture(buff.icon)
+            if buff.isPlayerBuff then
+                bBtn.border:SetVertexColor(1.0, 0.85, 0.0, 0.95)
+            else
+                bBtn.border:SetVertexColor(0.4, 0.4, 0.4, 0.6)
+            end
+            if buff.count and buff.count > 1 then
+                bBtn.countFs:SetText(buff.count)
+                bBtn.countFs:Show()
+            else
+                bBtn.countFs:Hide()
+            end
+            bBtn:Show()
+        else
+            bBtn:Hide()
+        end
+    end
+
+    -- Debuffs (Top right)
+    local debuffs = GetPartyUnitDebuffs(unit)
+    for d = 1, 2 do
+        local dBtn = btn.debuffSlots[d]
+        if d <= #debuffs then
+            local debuff = debuffs[d]
+            dBtn.unit = unit
+            dBtn.auraIndex = debuff.index
+            dBtn.icon:SetTexture(debuff.icon)
+            local col = DISPEL_COLORS[debuff.dispelType] or DISPEL_COLORS["none"]
+            dBtn.border:SetVertexColor(col.r, col.g, col.b, 1)
+            if debuff.count and debuff.count > 1 then
+                dBtn.countFs:SetText(debuff.count)
+                dBtn.countFs:Show()
+            else
+                dBtn.countFs:Hide()
+            end
+            dBtn:Show()
+        else
+            dBtn:Hide()
+        end
+    end
+end
+
+local function UpdatePartyGrid()
+    if not IsGridPartyEnabled() then
+        if gridContainer:IsShown() then gridContainer:Hide() end
+        return
+    end
+
+    local inGrp = (IsInGroup and IsInGroup())
+        or (GetNumGroupMembers and GetNumGroupMembers() > 0)
+        or (GetNumPartyMembers and GetNumPartyMembers() > 0)
+
+    local showSolo = GetSettings().gridPartyShowSolo == true
+    if not inGrp and not showSolo then
+        if gridContainer:IsShown() then gridContainer:Hide() end
+        return
+    end
+
+    gridContainer:Show()
+
+    local scale = GetSettings().gridPartyScale or 1.0
+    gridContainer:SetScale(scale)
+
+    local s = GetSettings()
+    if s.gridPartyPos and not gridContainer.posLoaded then
+        gridContainer.posLoaded = true
+        gridContainer:ClearAllPoints()
+        gridContainer:SetPoint(s.gridPartyPos.point, UIParent, s.gridPartyPos.relPoint, s.gridPartyPos.x, s.gridPartyPos.y)
+    end
+
+    if s.gridPartyLocked ~= false then
+        dragBar:Hide()
+        gridContainer:EnableMouse(false)
+    else
+        dragBar:Show()
+        gridContainer:EnableMouse(true)
+    end
+
+    local activeCount = 0
+    for i = 1, 5 do
+        local btn = gridMembers[i]
+        local unit = btn.unit
+        local exists = unit and UnitExists(unit)
+        if not inGrp and showSolo and i > 1 then
+            exists = false
+        end
+        if exists then
+            UpdateGridMember(btn)
+            activeCount = activeCount + 1
+        else
+            btn:Hide()
+        end
+    end
+
+    gridContainer:SetHeight(math.max(44, activeCount * 47))
+
+    if not (InCombatLockdown and InCombatLockdown()) then
+        for i = 1, 4 do
+            local f = _G["PartyMemberFrame" .. i]
+            if f and f:IsShown() then
+                f:Hide()
             end
         end
     end
-    if CompactRaidFrameContainer and CompactRaidFrameContainer:IsShown() and CompactRaidFrameContainer_ApplyToFrames then
-        pcall(CompactRaidFrameContainer_ApplyToFrames, CompactRaidFrameContainer, "normal", function(f)
-            if f then UpdateCompactPartyFrame(f, true) end
-        end)
+end
+
+local function UpdateAllPartyMembers()
+    if IsGridPartyEnabled() then
+        UpdatePartyGrid()
+    else
+        if gridContainer and gridContainer:IsShown() then
+            gridContainer:Hide()
+        end
+        for i = 1, 4 do
+            local frame = _G["PartyMemberFrame" .. i]
+            if frame then
+                local u = frame.unit or ("party" .. i)
+                if UnitExists(u) and not (InCombatLockdown and InCombatLockdown()) and not frame:IsShown() then
+                    frame:Show()
+                end
+                UpdatePartyMember(frame)
+            end
+        end
+        if CompactPartyFrame and CompactPartyFrame:IsShown() then
+            for i = 1, 5 do
+                local f = _G["CompactPartyFrameMember" .. i]
+                if f then
+                    UpdateCompactPartyFrame(f, true)
+                end
+            end
+        end
+        if CompactRaidFrameContainer and CompactRaidFrameContainer:IsShown() and CompactRaidFrameContainer_ApplyToFrames then
+            pcall(CompactRaidFrameContainer_ApplyToFrames, CompactRaidFrameContainer, "normal", function(f)
+                if f then UpdateCompactPartyFrame(f, true) end
+            end)
+        end
     end
 end
 
@@ -1283,6 +1758,10 @@ local function HookBlizzardUnitFrames()
             if f.HookScript and not f.nkShowHooked then
                 f.nkShowHooked = true
                 f:HookScript("OnShow", function(self)
+                    if IsGridPartyEnabled() and not (InCombatLockdown and InCombatLockdown()) then
+                        self:Hide()
+                        return
+                    end
                     UpdatePartyMember(self)
                 end)
             end
@@ -1430,6 +1909,11 @@ SafeRegisterEvent(evFrame, "UNIT_NAME_UPDATE")
 SafeRegisterEvent(evFrame, "UNIT_HEALTH")
 SafeRegisterEvent(evFrame, "UNIT_MAXHEALTH")
 SafeRegisterEvent(evFrame, "UNIT_AURA")
+SafeRegisterEvent(evFrame, "UNIT_POWER_UPDATE")
+SafeRegisterEvent(evFrame, "UNIT_MANA")
+SafeRegisterEvent(evFrame, "UNIT_ENERGY")
+SafeRegisterEvent(evFrame, "UNIT_RAGE")
+SafeRegisterEvent(evFrame, "UNIT_THREAT_SITUATION_UPDATE")
 SafeRegisterEvent(evFrame, "INSPECT_READY")
 SafeRegisterEvent(evFrame, "PLAYER_TALENT_UPDATE")
 SafeRegisterEvent(evFrame, "CHARACTER_POINTS_CHANGED")
@@ -1453,6 +1937,9 @@ evFrame:SetScript("OnEvent", function(self, event, arg1, ...)
             end
         elseif event == "PLAYER_TARGET_CHANGED" then
             UpdateTargetFrame()
+            if IsGridPartyEnabled() then
+                UpdatePartyGrid()
+            end
             if UnitExists("target") and UnitIsPlayer("target") then
                 UpdateNameplateUnit("target")
             end
@@ -1464,23 +1951,37 @@ evFrame:SetScript("OnEvent", function(self, event, arg1, ...)
             if arg1 and arg1:match("^nameplate%d+$") then
                 UpdateNameplateUnit(arg1)
             elseif arg1 and arg1:match("^party%d+$") then
-                local num = arg1:match("^party(%d+)$")
-                local f = _G["PartyMemberFrame" .. num]
-                if f then UpdatePartyMember(f) end
+                if IsGridPartyEnabled() then
+                    UpdatePartyGrid()
+                else
+                    local num = arg1:match("^party(%d+)$")
+                    local f = _G["PartyMemberFrame" .. num]
+                    if f then UpdatePartyMember(f) end
+                end
             end
         elseif event == "UNIT_HEALTH" or event == "UNIT_MAXHEALTH" then
             if arg1 == "target" then
                 UpdateTargetFrame()
-            elseif arg1 and arg1:match("^party%d+$") then
-                local num = arg1:match("^party(%d+)$")
-                local f = _G["PartyMemberFrame" .. num]
-                if f then UpdatePartyMember(f) end
+            elseif arg1 and (arg1:match("^party%d+$") or arg1 == "player") then
+                if IsGridPartyEnabled() then
+                    UpdatePartyGrid()
+                else
+                    local num = arg1:match("^party(%d+)$")
+                    local f = num and _G["PartyMemberFrame" .. num]
+                    if f then UpdatePartyMember(f) end
+                end
             elseif arg1 and arg1:match("^nameplate%d+$") then
                 UpdateNameplateUnit(arg1)
             end
+        elseif event == "UNIT_POWER_UPDATE" or event == "UNIT_MANA" or event == "UNIT_ENERGY" or event == "UNIT_RAGE" or event == "UNIT_THREAT_SITUATION_UPDATE" then
+            if IsGridPartyEnabled() and arg1 and (arg1:match("^party%d+$") or arg1 == "player") then
+                UpdatePartyGrid()
+            end
         elseif event == "UNIT_AURA" then
             if arg1 then
-                if arg1:match("^party%d+$") then
+                if IsGridPartyEnabled() and (arg1:match("^party%d+$") or arg1 == "player") then
+                    UpdatePartyGrid()
+                elseif arg1:match("^party%d+$") then
                     local num = arg1:match("^party(%d+)$")
                     local f = _G["PartyMemberFrame" .. num]
                     if f then pcall(UpdatePartyAuras, f) end
@@ -1511,17 +2012,18 @@ evFrame:SetScript("OnEvent", function(self, event, arg1, ...)
     end)
 end)
 
--- Lightweight polling ticker while in party (refreshes party frames every 0.5s so class info, colors, portraits, and permanent auras are NEVER delayed or lost)
+-- Lightweight polling ticker while in party (refreshes party frames every 0.25s so class info, colors, portraits, range, and permanent auras are NEVER delayed or lost)
 local partyElapsed = 0
 evFrame:SetScript("OnUpdate", function(self, elapsed)
     partyElapsed = partyElapsed + (elapsed or 0)
-    if partyElapsed >= 0.5 then
+    if partyElapsed >= 0.25 then
         partyElapsed = 0
         if IsClassFeaturesEnabled() then
             local inGroup = (IsInGroup and IsInGroup())
                 or (GetNumGroupMembers and GetNumGroupMembers() > 0)
                 or (GetNumPartyMembers and GetNumPartyMembers() > 0)
-            if inGroup then
+            local showSolo = GetSettings().gridPartyShowSolo == true
+            if inGroup or showSolo then
                 UpdateAllPartyMembers()
             end
         end
@@ -1550,11 +2052,34 @@ function FP:RefreshClassFrames()
     end
 end
 
+function FP:RefreshPartyGridLock()
+    local s = GetSettings()
+    if dragBar then
+        if s.gridPartyLocked ~= false then
+            dragBar:Hide()
+            gridContainer:EnableMouse(false)
+        else
+            dragBar:Show()
+            gridContainer:EnableMouse(true)
+        end
+    end
+end
+
+function FP:SetPartyGridScale(scale)
+    if gridContainer and scale then
+        gridContainer:SetScale(scale)
+    end
+end
+
 function FP:DumpPartyStatus()
     local enabled = IsClassFeaturesEnabled()
+    local gridEnabled = IsGridPartyEnabled()
     local inGrp = (IsInGroup and IsInGroup()) or (GetNumGroupMembers and GetNumGroupMembers() > 0) or (GetNumPartyMembers and GetNumPartyMembers() > 0) or false
     local nMembers = (GetNumGroupMembers and GetNumGroupMembers()) or (GetNumPartyMembers and GetNumPartyMembers()) or 0
-    FP:Print(string.format("ClassFrames: %s | InGroup: %s | Members: %d", enabled and "|cff00ff00ON|r" or "|cffff0000OFF|r", tostring(inGrp), nMembers))
+    FP:Print(string.format("ClassFrames: %s | Style: %s | InGroup: %s | Members: %d",
+        enabled and "|cff00ff00ON|r" or "|cffff0000OFF|r",
+        gridEnabled and "|cff00ff96GRIGLIA|r" or "|cffffaa00CLASSICO|r",
+        tostring(inGrp), nMembers))
     for i = 1, 4 do
         local f = _G["PartyMemberFrame" .. i]
         if f then
@@ -1570,6 +2095,44 @@ function FP:DumpPartyStatus()
 end
 
 SLASH_NKPARTY1 = "/nkparty"
-SlashCmdList["NKPARTY"] = function()
-    FP:DumpPartyStatus()
+SlashCmdList["NKPARTY"] = function(msg)
+    msg = (msg and msg:lower():match("^%s*(.-)%s*$")) or ""
+    if msg == "grid" or msg == "classic" then
+        SLASH_NKGRID1 = "/nkgrid"
+        SlashCmdList["NKGRID"](msg)
+    else
+        FP:DumpPartyStatus()
+        FP:Print("Comandi Party: |cff00ff96/nkgrid|r (alterna Griglia/Classico), |cff00ff96/nkgrid unlock|r (sblocca per spostare), |cff00ff96/nkgrid solo|r (test da solo)")
+    end
+end
+
+SLASH_NKGRID1 = "/nkgrid"
+SlashCmdList["NKGRID"] = function(msg)
+    msg = (msg and msg:lower():match("^%s*(.-)%s*$")) or ""
+    local s = GetSettings()
+    if msg == "unlock" then
+        s.gridPartyLocked = false
+        FP:RefreshPartyGridLock()
+        FP:Print("Griglia Party: |cff00ff00SBLOCCATA|r (trascina la barra in cima per spostarla)")
+    elseif msg == "lock" then
+        s.gridPartyLocked = true
+        FP:RefreshPartyGridLock()
+        FP:Print("Griglia Party: |cffffaa00BLOCCATA|r")
+    elseif msg == "solo" then
+        s.gridPartyShowSolo = not (s.gridPartyShowSolo == true)
+        FP:Print("Griglia Party (Anteprima Solo): " .. (s.gridPartyShowSolo and "|cff00ff00ATTIVA|r" or "|cffff0000DISATTIVA|r"))
+        UpdateAllPartyMembers()
+    elseif msg == "classic" then
+        s.useGridPartyFrames = false
+        FP:Print("Stile Party: |cffffaa00CLASSICO BLIZZARD|r")
+        UpdateAllPartyMembers()
+    elseif msg == "grid" then
+        s.useGridPartyFrames = true
+        FP:Print("Stile Party: |cff00ff00GRIGLIA (Incursione)|r")
+        UpdateAllPartyMembers()
+    else
+        s.useGridPartyFrames = not (s.useGridPartyFrames ~= false)
+        FP:Print("Stile Party alternato a: " .. (s.useGridPartyFrames and "|cff00ff00GRIGLIA (Incursione)|r" or "|cffffaa00CLASSICO BLIZZARD|r"))
+        UpdateAllPartyMembers()
+    end
 end

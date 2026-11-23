@@ -471,6 +471,11 @@ local SV_DEFAULTS = {
         -- Quest Starter Alert & Class Frames
         enableQuestStarterAlert = true,
         showClassColorsAndIcons = true,
+        useGridPartyFrames      = true,
+        gridPartyLocked         = true,
+        gridPartyShowSolo       = false,
+        gridPartyScale          = 1.0,
+        gridPartyPos            = nil,
     },
 }
 

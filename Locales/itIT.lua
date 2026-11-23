@@ -471,4 +471,12 @@ FP.Locales["itIT"] = {
     SETTING_QUEST_STARTER_ALERT_TIP  = "Mostra una finestra di dialogo quando raccogli un oggetto nelle borse che avvia una missione e permette di aprirla subito.",
     SETTING_CLASS_FRAMES             = "Colori e icone di classe per PG",
     SETTING_CLASS_FRAMES_TIP         = "Colora le barre della salute in base alla classe e mostra l'icona circolare di classe nel Party, sul Target e sui Nameplate.",
+    SETTING_GRID_PARTY               = "Party Stile Griglia / Incursione",
+    SETTING_GRID_PARTY_TIP           = "Mostra il gruppo in stile Griglia/Incursione compatta con barre del colore di classe, mana bar, icone buff/HoT con contatori, debuff, bordo minaccia e raggio.",
+    SETTING_GRID_LOCKED              = "Blocca posizione Griglia Party",
+    SETTING_GRID_LOCKED_TIP          = "Sblocca per mostrare la barra di trascinamento e spostare la griglia del party dove preferisci sullo schermo.",
+    SETTING_GRID_SOLO                = "Mostra Griglia anche da Solo (Test)",
+    SETTING_GRID_SOLO_TIP            = "Mostra il riquadro del giocatore per testare e posizionare la griglia anche quando non sei in gruppo.",
+    SETTING_GRID_SCALE               = "Scala Griglia Party",
+    SETTING_GRID_SCALE_TIP           = "Regola la dimensione della griglia del gruppo.",
 }
