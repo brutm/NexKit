@@ -28,6 +28,18 @@ local function IsForbiddenObj(obj)
     return (obj.IsForbidden and obj:IsForbidden()) and true or false
 end
 
+local function SafeBoolean(val, fallback)
+    if val == nil then return fallback end
+    if issecretvalue and issecretvalue(val) then return fallback end
+    local ok, res = pcall(function()
+        if val then return true else return false end
+    end)
+    if ok then
+        return res
+    end
+    return fallback
+end
+
 local function GetSettings()
     local db = NexKitDB or NexusKitDB
     return (db and db.settings) or {}
@@ -72,19 +84,21 @@ local CLASS_CREATE_TEXTURE = "Interface\\Glues\\CharacterCreate\\UI-CharacterCre
 local function GetUnitClassColor(unit)
     if not unit then return nil, nil end
     local okE, exists = pcall(UnitExists, unit)
-    if not okE or not exists or (issecretvalue and issecretvalue(exists)) then return nil, nil end
+    if not okE or SafeBoolean(exists, false) ~= true then return nil, nil end
 
     local isPartyOrPlayer = (unit == "player") or (type(unit) == "string" and unit:match("^party%d+$") ~= nil)
     if not isPartyOrPlayer then
         local okP, isPlayer = pcall(UnitIsPlayer, unit)
-        if not okP or not isPlayer or (issecretvalue and issecretvalue(isPlayer)) then
+        if not okP or SafeBoolean(isPlayer, false) ~= true then
             return nil, nil
         end
     end
 
     local ok, locClass, class = pcall(UnitClass, unit)
-    if not ok or not class or (issecretvalue and issecretvalue(class)) then
-        if ok and locClass and not (issecretvalue and issecretvalue(locClass)) and LOCALIZED_CLASS_MAP[locClass] then
+    if not ok then return nil, nil end
+    if issecretvalue and (issecretvalue(class) or issecretvalue(locClass)) then return nil, nil end
+    if not class or class == "" then
+        if locClass and LOCALIZED_CLASS_MAP[locClass] then
             class = LOCALIZED_CLASS_MAP[locClass]
         else
             return nil, nil
@@ -658,7 +672,12 @@ local function UpdatePartyMember(frame)
         end
     end
 
-    if not unit or not UnitExists(unit) then
+    local exists = false
+    if unit and UnitExists then
+        local okE, ex = pcall(UnitExists, unit)
+        if okE then exists = SafeBoolean(ex, false) end
+    end
+    if not exists then
         if frame.nkClassBadge then frame.nkClassBadge:Hide() end
         if frame.nkPermanentAuras then frame.nkPermanentAuras:Hide() end
         return
@@ -689,7 +708,12 @@ local function UpdatePartyMember(frame)
     local portrait = frame.portrait or (frameName and _G[frameName .. "Portrait"])
     if portrait then
         ApplyClassIconToPortrait(portrait, class)
-        if UnitIsConnected(unit) then
+        local isConn = true
+        if UnitIsConnected then
+            local okC, conn = pcall(UnitIsConnected, unit)
+            if okC then isConn = SafeBoolean(conn, true) end
+        end
+        if isConn then
             portrait:SetVertexColor(1, 1, 1, 1)
         else
             portrait:SetVertexColor(0.5, 0.5, 0.5, 1)
@@ -1001,14 +1025,30 @@ end)
 dragBar:Hide()
 
 local function CheckUnitRange(unit)
-    if not unit or not UnitExists(unit) then return false end
-    if UnitIsUnit(unit, "player") then return true end
-    if UnitInRange then
-        local inRange, checked = UnitInRange(unit)
-        if checked then return inRange end
+    if not unit then return false end
+    if UnitExists then
+        local okE, exists = pcall(UnitExists, unit)
+        if not okE or SafeBoolean(exists, false) ~= true then return false end
+    end
+    if UnitIsUnit then
+        local okU, isSelf = pcall(UnitIsUnit, unit, "player")
+        if okU and SafeBoolean(isSelf, false) == true then return true end
     end
     if CheckInteractDistance then
-        return CheckInteractDistance(unit, 4) or CheckInteractDistance(unit, 1)
+        local okD, inDist = pcall(CheckInteractDistance, unit, 4)
+        if okD then
+            local b = SafeBoolean(inDist, nil)
+            if b ~= nil then return b end
+        end
+    end
+    if UnitInRange then
+        local okR, inRange, checked = pcall(UnitInRange, unit)
+        if okR then
+            local isChecked = SafeBoolean(checked, false)
+            if isChecked then
+                return SafeBoolean(inRange, true)
+            end
+        end
     end
     return true
 end
@@ -1208,7 +1248,11 @@ end
 local function UpdateGridMember(btn)
     if not btn then return end
     local unit = btn.unit
-    local exists = unit and UnitExists(unit)
+    local exists = false
+    if unit and UnitExists then
+        local okE, ex = pcall(UnitExists, unit)
+        if okE then exists = SafeBoolean(ex, false) end
+    end
     if not exists then
         btn:Hide()
         return
@@ -1244,8 +1288,23 @@ local function UpdateGridMember(btn)
     btn.hpBar:SetMinMaxValues(0, maxHp)
     btn.hpBar:SetValue(hp)
 
-    local isDead = UnitIsDead and (UnitIsDead(unit) or (UnitIsGhost and UnitIsGhost(unit)))
-    local isConnected = (UnitIsConnected == nil) or UnitIsConnected(unit)
+    local isDead = false
+    local isGhost = false
+    if UnitIsGhost then
+        local okG, ghost = pcall(UnitIsGhost, unit)
+        if okG then isGhost = SafeBoolean(ghost, false) end
+    end
+    if UnitIsDead then
+        local okD, dead = pcall(UnitIsDead, unit)
+        if okD then isDead = SafeBoolean(dead, false) end
+    end
+    if isGhost then isDead = true end
+
+    local isConnected = true
+    if UnitIsConnected then
+        local okC, conn = pcall(UnitIsConnected, unit)
+        if okC then isConnected = SafeBoolean(conn, true) end
+    end
 
     if not isConnected then
         btn.hpBar:SetStatusBarColor(0.4, 0.4, 0.4)
@@ -1254,12 +1313,12 @@ local function UpdateGridMember(btn)
     elseif isDead then
         btn.hpBar:SetStatusBarColor(0.25, 0.25, 0.25)
         btn.hpBg:SetVertexColor(0.1, 0.1, 0.1, 0.9)
-        btn.hpText:SetText((UnitIsGhost and UnitIsGhost(unit)) and "|cffaaaaaaFantasma|r" or "|cffff2020Morto|r")
+        btn.hpText:SetText(isGhost and "|cffaaaaaaFantasma|r" or "|cffff2020Morto|r")
     else
         btn.hpBar:SetStatusBarColor(color.r, color.g, color.b)
         btn.hpBg:SetVertexColor(color.r * 0.22, color.g * 0.22, color.b * 0.22, 0.9)
         local deficit = (isSafeHp and (maxHp - hp)) or 0
-        if deficit > 0 then
+        if isSafeHp and deficit > 0 then
             if deficit >= 1000 then
                 btn.hpText:SetText(string.format("-%.1fk", deficit / 1000))
             else
@@ -1321,7 +1380,12 @@ local function UpdateGridMember(btn)
     end
 
     -- Target Highlight Border
-    if UnitIsUnit(unit, "target") then
+    local isTarget = false
+    if UnitIsUnit then
+        local okT, same = pcall(UnitIsUnit, unit, "target")
+        if okT then isTarget = SafeBoolean(same, false) end
+    end
+    if isTarget then
         btn.targetBorder:Show()
     else
         btn.targetBorder:Hide()
@@ -1421,7 +1485,11 @@ local function UpdatePartyGrid()
     for i = 1, 5 do
         local btn = gridMembers[i]
         local unit = btn.unit
-        local exists = unit and UnitExists(unit)
+        local exists = false
+        if unit and UnitExists then
+            local okE, ex = pcall(UnitExists, unit)
+            if okE then exists = SafeBoolean(ex, false) end
+        end
         if not inGrp and showSolo and i > 1 then
             exists = false
         end
