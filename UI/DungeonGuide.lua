@@ -96,6 +96,11 @@ local function SafeCall(fn, ...)
     if type(fn) ~= "function" then return nil end
     local res = { pcall(fn, ...) }
     if not res[1] then return nil end
+    for i = 2, #res do
+        if issecretvalue and issecretvalue(res[i]) then
+            res[i] = nil
+        end
+    end
     return unpack(res, 2)
 end
 
@@ -2038,7 +2043,7 @@ end
 local function CheckTargetedOrEngagedBoss(unitOrName)
     if not activeGuide or not FP.FindMatchingBossIndex then return end
     local matchName = unitOrName
-    if not IsSafeStr(matchName) and UnitExists and UnitExists("target") then
+    if not IsSafeStr(matchName) and UnitExists and SafeCall(UnitExists, "target") == true then
         local n = SafeCall(UnitName, "target")
         if IsSafeStr(n) then matchName = n end
     end
@@ -2048,7 +2053,7 @@ local function CheckTargetedOrEngagedBoss(unitOrName)
     if idx then
         targetedBossIdx = idx
         selectedBossIdx = idx
-        if UnitExists and UnitExists("target") and UnitIsDead and SafeCall(UnitIsDead, "target") then
+        if UnitExists and SafeCall(UnitExists, "target") == true and UnitIsDead and SafeCall(UnitIsDead, "target") == true then
             local b = activeGuide.bosses and activeGuide.bosses[idx]
             if b then
                 SetBossDefeated(activeGuide, b, true)
@@ -2071,11 +2076,11 @@ local SCAN_UNITS = { "target", "mouseover", "focus", "boss1", "boss2", "boss3", 
 local function ScanUnitsForDeadBosses()
     if not activeGuide or not activeGuide.bosses or not FP.FindMatchingBossIndex then return end
     for _, u in ipairs(SCAN_UNITS) do
-        if UnitExists and UnitExists(u) then
-            local isDead = UnitIsDead and SafeCall(UnitIsDead, u)
+        if UnitExists and SafeCall(UnitExists, u) == true then
+            local isDead = UnitIsDead and SafeCall(UnitIsDead, u) == true
             if not isDead and UnitHealth then
                 local hp = SafeCall(UnitHealth, u)
-                if hp == 0 and UnitIsPlayer and not SafeCall(UnitIsPlayer, u) then
+                if IsSafeNum(hp) and hp == 0 and UnitIsPlayer and SafeCall(UnitIsPlayer, u) == false then
                     isDead = true
                 end
             end

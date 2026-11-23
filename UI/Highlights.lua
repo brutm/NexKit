@@ -22,6 +22,11 @@ local function SafeCall(fn, ...)
     if type(fn) ~= "function" then return nil end
     local ok, a, b, c = pcall(fn, ...)
     if ok then
+        if issecretvalue then
+            if issecretvalue(a) then a = nil end
+            if issecretvalue(b) then b = nil end
+            if issecretvalue(c) then c = nil end
+        end
         return a, b, c
     end
     return nil

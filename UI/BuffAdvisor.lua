@@ -41,6 +41,11 @@ local function SafeCall(fn, ...)
     if type(fn) ~= "function" then return nil end
     local results = { pcall(fn, ...) }
     if not results[1] then return nil end
+    for i = 2, #results do
+        if issecretvalue and issecretvalue(results[i]) then
+            results[i] = nil
+        end
+    end
     return unpack(results, 2)
 end
 
