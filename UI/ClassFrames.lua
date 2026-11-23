@@ -1225,17 +1225,27 @@ local function UpdateGridMember(btn)
     end
     btn.nameText:SetText(name)
 
-    local hp = UnitHealth(unit) or 0
-    local maxHp = UnitMaxHealth(unit) or 1
-    if issecretvalue and issecretvalue(hp) then hp = 1 end
-    if issecretvalue and issecretvalue(maxHp) then maxHp = 1 end
+    local hp = (UnitHealth and UnitHealth(unit)) or 0
+    local maxHp = (UnitHealthMax and UnitHealthMax(unit)) or 1
+
+    local isSafeHp = true
+    if issecretvalue and issecretvalue(hp) then isSafeHp = false end
+    if issecretvalue and issecretvalue(maxHp) then isSafeHp = false end
+    if isSafeHp then
+        local okDiff = pcall(function() return maxHp - hp end)
+        if not okDiff then isSafeHp = false end
+    end
+    if not isSafeHp then
+        hp = 1
+        maxHp = 1
+    end
     if maxHp <= 0 then maxHp = 1 end
 
     btn.hpBar:SetMinMaxValues(0, maxHp)
     btn.hpBar:SetValue(hp)
 
-    local isDead = UnitIsDead(unit) or UnitIsGhost(unit)
-    local isConnected = UnitIsConnected(unit)
+    local isDead = UnitIsDead and (UnitIsDead(unit) or (UnitIsGhost and UnitIsGhost(unit)))
+    local isConnected = (UnitIsConnected == nil) or UnitIsConnected(unit)
 
     if not isConnected then
         btn.hpBar:SetStatusBarColor(0.4, 0.4, 0.4)
@@ -1244,11 +1254,11 @@ local function UpdateGridMember(btn)
     elseif isDead then
         btn.hpBar:SetStatusBarColor(0.25, 0.25, 0.25)
         btn.hpBg:SetVertexColor(0.1, 0.1, 0.1, 0.9)
-        btn.hpText:SetText(UnitIsGhost(unit) and "|cffaaaaaaFantasma|r" or "|cffff2020Morto|r")
+        btn.hpText:SetText((UnitIsGhost and UnitIsGhost(unit)) and "|cffaaaaaaFantasma|r" or "|cffff2020Morto|r")
     else
         btn.hpBar:SetStatusBarColor(color.r, color.g, color.b)
         btn.hpBg:SetVertexColor(color.r * 0.22, color.g * 0.22, color.b * 0.22, 0.9)
-        local deficit = maxHp - hp
+        local deficit = (isSafeHp and (maxHp - hp)) or 0
         if deficit > 0 then
             if deficit >= 1000 then
                 btn.hpText:SetText(string.format("-%.1fk", deficit / 1000))
@@ -1261,16 +1271,25 @@ local function UpdateGridMember(btn)
         end
     end
 
-    local power = UnitPower(unit) or 0
-    local maxPower = UnitPowerMax(unit) or 1
-    if issecretvalue and issecretvalue(power) then power = 0 end
-    if issecretvalue and issecretvalue(maxPower) then maxPower = 1 end
+    local power = (UnitPower and UnitPower(unit)) or 0
+    local maxPower = (UnitPowerMax and UnitPowerMax(unit)) or 1
+    local isSafePower = true
+    if issecretvalue and issecretvalue(power) then isSafePower = false end
+    if issecretvalue and issecretvalue(maxPower) then isSafePower = false end
+    if isSafePower then
+        local okDiff = pcall(function() return maxPower - power end)
+        if not okDiff then isSafePower = false end
+    end
+    if not isSafePower then
+        power = 0
+        maxPower = 1
+    end
     if maxPower <= 0 then maxPower = 1 end
 
     btn.powerBar:SetMinMaxValues(0, maxPower)
     btn.powerBar:SetValue(power)
 
-    local powerType = UnitPowerType(unit)
+    local powerType = (UnitPowerType and UnitPowerType(unit)) or 0
     if powerType == 0 then
         btn.powerBar:SetStatusBarColor(0.18, 0.45, 0.95)
     elseif powerType == 1 then
@@ -1284,7 +1303,13 @@ local function UpdateGridMember(btn)
     end
 
     -- Threat / Aggro Border (Red)
-    local threat = UnitThreatSituation(unit)
+    local threat = nil
+    if UnitThreatSituation then
+        local okT, tVal = pcall(UnitThreatSituation, unit)
+        if okT and tVal and (not issecretvalue or not issecretvalue(tVal)) then
+            threat = tVal
+        end
+    end
     if threat and threat >= 3 then
         btn.threatBorder:Show()
         btn.threatBorder:SetBackdropBorderColor(1.0, 0.1, 0.1, 1.0)
