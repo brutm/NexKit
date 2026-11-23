@@ -483,7 +483,7 @@ local SV_DEFAULTS = {
         rotationScale           = 1.0,
         rotationAlpha           = 1.0,
         rotationMode            = "always",
-        rotationShowQueue       = true,
+        rotationShowQueue       = false,
         rotationPos             = nil,
     },
 }

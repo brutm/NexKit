@@ -516,6 +516,56 @@ local PALADIN_SEAL_SPELLS = {
     [20164] = true, [10324] = true, [10325] = true, [10326] = true, -- Seal of Justice
 }
 
+local function IsPaladinSealActive()
+    -- 1. Check real-time cast memory (lasts 30s)
+    local now = GetTime and GetTime() or 0
+    if activeSealName and (now - activeSealTime < 30) then
+        return true
+    end
+
+    -- 2. Check player buffs via UnitBuff / C_UnitAuras
+    for i = 1, 40 do
+        local name, icon, sid = nil, nil, nil
+        if UnitBuff then
+            local ok, bName, _, bIcon, _, _, _, _, _, _, bSid = pcall(UnitBuff, "player", i)
+            if ok and IsAccessible(bName) then name = bName end
+            if ok and IsAccessible(bSid) then sid = bSid end
+            if ok and IsAccessible(bIcon) then icon = bIcon end
+        end
+        if not name and C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
+            local ok, a = pcall(C_UnitAuras.GetAuraDataByIndex, "player", i, "HELPFUL")
+            if ok and type(a) == "table" then
+                if IsAccessible(a.name) then name = a.name end
+                if IsAccessible(a.spellId) then sid = a.spellId end
+                if IsAccessible(a.icon) then icon = a.icon end
+            end
+        end
+
+        if name then
+            local low = string.lower(name)
+            if low:find("seal") or low:find("sigillo") or low:find("rettitudine") or low:find("righteous")
+                or low:find("crusader") or low:find("crociato") or low:find("command") or low:find("comando")
+                or low:find("wisdom") or low:find("saggezza") or low:find("justice") or low:find("giustizia")
+                or low:find("light") or low:find("luce") then
+                return true
+            end
+        end
+        if sid and PALADIN_SEAL_SPELLS and PALADIN_SEAL_SPELLS[sid] then
+            return true
+        end
+        if icon and type(icon) == "string" then
+            local lowIcon = string.lower(icon)
+            if lowIcon:find("thunderbolt") or lowIcon:find("righteousnessaura") or lowIcon:find("sealof") then
+                return true
+            end
+        end
+        if not name and i > 8 then
+            break
+        end
+    end
+    return false
+end
+
 local function BuildRotation(ctx)
     local list = {}
     local cls = ctx.classTag
@@ -574,20 +624,7 @@ local function BuildRotation(ctx)
         local sealWisdom    = FindBestSpellInRanks({ 20165, 20356, 20357, 27166 }, { "Seal of Wisdom", "Sigillo della Saggezza" })
         local sealCrusader  = FindBestSpellInRanks({ 20305, 20306, 20307, 20308, 20162, 20309, 27158 }, { "Seal of the Crusader", "Sigillo del Crociato" })
 
-        local activeSeal = false
-        if activeSealName and (GetTime() - activeSealTime < 30) then
-            activeSeal = true
-        end
-        if not activeSeal then
-            activeSeal = UnitHasAuraNamed("player", {
-                "Seal of Righteousness", "Sigillo dell'Integrità", "Sigillo di Rettitudine",
-                "Seal of Command", "Sigillo del Comando",
-                "Seal of the Crusader", "Sigillo del Crociato",
-                "Seal of Wisdom", "Sigillo della Saggezza",
-                "Seal of Light", "Sigillo della Luce",
-                "Seal of Justice", "Sigillo della Giustizia"
-            })
-        end
+        local activeSeal = IsPaladinSealActive()
 
         local holyShield = FindBestSpellInRanks({ 20925, 20927, 20928, 27179 }, { "Holy Shield", "Scudo Sacro" })
         local judgement  = FindBestSpellInRanks({ 20271 }, { "Judgement", "Giudizio" })
@@ -608,7 +645,7 @@ local function BuildRotation(ctx)
         if isProt then
             -- Protection Paladin Priority:
             -- 1. Holy Shield (keep up 30% block + Holy reflection)
-            if holyShield and not UnitHasAuraNamed("player", { "Holy Shield", "Scudo Sacro", 20925, 20927, 20928, 27179 }) then
+            if holyShield and ctx.isShieldEquipped and not UnitHasAuraNamed("player", { "Holy Shield", "Scudo Sacro", 20925, 20927, 20928, 27179 }) then
                 AddCandidate(holyShield, "DIFESA", "Holy Shield: Mantieni attivo il 30% di parata & danno sacro")
             end
             -- 2. Avenger's Shield (pull / ranged silence / burst)
@@ -619,8 +656,8 @@ local function BuildRotation(ctx)
             if hammerOfWrath and ctx.targetHp <= 20 and ctx.hasTarget and not ctx.targetDead then
                 AddCandidate(hammerOfWrath, "ESECUZIONE", "Hammer of Wrath: Bersaglio < 20% salute")
             end
-            -- 4. Judgement (if active seal)
-            if judgement and activeSeal and ctx.hasTarget and ctx.targetHostile and not ctx.targetDead then
+            -- 4. Judgement (if active seal - shown live with countdown timer even if waiting)
+            if judgement and activeSeal then
                 AddCandidate(judgement, "GIUDIZIO", "Judgement: Scarica il sigillo sul bersaglio")
             end
             -- 5. Consecration (AoE / Tank Threat)
@@ -636,10 +673,6 @@ local function BuildRotation(ctx)
             if exorcism and (cType == "Undead" or cType == "Non Morto" or cType == "Demon" or cType == "Demone") then
                 AddCandidate(exorcism, "BURST", "Esorcismo: Danno sacro istantaneo contro Non Morti e Demoni")
             end
-            -- 8. Fallback Seal renewal
-            if sealRighteous and not activeSeal then
-                AddCandidate(sealRighteous, "SIGILLO", "Rinnova Sigillo dell'Integrità")
-            end
         elseif isRet then
             -- Retribution Paladin Priority:
             if hammerOfWrath and ctx.targetHp <= 20 and ctx.hasTarget and not ctx.targetDead then
@@ -649,7 +682,7 @@ local function BuildRotation(ctx)
             if bestSeal and not activeSeal then
                 AddCandidate(bestSeal, "SIGILLO", "Sigillo del Comando: Danno burst su colpo")
             end
-            if judgement and activeSeal and ctx.hasTarget and ctx.targetHostile and not ctx.targetDead then
+            if judgement and activeSeal then
                 AddCandidate(judgement, "GIUDIZIO", "Giudizio sul bersaglio")
             end
             if consecrate and ctx.power >= 250 and (ctx.inCombat or (ctx.hasTarget and ctx.targetHostile and not ctx.targetDead)) then
@@ -662,7 +695,7 @@ local function BuildRotation(ctx)
             -- Holy / General Paladin:
             local holyShock = FindBestSpellInRanks({ 20473, 20929, 20930, 27174 })
             if holyShock and ctx.hasTarget and not ctx.targetDead then AddCandidate(holyShock, "SHOCK", "Holy Shock istantaneo") end
-            if judgement and activeSeal and ctx.hasTarget and ctx.targetHostile and not ctx.targetDead then AddCandidate(judgement, "GIUDIZIO", "Giudizio") end
+            if judgement and activeSeal then AddCandidate(judgement, "GIUDIZIO", "Giudizio") end
             if not activeSeal and (sealWisdom or sealRighteous) then
                 AddCandidate(sealWisdom or sealRighteous, "SIGILLO", "Sigillo per mana / danno")
             end
@@ -969,6 +1002,16 @@ mainKeybind:SetPoint("TOPRIGHT", mainSlot, "TOPRIGHT", -3, -3)
 mainKeybind:SetTextColor(1.0, 1.0, 1.0, 1.0)
 mainSlot.keybind = mainKeybind
 
+local mainTimerText = mainSlot:CreateFontString(nil, "OVERLAY", "GameFontHighlightLarge")
+mainTimerText:SetPoint("CENTER", mainSlot, "CENTER", 0, 0)
+local tFont = mainTimerText:GetFont()
+if tFont then
+    mainTimerText:SetFont(tFont, 16, "OUTLINE")
+end
+mainTimerText:SetTextColor(1.0, 0.95, 0.2, 1.0)
+mainTimerText:Hide()
+mainSlot.timerText = mainTimerText
+
 local mainBadge = rootFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
 mainBadge:SetPoint("TOP", mainSlot, "BOTTOM", 0, -2)
 mainBadge:SetTextColor(1.0, 0.85, 0.2, 1.0)
@@ -1072,10 +1115,23 @@ local function UpdateRotationUI()
             local dur = first.duration or 10
             local start = (GetTime() + first.remaining) - dur
             mainCooldown:SetCooldown(start, dur)
-            mainIcon:SetVertexColor(0.6, 0.6, 0.6)
+            mainIcon:SetVertexColor(0.55, 0.55, 0.55)
             mainSlot:SetBackdropBorderColor(0.85, 0.5, 0.2, 0.95)
+
+            if first.remaining >= 60 then
+                mainTimerText:SetText(string.format("%dm", math.ceil(first.remaining / 60)))
+            elseif first.remaining >= 10 then
+                mainTimerText:SetText(string.format("%ds", math.ceil(first.remaining)))
+            elseif first.remaining > 0.3 then
+                mainTimerText:SetText(string.format("%.1fs", first.remaining))
+            else
+                mainTimerText:SetText("")
+            end
+            mainTimerText:Show()
         else
             mainCooldown:Clear()
+            mainTimerText:SetText("")
+            mainTimerText:Hide()
             -- Out of range check
             if first.inRange == 0 then
                 mainIcon:SetVertexColor(1.0, 0.4, 0.4) -- Red tint if out of range
@@ -1096,6 +1152,8 @@ local function UpdateRotationUI()
         mainBadge:SetText("ATTESA")
         mainKeybind:Hide()
         mainCooldown:Clear()
+        mainTimerText:SetText("")
+        mainTimerText:Hide()
         mainSlot:Show()
     end
 
@@ -1141,21 +1199,43 @@ SafeRegisterEvent(evFrame, "UNIT_SPELLCAST_SUCCEEDED")
 SafeRegisterEvent(evFrame, "UNIT_SPELLCAST_START")
 SafeRegisterEvent(evFrame, "UNIT_AURA")
 
-evFrame:SetScript("OnEvent", function(self, event, unit, castGUID, spellID)
-    if event == "UNIT_SPELLCAST_SUCCEEDED" and unit == "player" then
+evFrame:SetScript("OnEvent", function(self, event, arg1, arg2, arg3, arg4, arg5)
+    if (event == "UNIT_SPELLCAST_SUCCEEDED" or event == "UNIT_SPELLCAST_START") and arg1 == "player" then
+        local spellName, spellID = nil, nil
+        if type(arg2) == "string" and not tonumber(arg2) then
+            -- Legacy 3.3.5 / Classic signature: arg1=unit ("player"), arg2=spellName, arg3=spellRank, arg4=lineID, arg5=spellID
+            spellName = arg2
+            spellID = arg5
+        else
+            -- Retail: arg1=unit ("player"), arg2=castGUID, arg3=spellID
+            spellID = arg3
+            spellName = GetSpellNameCompat(spellID)
+        end
+
         lastCastSpellID = spellID
         lastCastTime = GetTime and GetTime() or 0
-        local sName = GetSpellNameCompat(spellID)
-        if sName then
-            lastCastName = sName
-            local low = string.lower(sName)
-            if (PALADIN_SEAL_SPELLS and PALADIN_SEAL_SPELLS[spellID]) or low:find("seal") or low:find("sigillo") then
-                activeSealName = sName
+        if spellName then
+            lastCastName = spellName
+            local low = string.lower(spellName)
+            if (spellID and PALADIN_SEAL_SPELLS and PALADIN_SEAL_SPELLS[spellID])
+                or low:find("seal") or low:find("sigillo") or low:find("rettitudine") or low:find("righteous")
+                or low:find("crusader") or low:find("crociato") or low:find("command") or low:find("comando")
+                or low:find("wisdom") or low:find("saggezza") or low:find("justice") or low:find("giustizia")
+                or low:find("light") or low:find("luce") then
+                activeSealName = spellName
                 activeSealTime = lastCastTime
             elseif low:find("judgement") or low:find("giudizio") then
                 activeSealName = nil
                 activeSealTime = 0
             end
+        end
+    end
+
+    if event == "PLAYER_LOGIN" then
+        local s = GetSettings()
+        if not s.rotationSingleIconMigrated then
+            s.rotationSingleIconMigrated = true
+            s.rotationShowQueue = false
         end
     end
 

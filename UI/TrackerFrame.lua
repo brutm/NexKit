@@ -1832,7 +1832,7 @@ local SETTINGS_CONTROLS = {
             end,
         },
         {
-            kind = "checkbox", key = "rotationShowQueue", default = true,
+            kind = "checkbox", key = "rotationShowQueue", default = false,
             labelKey = "SETTING_ROTATION_QUEUE", tipKey = "SETTING_ROTATION_QUEUE_TIP", fallback = "Show upcoming spells in queue",
             onChange = function()
                 if FP.RefreshRotationAdvisor then FP:RefreshRotationAdvisor() end
