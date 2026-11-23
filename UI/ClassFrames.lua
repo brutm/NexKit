@@ -66,23 +66,32 @@ local LOCALIZED_CLASS_MAP = {
     ["Жрец"] = "PRIEST", ["Чернокнижник"] = "WARLOCK", ["Паладин"] = "PALADIN",
 }
 
+local CLASS_CIRCLE_TEXTURE = "Interface\\TargetingFrame\\UI-Classes-Circles"
+local CLASS_CREATE_TEXTURE = "Interface\\Glues\\CharacterCreate\\UI-CharacterCreate-Classes"
+
 local function GetUnitClassColor(unit)
-    if not unit or not UnitExists(unit) then return nil, nil end
-    local isPartyOrPlayer = (unit == "player") or (unit:match("^party%d+$") ~= nil)
-    if not isPartyOrPlayer and not UnitIsPlayer(unit) then
-        return nil, nil
-    end
+    if not unit then return nil, nil end
+    local okE, exists = pcall(UnitExists, unit)
+    if not okE or not exists or (issecretvalue and issecretvalue(exists)) then return nil, nil end
 
-    local ok, locClass, class = pcall(UnitClass, unit)
-    if not ok then return nil, nil end
-
-    if not class or class == "" then
-        if locClass and LOCALIZED_CLASS_MAP[locClass] then
-            class = LOCALIZED_CLASS_MAP[locClass]
+    local isPartyOrPlayer = (unit == "player") or (type(unit) == "string" and unit:match("^party%d+$") ~= nil)
+    if not isPartyOrPlayer then
+        local okP, isPlayer = pcall(UnitIsPlayer, unit)
+        if not okP or not isPlayer or (issecretvalue and issecretvalue(isPlayer)) then
+            return nil, nil
         end
     end
 
-    if not class or class == "" then return nil, nil end
+    local ok, locClass, class = pcall(UnitClass, unit)
+    if not ok or not class or (issecretvalue and issecretvalue(class)) then
+        if ok and locClass and not (issecretvalue and issecretvalue(locClass)) and LOCALIZED_CLASS_MAP[locClass] then
+            class = LOCALIZED_CLASS_MAP[locClass]
+        else
+            return nil, nil
+        end
+    end
+
+    if type(class) ~= "string" or class == "" then return nil, nil end
 
     class = string.upper(class)
     local color = (RAID_CLASS_COLORS and RAID_CLASS_COLORS[class])
@@ -91,13 +100,21 @@ local function GetUnitClassColor(unit)
     return color, class
 end
 
+local function ApplyClassIconToPortrait(portrait, class)
+    if not portrait or not class then return end
+    class = string.upper(class)
+    if CLASS_ICON_TCOORDS and CLASS_ICON_TCOORDS[class] then
+        portrait:SetTexture(CLASS_CIRCLE_TEXTURE)
+        portrait:SetTexCoord(unpack(CLASS_ICON_TCOORDS[class]))
+    elseif FALLBACK_CLASS_COORDS[class] then
+        portrait:SetTexture(CLASS_CREATE_TEXTURE)
+        portrait:SetTexCoord(unpack(FALLBACK_CLASS_COORDS[class]))
+    end
+end
+
 local function ApplyClassTextureToIcon(icon, class)
     if not icon or not class then return end
-    icon:SetTexture("Interface\\Glues\\CharacterCreate\\UI-CharacterCreate-Classes")
-    local coords = (CLASS_ICON_TCOORDS and CLASS_ICON_TCOORDS[class]) or FALLBACK_CLASS_COORDS[class]
-    if coords then
-        icon:SetTexCoord(unpack(coords))
-    end
+    ApplyClassIconToPortrait(icon, class)
 end
 
 -------------------------------------------------------------------------------
@@ -439,7 +456,7 @@ local function GetPartyUnitBuffs(unit)
     return buffs
 end
 
--- Permanent Buffs & Debuffs below the health/mana bar (ALWAYS visible without mouse hover!)
+-- Permanent Buffs & Debuffs to the RIGHT of the Party Frame (ALWAYS visible without mouse hover!)
 local function UpdatePartyAuras(frame)
     if not frame or IsForbiddenObj(frame) then return end
     if not IsClassFeaturesEnabled() then
@@ -469,19 +486,19 @@ local function UpdatePartyAuras(frame)
     local container = frame.nkPermanentAuras
     if not container then
         container = CreateFrame("Frame", nil, frame)
-        container:SetSize(160, 20)
-        -- Positioned permanently below the health/mana bar (starting at X=44, Y=-2)
-        -- This is the exact location where Blizzard shows buffs on hover, but ALWAYS visible without mouse hover!
-        container:SetPoint("TOPLEFT", frame, "BOTTOMLEFT", 44, -2)
+        -- Positioned to the RIGHT of the party frame (anchored TOPLEFT to frame's TOPRIGHT, 6px offset)
+        container:SetSize(190, 44)
+        container:SetPoint("TOPLEFT", frame, "TOPRIGHT", 6, -2)
         container:SetFrameStrata("MEDIUM")
         container:SetFrameLevel(45)
         frame.nkPermanentAuras = container
 
-        container.slots = {}
-        for s = 1, 8 do
+        -- Row 1: Debuffs (up to 4 debuffs, 18x18, dispel borders)
+        container.debuffSlots = {}
+        for d = 1, 4 do
             local btn = CreateFrame("Button", nil, container)
-            btn:SetSize(16, 16)
-            btn:SetPoint("LEFT", container, "LEFT", (s - 1) * 19, 0)
+            btn:SetSize(18, 18)
+            btn:SetPoint("TOPLEFT", container, "TOPLEFT", (d - 1) * 21, 0)
 
             local icon = btn:CreateTexture(nil, "ARTWORK")
             icon:SetAllPoints(btn)
@@ -501,18 +518,49 @@ local function UpdatePartyAuras(frame)
             btn:SetScript("OnEnter", function(self)
                 if not self.unit or not self.auraIndex then return end
                 GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-                if self.isDebuff then
-                    GameTooltip:SetUnitDebuff(self.unit, self.auraIndex)
-                else
-                    GameTooltip:SetUnitBuff(self.unit, self.auraIndex)
-                end
+                GameTooltip:SetUnitDebuff(self.unit, self.auraIndex)
                 GameTooltip:Show()
             end)
             btn:SetScript("OnLeave", function(self)
                 GameTooltip:Hide()
             end)
 
-            container.slots[s] = btn
+            container.debuffSlots[d] = btn
+        end
+
+        -- Row 2: Buffs (up to 8 buffs, 16x16)
+        container.buffSlots = {}
+        for b = 1, 8 do
+            local btn = CreateFrame("Button", nil, container)
+            btn:SetSize(16, 16)
+            btn:SetPoint("TOPLEFT", container, "TOPLEFT", (b - 1) * 19, -21)
+
+            local icon = btn:CreateTexture(nil, "ARTWORK")
+            icon:SetAllPoints(btn)
+            btn.icon = icon
+
+            local border = btn:CreateTexture(nil, "OVERLAY")
+            border:SetTexture("Interface\\Buttons\\UI-ActionButton-Border")
+            border:SetTexCoord(0, 1, 0, 1)
+            border:SetPoint("TOPLEFT", btn, "TOPLEFT", -2, 2)
+            border:SetPoint("BOTTOMRIGHT", btn, "BOTTOMRIGHT", 2, -2)
+            btn.border = border
+
+            local countFs = btn:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+            countFs:SetPoint("BOTTOMRIGHT", btn, "BOTTOMRIGHT", 2, -2)
+            btn.countFs = countFs
+
+            btn:SetScript("OnEnter", function(self)
+                if not self.unit or not self.auraIndex then return end
+                GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+                GameTooltip:SetUnitBuff(self.unit, self.auraIndex)
+                GameTooltip:Show()
+            end)
+            btn:SetScript("OnLeave", function(self)
+                GameTooltip:Hide()
+            end)
+
+            container.buffSlots[b] = btn
         end
     end
 
@@ -521,20 +569,21 @@ local function UpdatePartyAuras(frame)
     local debuffs = GetPartyUnitDebuffs(unit)
     local buffs = GetPartyUnitBuffs(unit)
 
-    local slotIndex = 1
+    local numDebuffs = math.min(#debuffs, 4)
+    local numBuffs = math.min(#buffs, 8)
 
-    -- 1. Display Debuffs first (dispellable ones have bright dispel color, others have red border)
-    for d = 1, math.min(#debuffs, 4) do
-        if slotIndex <= 8 then
-            local btn = container.slots[slotIndex]
+    -- If no debuffs are present, vertically center buffs at Y = -11; if debuffs exist, place on Row 2 at Y = -21
+    local buffYOffset = (numDebuffs > 0) and -21 or -11
+
+    -- 1. Display Debuffs (dispellable ones first with bright dispel color)
+    for d = 1, 4 do
+        local btn = container.debuffSlots[d]
+        if d <= numDebuffs then
             local debuff = debuffs[d]
             btn.unit = unit
             btn.auraIndex = debuff.index
-            btn.isDebuff = true
             btn.icon:SetTexture(debuff.icon)
             local col = DISPEL_COLORS[debuff.dispelType] or DISPEL_COLORS["none"]
-            btn.border:SetTexture("Interface\\Buttons\\UI-Debuff-Overlays")
-            btn.border:SetTexCoord(0.296875, 0.5703125, 0, 0.515625)
             btn.border:SetVertexColor(col.r, col.g, col.b, 1)
             btn.border:Show()
             if debuff.count and debuff.count > 1 then
@@ -544,26 +593,24 @@ local function UpdatePartyAuras(frame)
                 btn.countFs:Hide()
             end
             btn:Show()
-            slotIndex = slotIndex + 1
+        else
+            btn:Hide()
         end
     end
 
-    -- 2. Display Buffs immediately after (player buffs have golden border, other buffs have clean subtle border)
-    for b = 1, #buffs do
-        if slotIndex <= 8 then
-            local btn = container.slots[slotIndex]
+    -- 2. Display Buffs (player's own buffs in golden yellow, others subtle)
+    for b = 1, 8 do
+        local btn = container.buffSlots[b]
+        if b <= numBuffs then
             local buff = buffs[b]
             btn.unit = unit
             btn.auraIndex = buff.index
-            btn.isDebuff = false
+            btn:ClearAllPoints()
+            btn:SetPoint("TOPLEFT", container, "TOPLEFT", (b - 1) * 19, buffYOffset)
             btn.icon:SetTexture(buff.icon)
-            btn.border:SetTexture("Interface\\Buttons\\UI-ActionButton-Border")
-            btn.border:SetTexCoord(0, 1, 0, 1)
             if buff.isPlayerBuff then
-                -- Highlight player's own buffs in golden yellow
                 btn.border:SetVertexColor(1.0, 0.82, 0.0, 0.95)
             else
-                -- Subtle clean border for group buffs
                 btn.border:SetVertexColor(0.5, 0.5, 0.5, 0.6)
             end
             btn.border:Show()
@@ -574,13 +621,9 @@ local function UpdatePartyAuras(frame)
                 btn.countFs:Hide()
             end
             btn:Show()
-            slotIndex = slotIndex + 1
+        else
+            btn:Hide()
         end
-    end
-
-    -- Hide remaining unused slots
-    for s = slotIndex, 8 do
-        container.slots[s]:Hide()
     end
 end
 
@@ -621,9 +664,13 @@ local function UpdatePartyMember(frame)
         return
     end
 
+    -- Hide old floating badge if any
+    if frame.nkClassBadge then
+        frame.nkClassBadge:Hide()
+    end
+
     local color, class = GetUnitClassColor(unit)
     if not color or not class then
-        -- If player data is not yet cached by client, retry up to 10 times every 0.3s
         frame.nkRetryCount = (frame.nkRetryCount or 0) + 1
         if frame.nkRetryCount <= 10 and C_Timer and C_Timer.After then
             C_Timer.After(0.3, function()
@@ -636,106 +683,63 @@ local function UpdatePartyMember(frame)
     end
     frame.nkRetryCount = 0
 
-    if color and class then
-        -- 1. Class-color Party Member Name text (requested: "colore della classe dove c'è il nome nel party")
-        local nameFs = _G[frame:GetName() .. "Name"] or frame.name
-        if nameFs and nameFs.SetTextColor then
-            nameFs.nkClassColor = color
-            nameFs:SetTextColor(color.r, color.g, color.b)
-            if not nameFs.nkColorHooked then
-                nameFs.nkColorHooked = true
-                hooksecurefunc(nameFs, "SetTextColor", function(self, r, g, b)
-                    if self.nkIsSettingColor then return end
-                    if not IsClassFeaturesEnabled() then return end
-                    local c = self.nkClassColor
-                    if c and (math.abs(r - c.r) > 0.01 or math.abs(g - c.g) > 0.01 or math.abs(b - c.b) > 0.01) then
-                        self.nkIsSettingColor = true
-                        self:SetTextColor(c.r, c.g, c.b)
-                        self.nkIsSettingColor = false
-                    end
-                end)
-            end
+    local frameName = frame.GetName and frame:GetName()
+
+    -- 1. Class Icon on Portrait (Replaces 3D model portrait with circular class icon, like Leatrix Plus / EasyFrames)
+    local portrait = frame.portrait or (frameName and _G[frameName .. "Portrait"])
+    if portrait then
+        ApplyClassIconToPortrait(portrait, class)
+        if UnitIsConnected(unit) then
+            portrait:SetVertexColor(1, 1, 1, 1)
+        else
+            portrait:SetVertexColor(0.5, 0.5, 0.5, 1)
         end
-
-        -- 2. Class-color Party Member Healthbar & prevent Blizzard resets
-        local healthbar = frame.healthbar or _G[frame:GetName() .. "HealthBar"]
-        if healthbar and healthbar.SetStatusBarColor then
-            healthbar.nkClassColor = color
-            healthbar:SetStatusBarColor(color.r, color.g, color.b)
-            if not healthbar.nkColorHooked then
-                healthbar.nkColorHooked = true
-                hooksecurefunc(healthbar, "SetStatusBarColor", function(self, r, g, b)
-                    if self.nkIsSettingColor then return end
-                    if not IsClassFeaturesEnabled() then return end
-                    local c = self.nkClassColor
-                    if c and (math.abs(r - c.r) > 0.01 or math.abs(g - c.g) > 0.01 or math.abs(b - c.b) > 0.01) then
-                        self.nkIsSettingColor = true
-                        self:SetStatusBarColor(c.r, c.g, c.b)
-                        self.nkIsSettingColor = false
-                    end
-                end)
-            end
-        end
-
-        -- 3. Circular Class Badge Button with Spec Tooltip
-        local badge = frame.nkClassBadge
-        if not badge then
-            badge = CreateFrame("Button", nil, frame)
-            badge:SetSize(22, 22)
-            badge:SetFrameStrata("HIGH")
-            badge:SetFrameLevel(60)
-
-            local icon = badge:CreateTexture(nil, "ARTWORK")
-            icon:SetAllPoints(badge)
-            badge.icon = icon
-
-            local border = badge:CreateTexture(nil, "OVERLAY")
-            border:SetTexture("Interface\\Minimap\\MiniMap-TrackingBorder")
-            border:SetSize(38, 38)
-            border:SetPoint("CENTER", badge, "CENTER", 6, -5)
-            badge.border = border
-
-            badge:SetScript("OnEnter", function(self)
-                if not IsClassFeaturesEnabled() then return end
-                local u = self.unit
-                if u and UnitExists(u) then
-                    ShowPortraitTooltip(self, u)
-                end
-            end)
-            badge:SetScript("OnLeave", function(self)
-                if currentTooltipOwner == self then
-                    currentTooltipOwner = nil
-                    currentTooltipUnit = nil
-                end
-                GameTooltip:Hide()
-            end)
-            badge:SetScript("OnClick", function(self)
-                local u = self.unit
-                if u and UnitExists(u) and not (InCombatLockdown and InCombatLockdown()) then
-                    pcall(TargetUnit, u)
-                end
-            end)
-
-            frame.nkClassBadge = badge
-        end
-
-        local portrait = _G[frame:GetName() .. "Portrait"] or frame
-        badge:ClearAllPoints()
-        -- Anchor to TOPLEFT of portrait so it NEVER collides with Blizzard's Alliance/Horde PvP crest at BOTTOMLEFT!
-        badge:SetPoint("TOPLEFT", portrait, "TOPLEFT", -4, 4)
-        badge:SetFrameStrata("HIGH")
-        badge:SetFrameLevel(60)
-
-        badge.unit = unit
-        ApplyClassTextureToIcon(badge.icon, class)
-        badge:Show()
-
-        -- 4. Update Party Auras (Permanently visible: Player Buffs + Dispellable Debuffs)
-        pcall(UpdatePartyAuras, frame)
-    else
-        if frame.nkClassBadge then frame.nkClassBadge:Hide() end
-        if frame.nkPermanentAuras then frame.nkPermanentAuras:Hide() end
     end
+
+    -- 2. Class-color Party Member Healthbar & lockColor = true to prevent Blizzard resets
+    local healthbar = frame.healthbar or (frameName and _G[frameName .. "HealthBar"])
+    if healthbar and healthbar.SetStatusBarColor then
+        healthbar.lockColor = true
+        healthbar.nkClassColor = color
+        healthbar:SetStatusBarColor(color.r, color.g, color.b)
+        if not healthbar.nkColorHooked then
+            healthbar.nkColorHooked = true
+            hooksecurefunc(healthbar, "SetStatusBarColor", function(self, r, g, b)
+                if self.nkIsSettingColor then return end
+                if not IsClassFeaturesEnabled() then return end
+                local c = self.nkClassColor
+                if c and (math.abs(r - c.r) > 0.01 or math.abs(g - c.g) > 0.01 or math.abs(b - c.b) > 0.01) then
+                    self.nkIsSettingColor = true
+                    self.lockColor = true
+                    self:SetStatusBarColor(c.r, c.g, c.b)
+                    self.nkIsSettingColor = false
+                end
+            end)
+        end
+    end
+
+    -- 3. Class-color Party Member Name text
+    local nameFs = frame.name or (frameName and _G[frameName .. "Name"])
+    if nameFs and nameFs.SetTextColor then
+        nameFs.nkClassColor = color
+        nameFs:SetTextColor(color.r, color.g, color.b)
+        if not nameFs.nkColorHooked then
+            nameFs.nkColorHooked = true
+            hooksecurefunc(nameFs, "SetTextColor", function(self, r, g, b)
+                if self.nkIsSettingColor then return end
+                if not IsClassFeaturesEnabled() then return end
+                local c = self.nkClassColor
+                if c and (math.abs(r - c.r) > 0.01 or math.abs(g - c.g) > 0.01 or math.abs(b - c.b) > 0.01) then
+                    self.nkIsSettingColor = true
+                    self:SetTextColor(c.r, c.g, c.b)
+                    self.nkIsSettingColor = false
+                end
+            end)
+        end
+    end
+
+    -- 4. Update Party Auras (Permanently visible: Buffs & Debuffs to the right of frame)
+    pcall(UpdatePartyAuras, frame)
 end
 
 -------------------------------------------------------------------------------
@@ -1206,6 +1210,34 @@ local function HookBlizzardUnitFrames()
         end)
     end
 
+    if SetPortraitTexture then
+        hooksecurefunc("SetPortraitTexture", function(portrait, unit)
+            if not IsClassFeaturesEnabled() or not portrait or not unit then return end
+            if type(unit) == "string" and unit:match("^party%d+$") and UnitExists(unit) then
+                local color, class = GetUnitClassColor(unit)
+                if class then
+                    ApplyClassIconToPortrait(portrait, class)
+                end
+            end
+        end)
+    end
+
+    if UnitFramePortrait_Update then
+        hooksecurefunc("UnitFramePortrait_Update", function(self)
+            if not IsClassFeaturesEnabled() or not self then return end
+            local unit = self.unit
+            if unit and type(unit) == "string" and unit:match("^party%d+$") and UnitExists(unit) then
+                local portrait = self.portrait or (self.GetName and _G[self:GetName() .. "Portrait"])
+                if portrait then
+                    local color, class = GetUnitClassColor(unit)
+                    if class then
+                        ApplyClassIconToPortrait(portrait, class)
+                    end
+                end
+            end
+        end)
+    end
+
     if PartyMemberFrame_UpdateMember then
         hooksecurefunc("PartyMemberFrame_UpdateMember", function(frame)
             UpdatePartyMember(frame)
@@ -1281,21 +1313,38 @@ local function HookBlizzardUnitFrames()
     end
     if PartyMemberFrame_UpdateDebuffs then
         hooksecurefunc("PartyMemberFrame_UpdateDebuffs", function(frame)
-            if not IsClassFeaturesEnabled() then return end
+            if not IsClassFeaturesEnabled() or not frame then return end
             -- Hide Blizzard's duplicate hover debuffs to keep the permanent row clean
-            for d = 1, 4 do
-                local bDebuff = _G[frame:GetName() .. "Debuff" .. d]
-                if bDebuff then bDebuff:Hide() end
+            local frameName = frame.GetName and frame:GetName()
+            if frameName then
+                for d = 1, 4 do
+                    local bDebuff = _G[frameName .. "Debuff" .. d]
+                    if bDebuff then bDebuff:Hide() end
+                end
             end
+            UpdatePartyAuras(frame)
         end)
     end
     if UnitFrameHealthBar_Update then
         hooksecurefunc("UnitFrameHealthBar_Update", function(bar, unit)
-            local actualUnit = unit or (bar and bar.unit) or (bar and bar:GetParent() and bar:GetParent().unit)
-            if not IsClassFeaturesEnabled() or not actualUnit or not UnitExists(actualUnit) or not UnitIsPlayer(actualUnit) then return end
+            local actualUnit = unit or (bar and bar.unit) or (bar and bar.GetParent and bar:GetParent() and bar:GetParent().unit)
+            if not IsClassFeaturesEnabled() or not actualUnit or not UnitExists(actualUnit) then return end
             if actualUnit == "target" then
                 UpdateTargetFrame()
-            elseif actualUnit:match("^party%d+$") then
+            elseif type(actualUnit) == "string" and actualUnit:match("^party%d+$") then
+                local num = actualUnit:match("^party(%d+)$")
+                local f = _G["PartyMemberFrame" .. num]
+                if f then UpdatePartyMember(f) end
+            end
+        end)
+    end
+    if HealthBar_OnValueChanged then
+        hooksecurefunc("HealthBar_OnValueChanged", function(bar, value)
+            local actualUnit = (bar and bar.unit) or (bar and bar.GetParent and bar:GetParent() and bar:GetParent().unit)
+            if not IsClassFeaturesEnabled() or not actualUnit or not UnitExists(actualUnit) then return end
+            if actualUnit == "target" then
+                UpdateTargetFrame()
+            elseif type(actualUnit) == "string" and actualUnit:match("^party%d+$") then
                 local num = actualUnit:match("^party(%d+)$")
                 local f = _G["PartyMemberFrame" .. num]
                 if f then UpdatePartyMember(f) end
@@ -1462,20 +1511,29 @@ evFrame:SetScript("OnEvent", function(self, event, arg1, ...)
     end)
 end)
 
--- Lightweight polling ticker while in party (refreshes party frames every 0.5s so class info, colors, badges and permanent auras are NEVER delayed or lost)
+-- Lightweight polling ticker while in party (refreshes party frames every 0.5s so class info, colors, portraits, and permanent auras are NEVER delayed or lost)
 local partyElapsed = 0
 evFrame:SetScript("OnUpdate", function(self, elapsed)
     partyElapsed = partyElapsed + (elapsed or 0)
     if partyElapsed >= 0.5 then
         partyElapsed = 0
         if IsClassFeaturesEnabled() then
-            local inGroup = (IsInGroup and IsInGroup()) or (GetNumGroupMembers and GetNumGroupMembers() > 0)
+            local inGroup = (IsInGroup and IsInGroup())
+                or (GetNumGroupMembers and GetNumGroupMembers() > 0)
+                or (GetNumPartyMembers and GetNumPartyMembers() > 0)
             if inGroup then
                 UpdateAllPartyMembers()
             end
         end
     end
 end)
+
+-- Immediate initialization if already in-game (e.g. after /reload)
+if IsLoggedIn and IsLoggedIn() then
+    HookBlizzardUnitFrames()
+    UpdateAllPartyMembers()
+    UpdateTargetFrame()
+end
 
 function FP:RefreshClassFrames()
     UpdateAllPartyMembers()
@@ -1494,8 +1552,8 @@ end
 
 function FP:DumpPartyStatus()
     local enabled = IsClassFeaturesEnabled()
-    local inGrp = (IsInGroup and IsInGroup()) or false
-    local nMembers = (GetNumGroupMembers and GetNumGroupMembers()) or 0
+    local inGrp = (IsInGroup and IsInGroup()) or (GetNumGroupMembers and GetNumGroupMembers() > 0) or (GetNumPartyMembers and GetNumPartyMembers() > 0) or false
+    local nMembers = (GetNumGroupMembers and GetNumGroupMembers()) or (GetNumPartyMembers and GetNumPartyMembers()) or 0
     FP:Print(string.format("ClassFrames: %s | InGroup: %s | Members: %d", enabled and "|cff00ff00ON|r" or "|cffff0000OFF|r", tostring(inGrp), nMembers))
     for i = 1, 4 do
         local f = _G["PartyMemberFrame" .. i]
@@ -1504,10 +1562,14 @@ function FP:DumpPartyStatus()
             local exists = UnitExists(u)
             local name = UnitName(u) or "n/a"
             local _, engClass = UnitClass(u)
-            local badgeShown = (f.nkClassBadge and f.nkClassBadge:IsShown()) and true or false
             local aurasShown = (f.nkPermanentAuras and f.nkPermanentAuras:IsShown()) and true or false
-            FP:Print(string.format("  Party%d: shown=%s unit=%s exists=%s name=%s class=%s badge=%s auras=%s",
-                i, tostring(f:IsShown()), u, tostring(exists), name, tostring(engClass), tostring(badgeShown), tostring(aurasShown)))
+            FP:Print(string.format("  Party%d: shown=%s unit=%s exists=%s name=%s class=%s auras=%s",
+                i, tostring(f:IsShown()), u, tostring(exists), name, tostring(engClass), tostring(aurasShown)))
         end
     end
+end
+
+SLASH_NKPARTY1 = "/nkparty"
+SlashCmdList["NKPARTY"] = function()
+    FP:DumpPartyStatus()
 end
