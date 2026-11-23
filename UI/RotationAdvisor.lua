@@ -92,15 +92,21 @@ local function GetSpellTextureCompat(spellID)
     if not spellID then return nil end
     if C_Spell and C_Spell.GetSpellTexture then
         local tex = SafeCall(C_Spell.GetSpellTexture, spellID)
-        if IsAccessible(tex) then return tex end
+        if IsAccessible(tex) and tex then return tex end
+    end
+    if C_Spell and C_Spell.GetSpellInfo then
+        local info = SafeCall(C_Spell.GetSpellInfo, spellID)
+        if type(info) == "table" and IsAccessible(info.iconID) and info.iconID then
+            return info.iconID
+        end
     end
     if GetSpellTexture then
         local tex = SafeCall(GetSpellTexture, spellID)
-        if IsAccessible(tex) then return tex end
+        if IsAccessible(tex) and tex then return tex end
     end
     if GetSpellInfo then
         local _, _, tex = SafeCall(GetSpellInfo, spellID)
-        if IsAccessible(tex) then return tex end
+        if IsAccessible(tex) and tex then return tex end
     end
     return nil
 end
@@ -384,11 +390,29 @@ local function GetPlayerCombatContext()
     end
 
     local isShieldEquipped = false
-    if GetInventoryItemID and GetItemInfo then
-        local offhandID = SafeCall(GetInventoryItemID, "player", 17)
-        if offhandID then
+    local offhandID = GetInventoryItemID and SafeCall(GetInventoryItemID, "player", 17)
+    if offhandID then
+        if GetItemInfoInstant then
+            local _, _, _, itemEquipLoc, _, classID, subclassID = SafeCall(GetItemInfoInstant, offhandID)
+            if itemEquipLoc == "INVTYPE_SHIELD" or (classID == 4 and subclassID == 6) then
+                isShieldEquipped = true
+            end
+        end
+        if not isShieldEquipped and C_Item and C_Item.GetItemInventoryTypeByID then
+            local invType = SafeCall(C_Item.GetItemInventoryTypeByID, offhandID)
+            if invType == 14 or (Enum and Enum.InventoryType and invType == Enum.InventoryType.IndexShieldType) then
+                isShieldEquipped = true
+            end
+        end
+        if not isShieldEquipped and GetItemInfo then
             local _, _, _, _, _, _, _, _, itemEquipLoc = SafeCall(GetItemInfo, offhandID)
             if itemEquipLoc == "INVTYPE_SHIELD" then
+                isShieldEquipped = true
+            end
+        end
+        if not isShieldEquipped and GetInventoryItemLink then
+            local link = SafeCall(GetInventoryItemLink, "player", 17)
+            if link and (link:find("INVTYPE_SHIELD") or link:find("Shield") or link:find("Scudo")) then
                 isShieldEquipped = true
             end
         end
@@ -433,11 +457,11 @@ end
 -------------------------------------------------------------------------------
 -- Class Rotation Rules
 -------------------------------------------------------------------------------
-local function FindBestSpellInRanks(rankList)
+local function FindBestSpellInRanks(rankList, aliases)
     if not spellbookLoaded then
         RebuildSpellbookCache()
     end
-    if type(rankList) ~= "table" then return nil end
+    if type(rankList) ~= "table" then rankList = {} end
 
     -- 1. Try direct rank spell IDs
     for i = #rankList, 1, -1 do
@@ -458,6 +482,18 @@ local function FindBestSpellInRanks(rankList)
             end
         end
     end
+
+    -- 3. Try explicit aliases
+    if type(aliases) == "table" then
+        for _, alias in ipairs(aliases) do
+            local found = spellbookByName[string.lower(alias)]
+            if found then
+                local castID = (type(found) == "number") and found or rankList[1]
+                return castID
+            end
+        end
+    end
+
     return nil
 end
 
@@ -498,13 +534,13 @@ local function BuildRotation(ctx)
         local isHoly = (ctx.tabIdx == 1 and not isProt)
 
         -- Seal spell candidates
-        local sealRighteous = FindBestSpellInRanks({ 21084, 20287, 20288, 20289, 20290, 20291, 20292, 20293, 27155 })
-        local sealCommand   = FindBestSpellInRanks({ 20375, 20915, 20918, 20919, 20920, 27170 })
-        local sealWisdom    = FindBestSpellInRanks({ 20165, 20356, 20357, 27166 })
-        local sealCrusader  = FindBestSpellInRanks({ 20305, 20306, 20307, 20308, 20162, 20309, 27158 })
+        local sealRighteous = FindBestSpellInRanks({ 21084, 20287, 20288, 20289, 20290, 20291, 20292, 20293, 27155 }, { "Seal of Righteousness", "Sigillo dell'Integrità", "Sigillo di Rettitudine" })
+        local sealCommand   = FindBestSpellInRanks({ 20375, 20915, 20918, 20919, 20920, 27170 }, { "Seal of Command", "Sigillo del Comando" })
+        local sealWisdom    = FindBestSpellInRanks({ 20165, 20356, 20357, 27166 }, { "Seal of Wisdom", "Sigillo della Saggezza" })
+        local sealCrusader  = FindBestSpellInRanks({ 20305, 20306, 20307, 20308, 20162, 20309, 27158 }, { "Seal of the Crusader", "Sigillo del Crociato" })
 
         local activeSeal = UnitHasAuraNamed("player", {
-            "Seal of Righteousness", "Sigillo dell'Integrità",
+            "Seal of Righteousness", "Sigillo dell'Integrità", "Sigillo di Rettitudine",
             "Seal of Command", "Sigillo del Comando",
             "Seal of the Crusader", "Sigillo del Crociato",
             "Seal of Wisdom", "Sigillo della Saggezza",
@@ -512,12 +548,13 @@ local function BuildRotation(ctx)
             "Seal of Justice", "Sigillo della Giustizia"
         })
 
-        local holyShield = FindBestSpellInRanks({ 20925, 20927, 20928, 27179 })
-        local judgement  = FindBestSpellInRanks({ 20271 })
-        local consecrate = FindBestSpellInRanks({ 26573, 20116, 20922, 20923, 20924, 27173 })
-        local hammerOfWrath = FindBestSpellInRanks({ 24275, 24274, 24239, 27180 })
-        local exorcism   = FindBestSpellInRanks({ 879, 5614, 5615, 10312, 10313, 10314, 27138 })
-        local hammerOfJustice = FindBestSpellInRanks({ 853, 5588, 5589, 10308 })
+        local holyShield = FindBestSpellInRanks({ 20925, 20927, 20928, 27179 }, { "Holy Shield", "Scudo Sacro" })
+        local judgement  = FindBestSpellInRanks({ 20271 }, { "Judgement", "Giudizio" })
+        local consecrate = FindBestSpellInRanks({ 26573, 20116, 20922, 20923, 20924, 27173 }, { "Consecration", "Consacrazione" })
+        local hammerOfWrath = FindBestSpellInRanks({ 24275, 24274, 24239, 27180 }, { "Hammer of Wrath", "Martello dell'Ira" })
+        local exorcism   = FindBestSpellInRanks({ 879, 5614, 5615, 10312, 10313, 10314, 27138 }, { "Exorcism", "Esorcismo" })
+        local hammerOfJustice = FindBestSpellInRanks({ 853, 5588, 5589, 10308 }, { "Hammer of Justice", "Martello della Giustizia" })
+        local avengersShield = FindBestSpellInRanks({ 31589, 32699, 32700 }, { "Avenger's Shield", "Scudo del Vendicatore" })
 
         -- 0. Seal Activation (If missing, always top priority)
         if not activeSeal then
@@ -533,7 +570,11 @@ local function BuildRotation(ctx)
             if holyShield and not UnitHasAuraNamed("player", { "Holy Shield", "Scudo Sacro" }) then
                 AddCandidate(holyShield, "DIFESA", "Holy Shield: Mantieni attivo il 30% di parata & danno sacro")
             end
-            -- 2. Hammer of Wrath (Execute < 20% HP)
+            -- 2. Avenger's Shield (pull / ranged silence / burst)
+            if avengersShield and ctx.hasTarget and ctx.targetHostile and not ctx.targetDead then
+                AddCandidate(avengersShield, "PULL/BURST", "Scudo del Vendicatore: Danno sacro a rimbalzo")
+            end
+            -- 3. Hammer of Wrath (Execute < 20% HP)
             if hammerOfWrath and ctx.targetHp <= 20 and ctx.hasTarget and not ctx.targetDead then
                 AddCandidate(hammerOfWrath, "ESECUZIONE", "Hammer of Wrath: Bersaglio < 20% salute")
             end
@@ -801,7 +842,7 @@ end
 -- UI Frame Construction (Draggable, customizable HUD)
 -------------------------------------------------------------------------------
 local rootFrame = CreateFrame("Frame", "NKRotationFrame", UIParent, "BackdropTemplate")
-rootFrame:SetSize(110, 68)
+rootFrame:SetSize(96, 62)
 rootFrame:SetPoint("CENTER", UIParent, "CENTER", 0, -180)
 rootFrame:SetClampedToScreen(true)
 rootFrame:SetMovable(true)
@@ -815,8 +856,8 @@ rootFrame:SetBackdrop({
     tile = false, tileSize = 16, edgeSize = 12,
     insets = { left = 2, right = 2, top = 2, bottom = 2 }
 })
-rootFrame:SetBackdropColor(0.05, 0.05, 0.08, 0.65)
-rootFrame:SetBackdropBorderColor(0.2, 0.2, 0.2, 0.8)
+rootFrame:SetBackdropColor(0, 0, 0, 0)
+rootFrame:SetBackdropBorderColor(0, 0, 0, 0)
 
 -- Drag Title Bar (Visible when unlocked)
 local dragTitle = rootFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
@@ -837,30 +878,35 @@ rootFrame:SetScript("OnDragStop", function(self)
     s.rotationPos = { point = point, relPoint = relPoint, x = x, y = y }
 end)
 
--- Main / Primary Action Slot (Large 48x48)
-local mainSlot = CreateFrame("Button", nil, rootFrame)
-mainSlot:SetSize(48, 48)
-mainSlot:SetPoint("LEFT", rootFrame, "LEFT", 8, 4)
+-- Main / Primary Action Slot (Large 46x46)
+local mainSlot = CreateFrame("Frame", nil, rootFrame, "BackdropTemplate")
+mainSlot:SetSize(46, 46)
+mainSlot:SetPoint("LEFT", rootFrame, "LEFT", 4, 4)
 mainSlot:EnableMouse(false)
+mainSlot:SetBackdrop({
+    bgFile   = "Interface\\Buttons\\WHITE8X8",
+    edgeFile = "Interface\\Buttons\\WHITE8X8",
+    tile = false, tileSize = 16, edgeSize = 2,
+    insets = { left = 2, right = 2, top = 2, bottom = 2 }
+})
+mainSlot:SetBackdropColor(0.04, 0.05, 0.08, 0.95)
+mainSlot:SetBackdropBorderColor(1.0, 0.82, 0.0, 1.0)
 
 local mainIcon = mainSlot:CreateTexture(nil, "ARTWORK")
-mainIcon:SetAllPoints(mainSlot)
+mainIcon:SetPoint("TOPLEFT", mainSlot, "TOPLEFT", 2, -2)
+mainIcon:SetPoint("BOTTOMRIGHT", mainSlot, "BOTTOMRIGHT", -2, 2)
 mainIcon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
 mainSlot.icon = mainIcon
 
-local mainBorder = mainSlot:CreateTexture(nil, "OVERLAY")
-mainBorder:SetTexture("Interface\\Buttons\\UI-ActionButton-Border")
-mainBorder:SetPoint("TOPLEFT", mainSlot, "TOPLEFT", -12, 12)
-mainBorder:SetPoint("BOTTOMRIGHT", mainSlot, "BOTTOMRIGHT", 12, -12)
-mainBorder:SetVertexColor(1.0, 0.82, 0.0, 1.0)
-mainSlot.border = mainBorder
-
 local mainCooldown = CreateFrame("Cooldown", nil, mainSlot, "CooldownFrameTemplate")
-mainCooldown:SetAllPoints(mainSlot)
+mainCooldown:SetPoint("TOPLEFT", mainSlot, "TOPLEFT", 2, -2)
+mainCooldown:SetPoint("BOTTOMRIGHT", mainSlot, "BOTTOMRIGHT", -2, 2)
+if mainCooldown.SetDrawEdge then mainCooldown:SetDrawEdge(true) end
+if mainCooldown.SetSwipeColor then mainCooldown:SetSwipeColor(0, 0, 0, 0.75) end
 mainSlot.cooldown = mainCooldown
 
 local mainKeybind = mainSlot:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmallOutline")
-mainKeybind:SetPoint("TOPRIGHT", mainSlot, "TOPRIGHT", -2, -2)
+mainKeybind:SetPoint("TOPRIGHT", mainSlot, "TOPRIGHT", -3, -3)
 mainKeybind:SetTextColor(1.0, 1.0, 1.0, 1.0)
 mainSlot.keybind = mainKeybind
 
@@ -869,22 +915,24 @@ mainBadge:SetPoint("TOP", mainSlot, "BOTTOM", 0, -2)
 mainBadge:SetTextColor(1.0, 0.85, 0.2, 1.0)
 
 -- Secondary / Queue Action Slot (Smaller 32x32)
-local queueSlot = CreateFrame("Button", nil, rootFrame)
+local queueSlot = CreateFrame("Frame", nil, rootFrame, "BackdropTemplate")
 queueSlot:SetSize(32, 32)
-queueSlot:SetPoint("LEFT", mainSlot, "RIGHT", 10, 0)
+queueSlot:SetPoint("LEFT", mainSlot, "RIGHT", 8, 0)
 queueSlot:EnableMouse(false)
+queueSlot:SetBackdrop({
+    bgFile   = "Interface\\Buttons\\WHITE8X8",
+    edgeFile = "Interface\\Buttons\\WHITE8X8",
+    tile = false, tileSize = 16, edgeSize = 1.5,
+    insets = { left = 1.5, right = 1.5, top = 1.5, bottom = 1.5 }
+})
+queueSlot:SetBackdropColor(0.04, 0.05, 0.08, 0.95)
+queueSlot:SetBackdropBorderColor(0.45, 0.45, 0.5, 0.85)
 
 local queueIcon = queueSlot:CreateTexture(nil, "ARTWORK")
-queueIcon:SetAllPoints(queueSlot)
+queueIcon:SetPoint("TOPLEFT", queueSlot, "TOPLEFT", 1.5, -1.5)
+queueIcon:SetPoint("BOTTOMRIGHT", queueSlot, "BOTTOMRIGHT", -1.5, 1.5)
 queueIcon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
 queueSlot.icon = queueIcon
-
-local queueBorder = queueSlot:CreateTexture(nil, "OVERLAY")
-queueBorder:SetTexture("Interface\\Buttons\\UI-Quickslot2")
-queueBorder:SetPoint("TOPLEFT", queueSlot, "TOPLEFT", -6, 6)
-queueBorder:SetPoint("BOTTOMRIGHT", queueSlot, "BOTTOMRIGHT", 6, -6)
-queueBorder:SetVertexColor(0.7, 0.7, 0.7, 0.8)
-queueSlot.border = queueBorder
 
 local queueKeybind = queueSlot:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmallOutline")
 queueKeybind:SetPoint("TOPRIGHT", queueSlot, "TOPRIGHT", -2, -2)
@@ -911,12 +959,12 @@ local function UpdateRotationUI()
     if isLocked then
         dragTitle:Hide()
         rootFrame:EnableMouse(false)
-        rootFrame:SetBackdropColor(0.05, 0.05, 0.08, 0.5)
-        rootFrame:SetBackdropBorderColor(0.15, 0.15, 0.15, 0.6)
+        rootFrame:SetBackdropColor(0, 0, 0, 0)
+        rootFrame:SetBackdropBorderColor(0, 0, 0, 0)
     else
         dragTitle:Show()
         rootFrame:EnableMouse(true)
-        rootFrame:SetBackdropColor(0.1, 0.1, 0.15, 0.85)
+        rootFrame:SetBackdropColor(0.08, 0.08, 0.12, 0.75)
         rootFrame:SetBackdropBorderColor(1.0, 0.82, 0.0, 0.9)
     end
 
@@ -966,26 +1014,26 @@ local function UpdateRotationUI()
             local start = (GetTime() + first.remaining) - dur
             mainCooldown:SetCooldown(start, dur)
             mainIcon:SetVertexColor(0.6, 0.6, 0.6)
-            mainBorder:SetVertexColor(0.8, 0.5, 0.2, 0.9)
+            mainSlot:SetBackdropBorderColor(0.85, 0.5, 0.2, 0.95)
         else
             mainCooldown:Clear()
             -- Out of range check
             if first.inRange == 0 then
-                mainIcon:SetVertexColor(1.0, 0.3, 0.3) -- Red tint if out of range
-                mainBorder:SetVertexColor(1.0, 0.2, 0.2, 1.0)
+                mainIcon:SetVertexColor(1.0, 0.4, 0.4) -- Red tint if out of range
+                mainSlot:SetBackdropBorderColor(1.0, 0.25, 0.25, 1.0)
             elseif first.noMana then
                 mainIcon:SetVertexColor(0.4, 0.6, 1.0) -- Blue tint if no resource
-                mainBorder:SetVertexColor(0.3, 0.5, 0.9, 0.9)
+                mainSlot:SetBackdropBorderColor(0.3, 0.6, 1.0, 0.95)
             else
                 mainIcon:SetVertexColor(1.0, 1.0, 1.0)
-                mainBorder:SetVertexColor(1.0, 0.82, 0.0, 1.0)
+                mainSlot:SetBackdropBorderColor(1.0, 0.82, 0.0, 1.0)
             end
         end
         mainSlot:Show()
     else
         mainIcon:SetTexture("Interface\\Icons\\INV_Misc_QuestionMark")
         mainIcon:SetVertexColor(0.8, 0.8, 0.8)
-        mainBorder:SetVertexColor(0.5, 0.5, 0.5, 0.8)
+        mainSlot:SetBackdropBorderColor(0.45, 0.45, 0.45, 0.8)
         mainBadge:SetText("ATTESA")
         mainKeybind:Hide()
         mainCooldown:Clear()
@@ -994,7 +1042,7 @@ local function UpdateRotationUI()
 
     -- Queue slot (2nd upcoming spell)
     if IsQueueVisible() and second then
-        queueIcon:SetTexture(second.icon)
+        queueIcon:SetTexture(second.icon or "Interface\\Icons\\INV_Misc_QuestionMark")
         if second.keybind and second.keybind ~= "" then
             queueKeybind:SetText(second.keybind)
             queueKeybind:Show()
@@ -1002,10 +1050,10 @@ local function UpdateRotationUI()
             queueKeybind:Hide()
         end
         queueSlot:Show()
-        rootFrame:SetWidth(110)
+        rootFrame:SetWidth(96)
     else
         queueSlot:Hide()
-        rootFrame:SetWidth(66)
+        rootFrame:SetWidth(56)
     end
 end
 

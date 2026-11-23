@@ -260,7 +260,7 @@ local function RebuildSpellbookCache()
     spellbookLoaded = true
 end
 
-local function FindKnownSpell(rankIDs)
+local function FindKnownSpell(rankIDs, aliases)
     if not spellbookLoaded then
         RebuildSpellbookCache()
     end
@@ -284,6 +284,19 @@ local function FindKnownSpell(rankIDs)
                 local castID = (type(found) == "number") and found or rankIDs[i]
                 if not IsSpellPassiveCompat(castID) then
                     return castID, baseName
+                end
+            end
+        end
+    end
+
+    -- Explicit alias fallback
+    if type(aliases) == "table" then
+        for _, alias in ipairs(aliases) do
+            local found = spellbookByName[string.lower(alias)]
+            if found then
+                local castID = (type(found) == "number") and found or rankIDs[1]
+                if not IsSpellPassiveCompat(castID) then
+                    return castID, alias
                 end
             end
         end
@@ -695,18 +708,49 @@ local function DetectRoleAndSpec()
     end
 
     local isShieldEquipped = false
-    if GetInventoryItemID and GetItemInfo then
-        local offhandID = SafeCall(GetInventoryItemID, "player", 17)
-        if offhandID then
+    local offhandID = GetInventoryItemID and SafeCall(GetInventoryItemID, "player", 17)
+    if offhandID then
+        if GetItemInfoInstant then
+            local _, _, _, itemEquipLoc, _, classID, subclassID = SafeCall(GetItemInfoInstant, offhandID)
+            if itemEquipLoc == "INVTYPE_SHIELD" or (classID == 4 and subclassID == 6) then
+                isShieldEquipped = true
+            end
+        end
+        if not isShieldEquipped and C_Item and C_Item.GetItemInventoryTypeByID then
+            local invType = SafeCall(C_Item.GetItemInventoryTypeByID, offhandID)
+            if invType == 14 or (Enum and Enum.InventoryType and invType == Enum.InventoryType.IndexShieldType) then
+                isShieldEquipped = true
+            end
+        end
+        if not isShieldEquipped and GetItemInfo then
             local _, _, _, _, _, _, _, _, itemEquipLoc = SafeCall(GetItemInfo, offhandID)
             if itemEquipLoc == "INVTYPE_SHIELD" then
                 isShieldEquipped = true
             end
         end
+        if not isShieldEquipped and GetInventoryItemLink then
+            local link = SafeCall(GetInventoryItemLink, "player", 17)
+            if link and (link:find("INVTYPE_SHIELD") or link:find("Shield") or link:find("Scudo")) then
+                isShieldEquipped = true
+            end
+        end
     end
 
-    if (classTag == "PALADIN" and (tabIdx == 2 or isShieldEquipped))
-        or (classTag == "WARRIOR" and (tabIdx == 3 or isShieldEquipped)) then
+    if UnitGroupRolesAssigned then
+        local grpRole = SafeCall(UnitGroupRolesAssigned, "player")
+        if grpRole == "TANK" then
+            role = "TANK"
+        end
+    end
+
+    local s = GetBuffSettings()
+    local userSpec = s and (s.rewardSpec or (s.rewardSpecByClass and s.rewardSpecByClass[classTag]))
+    if userSpec and type(userSpec) == "string" and (string.lower(userSpec):find("prot") or string.lower(userSpec):find("tank")) then
+        role = "TANK"
+    end
+
+    if (classTag == "PALADIN" and (tabIdx == 2 or isShieldEquipped or role == "TANK"))
+        or (classTag == "WARRIOR" and (tabIdx == 3 or isShieldEquipped or role == "TANK")) then
         role = "TANK"
     end
 
@@ -1319,36 +1363,38 @@ local function EvaluateRecommendations()
             satisfiedBy = allBlessings, minDur = 120,
         })
 
-        -- Righteous Fury: recommended for Protection paladins (or in tank role, or shield equipped, or protection talents)
-        if (isProt or ctx.role == "TANK") and FindKnownSpell(CLASS_SPELLS.RIGHTEOUS_FURY) then
-            CheckBuffSuggestion({
-                key = "PALADIN_RF", priority = 26, ranks = CLASS_SPELLS.RIGHTEOUS_FURY,
-            })
+        -- Righteous Fury (Furia Virtuosa): recommended for Protection paladins, tanks, or when a shield is equipped
+        local rfID, rfName = FindKnownSpell(CLASS_SPELLS.RIGHTEOUS_FURY, { "Righteous Fury", "Furia Virtuosa" })
+        if not rfID then
+            local sByName = spellbookByName or {}
+            rfID = sByName["righteous fury"] or sByName["furia virtuosa"]
+            rfName = rfID and (GetSpellNameCompat(rfID) or "Righteous Fury")
         end
 
-        -- Seal (Sigillo) check: recommend appropriate Seal if player has none active
-        local allSeals = {
-            CLASS_SPELLS.SEAL_RIGHTEOUSNESS, CLASS_SPELLS.SEAL_COMMAND, CLASS_SPELLS.SEAL_CRUSADER,
-            CLASS_SPELLS.SEAL_WISDOM, CLASS_SPELLS.SEAL_LIGHT, CLASS_SPELLS.SEAL_JUSTICE,
-        }
-        local hasAnySeal = (not auras.restricted) and IsGroupActive(auras, allSeals)
-        if not hasAnySeal and (ctx.inCombat or UnitExists("target")) then
-            local preferredSeal = CLASS_SPELLS.SEAL_RIGHTEOUSNESS
-            if not isProt and FindKnownSpell(CLASS_SPELLS.SEAL_COMMAND) then
-                preferredSeal = CLASS_SPELLS.SEAL_COMMAND
-            elseif ctx.role == "HEALER" and FindKnownSpell(CLASS_SPELLS.SEAL_WISDOM) then
-                preferredSeal = CLASS_SPELLS.SEAL_WISDOM
-            end
-            local sealID, sealName = FindKnownSpell(preferredSeal)
-            if not sealID then
-                sealID, sealName = FindKnownSpell(CLASS_SPELLS.SEAL_RIGHTEOUSNESS)
-            end
-            if sealID then
-                CheckBuffSuggestion({
-                    key = "PALADIN_SEAL", priority = 24, ranks = { sealID },
-                    satisfiedBy = allSeals, minDur = 5,
-                })
-            end
+        local isRFActive = (auras.activeIDs and auras.activeIDs[25780])
+            or (auras.activeNames and (auras.activeNames["righteous fury"] or auras.activeNames["furia virtuosa"]))
+            or (rfID and auras.activeIDs and auras.activeIDs[rfID])
+
+        if rfID and isProt and not isRFActive and not auras.restricted then
+            local usable, noResource = IsSpellUsableCompat(rfID)
+            local icon = GetSpellTextureCompat(rfID) or "Interface\\Icons\\Spell_Holy_SealOfFury"
+            local displayName = rfName or GetSpellNameCompat(rfID) or "Righteous Fury"
+            PushSuggestion({
+                key        = "PALADIN_RF",
+                priority   = 28,
+                actionType = "spell",
+                spellID    = rfID,
+                castSpell  = rfID,
+                name       = displayName,
+                icon       = icon,
+                usable     = usable,
+                noResource = noResource,
+                badge      = L["BUFF_BADGE_STANCE"] or "TANK",
+                kind       = "buff",
+                reason     = "Righteous Fury mancante: genera minaccia sacra extra da tank.",
+            })
+        elseif isRFActive then
+            snoozedKeys["PALADIN_RF"] = nil
         end
 
     elseif cls == "WARRIOR" then

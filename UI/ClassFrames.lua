@@ -1321,8 +1321,16 @@ local function UpdateGridMember(btn)
     end
     btn.nameText:SetText(name)
 
-    local hp = (UnitHealth and UnitHealth(unit)) or 0
-    local maxHp = (UnitHealthMax and UnitHealthMax(unit)) or 1
+    local hp = 0
+    if UnitHealth then
+        local ok, v = pcall(UnitHealth, unit)
+        if ok and v then hp = v end
+    end
+    local maxHp = 1
+    if UnitHealthMax then
+        local ok, v = pcall(UnitHealthMax, unit)
+        if ok and v then maxHp = v end
+    end
 
     local isSafeHp = true
     if issecretvalue and issecretvalue(hp) then isSafeHp = false end
@@ -1382,8 +1390,16 @@ local function UpdateGridMember(btn)
         end
     end
 
-    local power = (UnitPower and UnitPower(unit)) or 0
-    local maxPower = (UnitPowerMax and UnitPowerMax(unit)) or 1
+    local power = 0
+    if UnitPower then
+        local ok, v = pcall(UnitPower, unit)
+        if ok and v then power = v end
+    end
+    local maxPower = 1
+    if UnitPowerMax then
+        local ok, v = pcall(UnitPowerMax, unit)
+        if ok and v then maxPower = v end
+    end
     local isSafePower = true
     if issecretvalue and issecretvalue(power) then isSafePower = false end
     if issecretvalue and issecretvalue(maxPower) then isSafePower = false end
@@ -1400,7 +1416,11 @@ local function UpdateGridMember(btn)
     btn.powerBar:SetMinMaxValues(0, maxPower)
     btn.powerBar:SetValue(power)
 
-    local powerType = (UnitPowerType and UnitPowerType(unit)) or 0
+    local powerType = 0
+    if UnitPowerType then
+        local ok, pt = pcall(UnitPowerType, unit)
+        if ok and pt then powerType = pt end
+    end
     if powerType == 0 then
         btn.powerBar:SetStatusBarColor(0.18, 0.45, 0.95)
     elseif powerType == 1 then
@@ -1418,7 +1438,10 @@ local function UpdateGridMember(btn)
     if UnitThreatSituation then
         local okT, tVal = pcall(UnitThreatSituation, unit)
         if okT and tVal and (not issecretvalue or not issecretvalue(tVal)) then
-            threat = tVal
+            local okNum, isNum = pcall(function() return type(tVal) == "number" and tVal >= 0 end)
+            if okNum and isNum then
+                threat = tVal
+            end
         end
     end
     if threat and threat >= 3 then
