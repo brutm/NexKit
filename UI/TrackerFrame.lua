@@ -1818,6 +1818,34 @@ local SETTINGS_CONTROLS = {
             end,
         },
         {
+            kind = "checkbox", key = "enableRotationAdvisor", default = true,
+            labelKey = "SETTING_ROTATION_ADVISOR", tipKey = "SETTING_ROTATION_ADVISOR_TIP", fallback = "Spell Rotation Advisor HUD",
+            onChange = function()
+                if FP.RefreshRotationAdvisor then FP:RefreshRotationAdvisor() end
+            end,
+        },
+        {
+            kind = "checkbox", key = "rotationLocked", default = true,
+            labelKey = "SETTING_ROTATION_LOCKED", tipKey = "SETTING_ROTATION_LOCKED_TIP", fallback = "Lock Spell Rotation position",
+            onChange = function(checked)
+                if FP.SetRotationAdvisorLocked then FP:SetRotationAdvisorLocked(checked) end
+            end,
+        },
+        {
+            kind = "checkbox", key = "rotationShowQueue", default = true,
+            labelKey = "SETTING_ROTATION_QUEUE", tipKey = "SETTING_ROTATION_QUEUE_TIP", fallback = "Show upcoming spells in queue",
+            onChange = function()
+                if FP.RefreshRotationAdvisor then FP:RefreshRotationAdvisor() end
+            end,
+        },
+        {
+            kind = "slider", key = "rotationScale", default = 1.0, min = 0.60, max = 1.60, step = 0.05, fmt = "%.2fx",
+            labelKey = "SETTING_ROTATION_SCALE", tipKey = "SETTING_ROTATION_SCALE_TIP", fallback = "Spell Rotation scale",
+            onChange = function()
+                if FP.RefreshRotationAdvisor then FP:RefreshRotationAdvisor() end
+            end,
+        },
+        {
             kind = "slider", key = "trackerScale", default = 1.0, min = 0.50, max = 2.00, step = 0.05, fmt = "%.2fx",
             labelKey = "SETTING_TRACKER_SCALE", tipKey = "SETTING_TRACKER_SCALE_TIP", fallback = "Tracker scale",
             onChange = function()

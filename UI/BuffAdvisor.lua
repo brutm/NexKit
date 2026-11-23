@@ -681,7 +681,7 @@ local function DetectRoleAndSpec()
                 tabIdx = t
             end
         end
-        if tabPts >= 10 then
+        if tabPts >= 1 then
             if (classTag == "WARRIOR" and tabIdx == 3) or (classTag == "PALADIN" and tabIdx == 2) then
                 role = "TANK"
             elseif (classTag == "PRIEST" and (tabIdx == 1 or tabIdx == 2))
@@ -692,6 +692,22 @@ local function DetectRoleAndSpec()
                 role = "HEALER"
             end
         end
+    end
+
+    local isShieldEquipped = false
+    if GetInventoryItemID and GetItemInfo then
+        local offhandID = SafeCall(GetInventoryItemID, "player", 17)
+        if offhandID then
+            local _, _, _, _, _, _, _, _, itemEquipLoc = SafeCall(GetItemInfo, offhandID)
+            if itemEquipLoc == "INVTYPE_SHIELD" then
+                isShieldEquipped = true
+            end
+        end
+    end
+
+    if (classTag == "PALADIN" and (tabIdx == 2 or isShieldEquipped))
+        or (classTag == "WARRIOR" and (tabIdx == 3 or isShieldEquipped)) then
+        role = "TANK"
     end
 
     local rawManaMax = SafeCall(UnitPowerMax, "player", 0)
@@ -707,6 +723,7 @@ local function DetectRoleAndSpec()
         role     = role,
         tabIdx   = tabIdx,
         tabPts   = tabPts,
+        isShieldEquipped = isShieldEquipped,
         manaMax  = manaMax,
         manaPct  = manaPct,
         isMounted = IsMounted and SafeCall(IsMounted) or false,
@@ -810,6 +827,13 @@ local CLASS_SPELLS = {
     BLESSING_SANC    = { 20911, 20912, 20913, 20914, 27168, 25899, 27169 },
     BLESSING_OTHER   = { 1038, 25895, 19977, 19978, 19979, 27144, 25890, 27145 },
     RIGHTEOUS_FURY   = { 25780 },
+    HOLY_SHIELD      = { 20925, 20927, 20928, 27179 },
+    SEAL_RIGHTEOUSNESS = { 21084, 20287, 20288, 20289, 20290, 20291, 20292, 20293, 27155 },
+    SEAL_COMMAND       = { 20375, 20915, 20918, 20919, 20920, 27170 },
+    SEAL_CRUSADER      = { 20305, 20306, 20307, 20308, 20162, 20309, 27158 },
+    SEAL_WISDOM        = { 20165, 20356, 20357, 27166 },
+    SEAL_LIGHT         = { 20164, 20332, 20333, 20334, 27160 },
+    SEAL_JUSTICE       = { 20166 },
 
     -- Warrior
     BATTLE_SHOUT     = { 6673, 5242, 6192, 11549, 11550, 11551, 25289, 2048, 47436 },
@@ -1272,14 +1296,20 @@ local function EvaluateRecommendations()
             end
         end
 
+        local isProt = (ctx.role == "TANK") or (ctx.tabIdx == 2) or (ctx.isShieldEquipped == true)
+            or (FindKnownSpell(CLASS_SPELLS.BLESSING_SANC) ~= nil)
+            or (FindKnownSpell(CLASS_SPELLS.HOLY_SHIELD) ~= nil)
+
         local allBlessings = {
             CLASS_SPELLS.BLESSING_MIGHT, CLASS_SPELLS.BLESSING_WISDOM, CLASS_SPELLS.BLESSING_KINGS,
             CLASS_SPELLS.BLESSING_SANC, CLASS_SPELLS.BLESSING_OTHER,
         }
         local blessRanks = CLASS_SPELLS.BLESSING_MIGHT
-        if (ctx.role == "HEALER" or (ctx.manaPct < 0.45 and ctx.role ~= "TANK")) and FindKnownSpell(CLASS_SPELLS.BLESSING_WISDOM) then
+        if (ctx.role == "HEALER" or (ctx.manaPct < 0.45 and not isProt)) and FindKnownSpell(CLASS_SPELLS.BLESSING_WISDOM) then
             blessRanks = CLASS_SPELLS.BLESSING_WISDOM
-        elseif FindKnownSpell(CLASS_SPELLS.BLESSING_KINGS) and (ctx.role == "TANK" or ctx.level >= 40) then
+        elseif isProt and FindKnownSpell(CLASS_SPELLS.BLESSING_SANC) then
+            blessRanks = CLASS_SPELLS.BLESSING_SANC
+        elseif FindKnownSpell(CLASS_SPELLS.BLESSING_KINGS) and (isProt or ctx.level >= 40) then
             blessRanks = CLASS_SPELLS.BLESSING_KINGS
         elseif not FindKnownSpell(CLASS_SPELLS.BLESSING_MIGHT) and FindKnownSpell(CLASS_SPELLS.BLESSING_WISDOM) then
             blessRanks = CLASS_SPELLS.BLESSING_WISDOM
@@ -1289,10 +1319,36 @@ local function EvaluateRecommendations()
             satisfiedBy = allBlessings, minDur = 120,
         })
 
-        if ctx.role == "TANK" and ctx.tabPts >= 10 then
+        -- Righteous Fury: recommended for Protection paladins (or in tank role, or shield equipped, or protection talents)
+        if (isProt or ctx.role == "TANK") and FindKnownSpell(CLASS_SPELLS.RIGHTEOUS_FURY) then
             CheckBuffSuggestion({
-                key = "PALADIN_RF", priority = 25, ranks = CLASS_SPELLS.RIGHTEOUS_FURY,
+                key = "PALADIN_RF", priority = 26, ranks = CLASS_SPELLS.RIGHTEOUS_FURY,
             })
+        end
+
+        -- Seal (Sigillo) check: recommend appropriate Seal if player has none active
+        local allSeals = {
+            CLASS_SPELLS.SEAL_RIGHTEOUSNESS, CLASS_SPELLS.SEAL_COMMAND, CLASS_SPELLS.SEAL_CRUSADER,
+            CLASS_SPELLS.SEAL_WISDOM, CLASS_SPELLS.SEAL_LIGHT, CLASS_SPELLS.SEAL_JUSTICE,
+        }
+        local hasAnySeal = (not auras.restricted) and IsGroupActive(auras, allSeals)
+        if not hasAnySeal and (ctx.inCombat or UnitExists("target")) then
+            local preferredSeal = CLASS_SPELLS.SEAL_RIGHTEOUSNESS
+            if not isProt and FindKnownSpell(CLASS_SPELLS.SEAL_COMMAND) then
+                preferredSeal = CLASS_SPELLS.SEAL_COMMAND
+            elseif ctx.role == "HEALER" and FindKnownSpell(CLASS_SPELLS.SEAL_WISDOM) then
+                preferredSeal = CLASS_SPELLS.SEAL_WISDOM
+            end
+            local sealID, sealName = FindKnownSpell(preferredSeal)
+            if not sealID then
+                sealID, sealName = FindKnownSpell(CLASS_SPELLS.SEAL_RIGHTEOUSNESS)
+            end
+            if sealID then
+                CheckBuffSuggestion({
+                    key = "PALADIN_SEAL", priority = 24, ranks = { sealID },
+                    satisfiedBy = allSeals, minDur = 5,
+                })
+            end
         end
 
     elseif cls == "WARRIOR" then

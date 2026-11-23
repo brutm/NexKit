@@ -135,6 +135,15 @@ local function ToggleBuffAdvisorSetting()
     end
 end
 
+local function ToggleRotationAdvisorSetting()
+    if FP.ToggleRotationAdvisor then
+        FP:ToggleRotationAdvisor()
+    end
+    if FP.RefreshSettingsUI then
+        FP:RefreshSettingsUI()
+    end
+end
+
 local function ToggleCoordsSetting()
     if not (NexusKitDB and NexusKitDB.settings) then return end
     local enabled = not (NexusKitDB.settings.showPlayerCoords ~= false)
@@ -224,6 +233,12 @@ function FP:OpenMinimapLauncherMenu(anchorBtn)
             checked = function() return GetSettings().enableBuffAdvisor ~= false end,
             keepOpen = true,
             func = ToggleBuffAdvisorSetting,
+        },
+        {
+            text = L["MINIMAP_MENU_ROTATION"] or "Consigliere Rotazione Spell",
+            checked = function() return GetSettings().enableRotationAdvisor ~= false end,
+            keepOpen = true,
+            func = ToggleRotationAdvisorSetting,
         },
         {
             text = L["MINIMAP_MENU_REAGENTS"] or "HUD Reagenti Tracciati",

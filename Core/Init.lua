@@ -22,7 +22,7 @@ local function GetAddonVersion()
     elseif GetAddOnMetadata then
         v = GetAddOnMetadata(name, "Version") or GetAddOnMetadata("NexusKit", "Version") or GetAddOnMetadata("NexKit", "Version")
     end
-    return (v and v ~= "" and v ~= "@project-version@") and v or "0.3.4"
+    return (v and v ~= "" and v ~= "@project-version@") and v or "0.3.5"
 end
 
 FP.VERSION      = GetAddonVersion()
@@ -476,6 +476,15 @@ local SV_DEFAULTS = {
         gridPartyShowSolo       = false,
         gridPartyScale          = 1.0,
         gridPartyPos            = nil,
+
+        -- Spell Rotation Advisor
+        enableRotationAdvisor   = true,
+        rotationLocked          = true,
+        rotationScale           = 1.0,
+        rotationAlpha           = 1.0,
+        rotationMode            = "combat",
+        rotationShowQueue       = true,
+        rotationPos             = nil,
     },
 }
 
@@ -649,6 +658,25 @@ local function HandleSlashCommand(input)
             FP:DumpPartyStatus()
         else
             FP:Print("Modulo ClassFrames non disponibile.")
+        end
+    elseif cmd == "rot" or cmd == "rota" or cmd == "rotation" then
+        local sub = args[1] and args[1]:lower()
+        if sub == "lock" or sub == "unlock" then
+            local isLocked = (sub == "lock")
+            if sub == "lock" and NexusKitDB and NexusKitDB.settings and NexusKitDB.settings.rotationLocked == true then
+                isLocked = false
+            end
+            if FP.SetRotationAdvisorLocked then
+                FP:SetRotationAdvisorLocked(isLocked)
+            end
+        elseif sub == "reset" then
+            if FP.ResetRotationAdvisorPos then
+                FP:ResetRotationAdvisorPos()
+            end
+        else
+            if FP.ToggleRotationAdvisor then
+                FP:ToggleRotationAdvisor()
+            end
         end
     elseif cmd == "questalert" or cmd == "starteralert" then
         if NexusKitDB and NexusKitDB.settings then
