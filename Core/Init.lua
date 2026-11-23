@@ -841,6 +841,16 @@ frame:SetScript("OnEvent", function(self, event, arg1, arg2)
             FP:RefreshAllUI()
         end
 
+        if FP.RefreshPartyGridLock then
+            FP:RefreshPartyGridLock()
+        end
+
+        -- Enforce single-icon dynamic progression for Rotation Advisor by default
+        if NexusKitDB and NexusKitDB.settings and not NexusKitDB.settings.rotationSingleIconV3 then
+            NexusKitDB.settings.rotationSingleIconV3 = true
+            NexusKitDB.settings.rotationShowQueue = false
+        end
+
         -- Compartment registration via Lua is omitted to avoid Blizzard secure menu taint (standalone minimap icon is provided)
         FP:Print(string.format(L["ADDON_LOADED"], FP.VERSION))
 

@@ -30,9 +30,21 @@ end
 
 local function SafeBoolean(val, fallback)
     if val == nil then return fallback end
-    if issecretvalue and issecretvalue(val) then return fallback end
+    if (issecretvalue and issecretvalue(val)) or (issecret and issecret(val)) then return fallback end
     local ok, res = pcall(function()
         if val then return true else return false end
+    end)
+    if ok then
+        return res
+    end
+    return fallback
+end
+
+local function SafeNumber(val, fallback)
+    if val == nil then return fallback end
+    if (issecretvalue and issecretvalue(val)) or (issecret and issecret(val)) then return fallback end
+    local ok, res = pcall(function()
+        if type(val) == "number" then return val else return fallback end
     end)
     if ok then
         return res
@@ -411,7 +423,9 @@ local PLAYER_BUFF_SPELLS = {
 
 local function GetPartyUnitDebuffs(unit)
     local debuffs = {}
-    if not unit or not UnitExists(unit) then return debuffs end
+    if not unit then return debuffs end
+    local okE, exists = pcall(UnitExists, unit)
+    if not okE or SafeBoolean(exists, false) ~= true then return debuffs end
     local dispels, playerClass = GetPlayerDispelCapabilities()
 
     for i = 1, 16 do
@@ -421,46 +435,78 @@ local function GetPartyUnitDebuffs(unit)
         -- 1. Try native Classic UnitDebuff first (safe, fast, never triggers taint error)
         if UnitDebuff then
             local okD, dName, dIcon, dCount, dDispel, dDur, dExp, _, _, _, dSpellId = pcall(UnitDebuff, unit, i)
-            if okD and dName then
-                name, icon, count, dType, duration, expirationTime, spellId = dName, dIcon, dCount, dDispel, dDur, dExp, dSpellId
+            if okD and dName and (not issecretvalue or not issecretvalue(dName)) then
+                name = dName
+                icon = dIcon
+                count = dCount
+                dType = dDispel
+                duration = dDur
+                expirationTime = dExp
+                spellId = dSpellId
                 found = true
             elseif okD and not dName then
                 break -- End of debuffs
             end
         end
 
-        -- 2. Fallback to C_UnitAuras.GetAuraDataByIndex (wrapped in pcall to protect against secret/taint restrictions)
+        -- 2. Fallback to C_UnitAuras.GetAuraDataByIndex (strictly wrapped in pcall against taint & secret values)
         if not found and C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
             local okC, aura = pcall(C_UnitAuras.GetAuraDataByIndex, unit, i, "HARMFUL")
-            if okC and type(aura) == "table" and aura.name then
-                name, icon, count, dType, duration, expirationTime, spellId = aura.name, aura.icon, aura.applications, aura.dispelName, aura.duration, aura.expirationTime, aura.spellId
-                found = true
+            if okC and type(aura) == "table" then
+                local okRead = pcall(function()
+                    local aName = aura.name
+                    if aName and (not issecretvalue or not issecretvalue(aName)) then
+                        name = aName
+                        icon = aura.icon
+                        count = aura.applications
+                        dType = aura.dispelName
+                        duration = aura.duration
+                        expirationTime = aura.expirationTime
+                        spellId = aura.spellId
+                        found = true
+                    end
+                end)
+                if not okRead then
+                    break -- Taint/secret error reading aura fields, stop scanning safely
+                end
             elseif okC and not aura then
                 break -- End of debuffs
+            elseif not okC then
+                break -- GetAuraDataByIndex threw taint error, abort cleanly
             end
         end
 
         if not found then break end
 
-        local canDispel = (dType and dispels[dType]) and true or false
+        local canDispel = false
+        pcall(function()
+            if dType and dispels and dispels[dType] then
+                canDispel = true
+            end
+        end)
+
         debuffs[#debuffs + 1] = {
             index = i,
-            name = name,
-            icon = icon,
-            count = count or 0,
-            dispelType = dType or "none",
+            name = (type(name) == "string" and name) or "Debuff",
+            icon = icon or "Interface\\Icons\\INV_Misc_QuestionMark",
+            count = SafeNumber(count, 0),
+            dispelType = (type(dType) == "string" and dType) or "none",
             canDispel = canDispel,
-            duration = duration or 0,
-            expirationTime = expirationTime or 0,
-            spellId = spellId,
+            duration = SafeNumber(duration, 0),
+            expirationTime = SafeNumber(expirationTime, 0),
+            spellId = SafeNumber(spellId, nil),
         }
     end
 
     -- Sort debuffs: dispellable debuffs FIRST
-    table.sort(debuffs, function(a, b)
-        if a.canDispel and not b.canDispel then return true end
-        if not a.canDispel and b.canDispel then return false end
-        return a.index < b.index
+    pcall(function()
+        table.sort(debuffs, function(a, b)
+            local aDisp = SafeBoolean(a.canDispel, false)
+            local bDisp = SafeBoolean(b.canDispel, false)
+            if aDisp and not bDisp then return true end
+            if not aDisp and bDisp then return false end
+            return (a.index or 0) < (b.index or 0)
+        end)
     end)
 
     return debuffs
@@ -468,8 +514,9 @@ end
 
 local function GetPartyUnitBuffs(unit)
     local buffs = {}
-    if not unit or not UnitExists(unit) then return buffs end
-    local _, playerClass = UnitClass("player")
+    if not unit then return buffs end
+    local okE, exists = pcall(UnitExists, unit)
+    if not okE or SafeBoolean(exists, false) ~= true then return buffs end
 
     for i = 1, 32 do
         local name, icon, count, duration, expirationTime, source, spellId
@@ -478,46 +525,78 @@ local function GetPartyUnitBuffs(unit)
         -- 1. Try native Classic UnitBuff first (safe, fast, never triggers taint error)
         if UnitBuff then
             local okB, bName, bIcon, bCount, _, bDur, bExp, bSrc, _, _, bSpellId = pcall(UnitBuff, unit, i)
-            if okB and bName then
-                name, icon, count, duration, expirationTime, source, spellId = bName, bIcon, bCount, bDur, bExp, bSrc, bSpellId
+            if okB and bName and (not issecretvalue or not issecretvalue(bName)) then
+                name = bName
+                icon = bIcon
+                count = bCount
+                duration = bDur
+                expirationTime = bExp
+                source = bSrc
+                spellId = bSpellId
                 found = true
             elseif okB and not bName then
                 break -- End of buffs
             end
         end
 
-        -- 2. Fallback to C_UnitAuras.GetAuraDataByIndex (wrapped in pcall to protect against secret/taint restrictions)
+        -- 2. Fallback to C_UnitAuras.GetAuraDataByIndex (strictly wrapped in pcall against taint & secret values)
         if not found and C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
             local okC, aura = pcall(C_UnitAuras.GetAuraDataByIndex, unit, i, "HELPFUL")
-            if okC and type(aura) == "table" and aura.name then
-                name, icon, count, duration, expirationTime, source, spellId = aura.name, aura.icon, aura.applications, aura.duration, aura.expirationTime, aura.sourceUnit, aura.spellId
-                found = true
+            if okC and type(aura) == "table" then
+                local okRead = pcall(function()
+                    local aName = aura.name
+                    if aName and (not issecretvalue or not issecretvalue(aName)) then
+                        name = aName
+                        icon = aura.icon
+                        count = aura.applications
+                        duration = aura.duration
+                        expirationTime = aura.expirationTime
+                        source = aura.sourceUnit
+                        spellId = aura.spellId
+                        found = true
+                    end
+                end)
+                if not okRead then
+                    break -- Taint/secret error reading aura fields, stop scanning safely
+                end
             elseif okC and not aura then
                 break -- End of buffs
+            elseif not okC then
+                break -- GetAuraDataByIndex threw taint error, abort cleanly
             end
         end
 
         if not found then break end
 
-        local isPlayerBuff = (source == "player") or (source == nil and name and PLAYER_BUFF_SPELLS[name])
+        local isPlayerBuff = false
+        pcall(function()
+            if source == "player" or (source == nil and name and PLAYER_BUFF_SPELLS and PLAYER_BUFF_SPELLS[name]) then
+                isPlayerBuff = true
+            end
+        end)
+
         buffs[#buffs + 1] = {
             index = i,
-            name = name,
-            icon = icon,
-            count = count or 0,
-            duration = duration or 0,
-            expirationTime = expirationTime or 0,
+            name = (type(name) == "string" and name) or "Buff",
+            icon = icon or "Interface\\Icons\\INV_Misc_QuestionMark",
+            count = SafeNumber(count, 0),
+            duration = SafeNumber(duration, 0),
+            expirationTime = SafeNumber(expirationTime, 0),
             source = source,
             isPlayerBuff = isPlayerBuff,
-            spellId = spellId,
+            spellId = SafeNumber(spellId, nil),
         }
     end
 
     -- Sort buffs: player's own buffs FIRST, then other party buffs
-    table.sort(buffs, function(a, b)
-        if a.isPlayerBuff and not b.isPlayerBuff then return true end
-        if not a.isPlayerBuff and b.isPlayerBuff then return false end
-        return a.index < b.index
+    pcall(function()
+        table.sort(buffs, function(a, b)
+            local aMine = SafeBoolean(a.isPlayerBuff, false)
+            local bMine = SafeBoolean(b.isPlayerBuff, false)
+            if aMine and not bMine then return true end
+            if not aMine and bMine then return false end
+            return (a.index or 0) < (b.index or 0)
+        end)
     end)
 
     return buffs
@@ -1021,10 +1100,7 @@ local function UpdateCompactPartyFrame(frame, includeAuras)
         ApplyClassTextureToIcon(badge.icon, class)
         badge:Show()
 
-        -- 4. Permanent Auras (Buffs & Debuffs) - only updated when requested to prevent taint in name/health hooks
-        if includeAuras then
-            pcall(UpdateCompactPartyAuras, frame)
-        end
+        -- 4. Compact frames have native Blizzard auras; custom aura injection is omitted on compact frames to prevent taint
     else
         if frame.nkClassBadge then frame.nkClassBadge:Hide() end
         if frame.nkPermanentAuras then frame.nkPermanentAuras:Hide() end
@@ -1484,8 +1560,9 @@ local function UpdateGridMember(btn)
             else
                 bBtn.border:SetVertexColor(0.4, 0.4, 0.4, 0.6)
             end
-            if buff.count and buff.count > 1 then
-                bBtn.countFs:SetText(buff.count)
+            local bCount = SafeNumber(buff.count, 0)
+            if bCount > 1 then
+                bBtn.countFs:SetText(tostring(bCount))
                 bBtn.countFs:Show()
             else
                 bBtn.countFs:Hide()
@@ -1507,8 +1584,9 @@ local function UpdateGridMember(btn)
             dBtn.icon:SetTexture(debuff.icon)
             local col = DISPEL_COLORS[debuff.dispelType] or DISPEL_COLORS["none"]
             dBtn.border:SetVertexColor(col.r, col.g, col.b, 1)
-            if debuff.count and debuff.count > 1 then
-                dBtn.countFs:SetText(debuff.count)
+            local dCount = SafeNumber(debuff.count, 0)
+            if dCount > 1 then
+                dBtn.countFs:SetText(tostring(dCount))
                 dBtn.countFs:Show()
             else
                 dBtn.countFs:Hide()
@@ -1609,13 +1687,13 @@ local function UpdateAllPartyMembers()
             for i = 1, 5 do
                 local f = _G["CompactPartyFrameMember" .. i]
                 if f then
-                    UpdateCompactPartyFrame(f, true)
+                    UpdateCompactPartyFrame(f, false)
                 end
             end
         end
         if CompactRaidFrameContainer and CompactRaidFrameContainer:IsShown() and CompactRaidFrameContainer_ApplyToFrames then
             pcall(CompactRaidFrameContainer_ApplyToFrames, CompactRaidFrameContainer, "normal", function(f)
-                if f then UpdateCompactPartyFrame(f, true) end
+                if f then UpdateCompactPartyFrame(f, false) end
             end)
         end
     end
@@ -1974,54 +2052,10 @@ local function HookBlizzardUnitFrames()
         end)
     end
 
-    -- CompactUnitFrame (Raid-Style Party & Raid frames + Nameplates)
-    -- Visual updates only (includeAuras = false) to prevent taint/secret restrictions in internal Blizzard hooks
-    if CompactUnitFrame_UpdateName then
-        hooksecurefunc("CompactUnitFrame_UpdateName", function(frame)
-            if not frame or IsForbiddenObj(frame) then return end
-            local unit = frame.unit or frame.displayedUnit
-            if not unit then return end
-            if unit:find("^nameplate%d+$") then
-                UpdateNameplateUnit(unit)
-            elseif unit:find("^party%d+$") or unit:find("^raid%d+$") or unit == "player" then
-                UpdateCompactPartyFrame(frame, false)
-            end
-        end)
-    end
-    if CompactUnitFrame_UpdateHealth then
-        hooksecurefunc("CompactUnitFrame_UpdateHealth", function(frame)
-            if not frame or IsForbiddenObj(frame) then return end
-            local unit = frame.unit or frame.displayedUnit
-            if not unit then return end
-            if unit:find("^nameplate%d+$") then
-                UpdateNameplateUnit(unit)
-            elseif unit:find("^party%d+$") or unit:find("^raid%d+$") or unit == "player" then
-                UpdateCompactPartyFrame(frame, false)
-            end
-        end)
-    end
-    if CompactUnitFrame_UpdateHealthColor then
-        hooksecurefunc("CompactUnitFrame_UpdateHealthColor", function(frame)
-            if not frame or IsForbiddenObj(frame) then return end
-            local unit = frame.unit or frame.displayedUnit
-            if not unit then return end
-            if unit:find("^nameplate%d+$") then
-                UpdateNameplateUnit(unit)
-            elseif unit:find("^party%d+$") or unit:find("^raid%d+$") or unit == "player" then
-                UpdateCompactPartyFrame(frame, false)
-            end
-        end)
-    end
-    if CompactUnitFrame_UpdateStatusText then
-        hooksecurefunc("CompactUnitFrame_UpdateStatusText", function(frame)
-            if not frame or IsForbiddenObj(frame) then return end
-            local unit = frame.unit or frame.displayedUnit
-            if not unit then return end
-            if unit:find("^party%d+$") or unit:find("^raid%d+$") or unit == "player" then
-                UpdateCompactPartyFrame(frame, false)
-            end
-        end)
-    end
+    -- Note: CompactUnitFrame_Update* functions are intentionally NOT hooked.
+    -- Hooking Blizzard's secure CompactUnitFrame execution stack taints internal raid frames,
+    -- causing Blizzard's own CompactUnitFrame_UpdateAuras to fail with secret aura restrictions.
+    -- Nameplates are updated independently via NAME_PLATE_UNIT_ADDED / UNIT_NAME_UPDATE without taint.
 end
 
 local function SafeRegisterEvent(frame, evt)
@@ -2124,21 +2158,6 @@ evFrame:SetScript("OnEvent", function(self, event, arg1, ...)
                     local f = _G["PartyMemberFrame" .. num]
                     if f then pcall(UpdatePartyAuras, f) end
                 end
-                if CompactPartyFrame and CompactPartyFrame:IsShown() then
-                    for i = 1, 5 do
-                        local f = _G["CompactPartyFrameMember" .. i]
-                        if f and (f.unit == arg1 or f.displayedUnit == arg1) then
-                            pcall(UpdateCompactPartyAuras, f)
-                        end
-                    end
-                end
-                if CompactRaidFrameContainer and CompactRaidFrameContainer:IsShown() and CompactRaidFrameContainer_ApplyToFrames then
-                    pcall(CompactRaidFrameContainer_ApplyToFrames, CompactRaidFrameContainer, "normal", function(f)
-                        if f and (f.unit == arg1 or f.displayedUnit == arg1) then
-                            pcall(UpdateCompactPartyAuras, f)
-                        end
-                    end)
-                end
             end
         elseif event == "INSPECT_READY" then
             HandleInspectReady(arg1)
@@ -2154,7 +2173,7 @@ end)
 local partyElapsed = 0
 evFrame:SetScript("OnUpdate", function(self, elapsed)
     partyElapsed = partyElapsed + (elapsed or 0)
-    if partyElapsed >= 0.25 then
+    if partyElapsed >= 0.5 then
         partyElapsed = 0
         if IsClassFeaturesEnabled() then
             local inGroup = (IsInGroup and IsInGroup())

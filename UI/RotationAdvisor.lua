@@ -514,12 +514,15 @@ local PALADIN_SEAL_SPELLS = {
     [20305] = true, [20306] = true, [20307] = true, [20308] = true, [20162] = true, [20309] = true, [27158] = true, -- Seal of the Crusader
     [20166] = true, [20332] = true, [20333] = true, [20334] = true, [27160] = true, -- Seal of Light
     [20164] = true, [10324] = true, [10325] = true, [10326] = true, -- Seal of Justice
+    [31801] = true, [348704] = true, -- Seal of Vengeance / Truth
+    [31892] = true, [53720] = true,  -- Seal of Blood / Corruption
+    [20154] = true, [21082] = true,  -- Seal of Righteousness base IDs
 }
 
 local function IsPaladinSealActive()
-    -- 1. Check real-time cast memory (lasts 30s)
+    -- 1. Check real-time cast memory (Paladin seals last 30 minutes = 1800s)
     local now = GetTime and GetTime() or 0
-    if activeSealName and (now - activeSealTime < 30) then
+    if activeSealName and (now - activeSealTime < 1800) then
         return true
     end
 
@@ -535,27 +538,35 @@ local function IsPaladinSealActive()
         if not name and C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
             local ok, a = pcall(C_UnitAuras.GetAuraDataByIndex, "player", i, "HELPFUL")
             if ok and type(a) == "table" then
-                if IsAccessible(a.name) then name = a.name end
-                if IsAccessible(a.spellId) then sid = a.spellId end
-                if IsAccessible(a.icon) then icon = a.icon end
+                pcall(function()
+                    if IsAccessible(a.name) then name = a.name end
+                    if IsAccessible(a.spellId) then sid = a.spellId end
+                    if IsAccessible(a.icon) then icon = a.icon end
+                end)
             end
         end
 
-        if name then
+        if name and type(name) == "string" then
             local low = string.lower(name)
             if low:find("seal") or low:find("sigillo") or low:find("rettitudine") or low:find("righteous")
                 or low:find("crusader") or low:find("crociato") or low:find("command") or low:find("comando")
                 or low:find("wisdom") or low:find("saggezza") or low:find("justice") or low:find("giustizia")
-                or low:find("light") or low:find("luce") then
+                or low:find("light") or low:find("luce") or low:find("vengeance") or low:find("blood") then
+                activeSealName = name
+                activeSealTime = now
                 return true
             end
         end
         if sid and PALADIN_SEAL_SPELLS and PALADIN_SEAL_SPELLS[sid] then
+            activeSealName = name or "Paladin Seal"
+            activeSealTime = now
             return true
         end
         if icon and type(icon) == "string" then
             local lowIcon = string.lower(icon)
             if lowIcon:find("thunderbolt") or lowIcon:find("righteousnessaura") or lowIcon:find("sealof") then
+                activeSealName = name or "Paladin Seal"
+                activeSealTime = now
                 return true
             end
         end
@@ -1100,7 +1111,12 @@ local function UpdateRotationUI()
     local second = candidates[2]
 
     if first then
-        mainIcon:SetTexture(first.icon)
+        local tex = first.icon
+        if not tex or tex == "" or tex == 0 then
+            tex = "Interface\\Icons\\INV_Misc_QuestionMark"
+        end
+        mainIcon:SetTexture(tex)
+        mainIcon:Show()
         mainBadge:SetText(first.badge or "")
 
         if first.keybind and first.keybind ~= "" then
@@ -1111,10 +1127,14 @@ local function UpdateRotationUI()
         end
 
         -- Cooldown indicator
-        if not first.isReady and first.remaining > 0 then
+        if not first.isReady and first.remaining > 0 and (first.duration or 0) > 0 then
             local dur = first.duration or 10
             local start = (GetTime() + first.remaining) - dur
-            mainCooldown:SetCooldown(start, dur)
+            if start > 0 and dur > 0 then
+                mainCooldown:SetCooldown(start, dur)
+            else
+                mainCooldown:Clear()
+            end
             mainIcon:SetVertexColor(0.55, 0.55, 0.55)
             mainSlot:SetBackdropBorderColor(0.85, 0.5, 0.2, 0.95)
 
@@ -1202,13 +1222,24 @@ SafeRegisterEvent(evFrame, "UNIT_AURA")
 evFrame:SetScript("OnEvent", function(self, event, arg1, arg2, arg3, arg4, arg5)
     if (event == "UNIT_SPELLCAST_SUCCEEDED" or event == "UNIT_SPELLCAST_START") and arg1 == "player" then
         local spellName, spellID = nil, nil
-        if type(arg2) == "string" and not tonumber(arg2) then
+        if type(arg3) == "number" then
+            -- Modern Retail client (1.60 / 11.0): arg1=unit ("player"), arg2=castGUID, arg3=spellID
+            spellID = arg3
+            spellName = GetSpellNameCompat(spellID)
+        elseif type(arg2) == "string" and (type(arg3) ~= "number") then
             -- Legacy 3.3.5 / Classic signature: arg1=unit ("player"), arg2=spellName, arg3=spellRank, arg4=lineID, arg5=spellID
             spellName = arg2
-            spellID = arg5
-        else
-            -- Retail: arg1=unit ("player"), arg2=castGUID, arg3=spellID
-            spellID = arg3
+            if type(arg5) == "number" then
+                spellID = arg5
+            elseif type(arg4) == "number" then
+                spellID = arg4
+            end
+        elseif type(arg2) == "number" then
+            spellID = arg2
+            spellName = GetSpellNameCompat(spellID)
+        end
+
+        if not spellName and spellID then
             spellName = GetSpellNameCompat(spellID)
         end
 
@@ -1217,25 +1248,28 @@ evFrame:SetScript("OnEvent", function(self, event, arg1, arg2, arg3, arg4, arg5)
         if spellName then
             lastCastName = spellName
             local low = string.lower(spellName)
-            if (spellID and PALADIN_SEAL_SPELLS and PALADIN_SEAL_SPELLS[spellID])
+            local isSeal = (spellID and PALADIN_SEAL_SPELLS and PALADIN_SEAL_SPELLS[spellID])
                 or low:find("seal") or low:find("sigillo") or low:find("rettitudine") or low:find("righteous")
                 or low:find("crusader") or low:find("crociato") or low:find("command") or low:find("comando")
                 or low:find("wisdom") or low:find("saggezza") or low:find("justice") or low:find("giustizia")
-                or low:find("light") or low:find("luce") then
+                or low:find("light") or low:find("luce") or low:find("vengeance") or low:find("blood")
+
+            if isSeal then
                 activeSealName = spellName
                 activeSealTime = lastCastTime
-            elseif low:find("judgement") or low:find("giudizio") then
-                activeSealName = nil
-                activeSealTime = 0
             end
         end
     end
 
-    if event == "PLAYER_LOGIN" then
+    if event == "PLAYER_LOGIN" or event == "PLAYER_ENTERING_WORLD" then
         local s = GetSettings()
-        if not s.rotationSingleIconMigrated then
-            s.rotationSingleIconMigrated = true
+        if not s.rotationSingleIconV3 then
+            s.rotationSingleIconV3 = true
             s.rotationShowQueue = false
+        end
+        if IsPaladinSealActive() then
+            activeSealTime = GetTime and GetTime() or 0
+            activeSealName = activeSealName or "Active Seal"
         end
     end
 
