@@ -142,25 +142,45 @@ local currentTooltipUnit = nil
 
 local function GetUnitSpecInfo(unit)
     if not unit or not UnitExists(unit) or not UnitIsPlayer(unit) then return nil, nil end
+
     if UnitIsUnit(unit, "player") then
-        local maxPoints = -1
-        local topName = nil
-        local p = {}
-        local numTabs = (GetNumTalentTabs and GetNumTalentTabs()) or 3
-        for tab = 1, numTabs do
-            local _, name, _, _, points = GetTalentTabInfo(tab)
-            points = points or 0
-            p[#p + 1] = points
-            if points > maxPoints then
-                maxPoints = points
-                topName = name
+        -- 1. Modern WoW Specialization API (Retail, The War Within 11.0+, etc.)
+        local getSpec = (C_SpecializationInfo and C_SpecializationInfo.GetSpecialization) or GetSpecialization
+        local getSpecInfo = (C_SpecializationInfo and C_SpecializationInfo.GetSpecializationInfo) or GetSpecializationInfo
+        if type(getSpec) == "function" and type(getSpecInfo) == "function" then
+            local ok, specIndex = pcall(getSpec)
+            if ok and specIndex and type(specIndex) == "number" and specIndex > 0 then
+                local okInfo, _, name = pcall(getSpecInfo, specIndex)
+                if okInfo and name and type(name) == "string" and name ~= "" then
+                    return name, nil
+                end
             end
         end
-        local pts = table.concat(p, "/")
-        if maxPoints <= 0 then
-            return nil, pts
+
+        -- 2. Classic Talent Tabs API (Classic Era, TBC, WotLK)
+        if type(GetTalentTabInfo) == "function" then
+            local maxPoints = -1
+            local topName = nil
+            local p = {}
+            local rawNum = (type(GetNumTalentTabs) == "function") and GetNumTalentTabs() or 3
+            local numTabs = tonumber(rawNum) or 3
+            for tab = 1, numTabs do
+                local ok, _, name, _, _, points = pcall(GetTalentTabInfo, tab)
+                if ok then
+                    points = tonumber(points) or 0
+                    p[#p + 1] = points
+                    if points > maxPoints then
+                        maxPoints = points
+                        topName = name
+                    end
+                end
+            end
+            local pts = (#p > 0) and table.concat(p, "/") or nil
+            if maxPoints <= 0 then
+                return nil, pts
+            end
+            return topName, pts
         end
-        return topName, pts
     else
         local guid = UnitGUID(unit)
         if guid and cachedPlayerSpecs[guid] then
@@ -195,55 +215,63 @@ end
 
 local function ShowPortraitTooltip(owner, unit)
     if not owner or not unit or not UnitExists(unit) then return end
-    local isPlayer = UnitIsPlayer(unit)
-    local name = UnitName(unit)
-    local color, class = GetUnitClassColor(unit)
-    local className = (UnitClass and select(1, UnitClass(unit))) or class
-    local level = UnitLevel(unit)
-    local race = UnitRace and select(1, UnitRace(unit))
-    local specName, pts = GetUnitSpecInfo(unit)
+    pcall(function()
+        local isPlayer = UnitIsPlayer(unit)
+        local name = UnitName(unit)
+        local color, class = GetUnitClassColor(unit)
+        local className = (UnitClass and select(1, UnitClass(unit))) or class
+        local level = UnitLevel(unit)
+        local race = UnitRace and select(1, UnitRace(unit))
+        local specName, pts = GetUnitSpecInfo(unit)
 
-    GameTooltip:SetOwner(owner, "ANCHOR_RIGHT")
-    GameTooltip:ClearLines()
+        GameTooltip:SetOwner(owner, "ANCHOR_RIGHT")
+        GameTooltip:ClearLines()
 
-    local hex = (color and string.format("%02x%02x%02x", color.r * 255, color.g * 255, color.b * 255)) or "00ff96"
+        local hex = (color and string.format("%02x%02x%02x", color.r * 255, color.g * 255, color.b * 255)) or "00ff96"
 
-    if isPlayer and color then
-        GameTooltip:AddLine(string.format("|cff%s%s|r", hex, name or "Giocatore"), 1, 1, 1)
-    else
-        GameTooltip:AddLine(name or "Bersaglio", 1, 1, 1)
-    end
-
-    if isPlayer then
-        if specName then
-            local specDisplay = (pts and pts ~= "") and string.format("%s (%s)", specName, pts) or specName
-            GameTooltip:AddLine(string.format("|cff%s%s|r — |cffffffff%s|r", hex, className or "Classe", specDisplay), 1, 1, 1)
+        if isPlayer and color then
+            GameTooltip:AddLine(string.format("|cff%s%s|r", hex, name or "Giocatore"), 1, 1, 1)
         else
-            GameTooltip:AddLine(string.format("|cff%s%s|r", hex, className or "Classe"), 1, 1, 1)
-            if not UnitIsUnit(unit, "player") then
-                RequestInspectUnit(unit)
+            GameTooltip:AddLine(name or "Bersaglio", 1, 1, 1)
+        end
+
+        local levelStr = "??"
+        if level then
+            local okLvl, isPos = pcall(function() return level > 0 end)
+            if okLvl and isPos then
+                levelStr = "Livello " .. tostring(level)
             end
         end
 
-        local levelStr = (level and level > 0) and ("Livello " .. level) or "??"
-        if race then
-            GameTooltip:AddLine(string.format("|cffaaaaaa%s %s|r", levelStr, race), 0.8, 0.8, 0.8)
-        else
-            GameTooltip:AddLine(string.format("|cffaaaaaa%s|r", levelStr), 0.8, 0.8, 0.8)
-        end
-    else
-        local creatureType = UnitCreatureType and UnitCreatureType(unit)
-        local levelStr = (level and level > 0) and ("Livello " .. level) or "??"
-        if creatureType then
-            GameTooltip:AddLine(string.format("|cffaaaaaa%s %s|r", levelStr, creatureType), 0.8, 0.8, 0.8)
-        else
-            GameTooltip:AddLine(string.format("|cffaaaaaa%s|r", levelStr), 0.8, 0.8, 0.8)
-        end
-    end
+        if isPlayer then
+            if specName then
+                local specDisplay = (pts and pts ~= "") and string.format("%s (%s)", specName, pts) or specName
+                GameTooltip:AddLine(string.format("|cff%s%s|r — |cffffffff%s|r", hex, className or "Classe", specDisplay), 1, 1, 1)
+            else
+                GameTooltip:AddLine(string.format("|cff%s%s|r", hex, className or "Classe"), 1, 1, 1)
+                if not UnitIsUnit(unit, "player") then
+                    RequestInspectUnit(unit)
+                end
+            end
 
-    GameTooltip:Show()
-    currentTooltipOwner = owner
-    currentTooltipUnit = unit
+            if race then
+                GameTooltip:AddLine(string.format("|cffaaaaaa%s %s|r", levelStr, race), 0.8, 0.8, 0.8)
+            else
+                GameTooltip:AddLine(string.format("|cffaaaaaa%s|r", levelStr), 0.8, 0.8, 0.8)
+            end
+        else
+            local creatureType = UnitCreatureType and UnitCreatureType(unit)
+            if creatureType then
+                GameTooltip:AddLine(string.format("|cffaaaaaa%s %s|r", levelStr, creatureType), 0.8, 0.8, 0.8)
+            else
+                GameTooltip:AddLine(string.format("|cffaaaaaa%s|r", levelStr), 0.8, 0.8, 0.8)
+            end
+        end
+
+        GameTooltip:Show()
+        currentTooltipOwner = owner
+        currentTooltipUnit = unit
+    end)
 end
 
 local function HandleInspectReady(guid)
@@ -252,22 +280,47 @@ local function HandleInspectReady(guid)
     if lastInspectTargetGUID and actualGuid ~= lastInspectTargetGUID then return end
     lastInspectTargetGUID = nil
 
-    local numTabs = (GetNumTalentTabs and GetNumTalentTabs(true)) or 3
-    local maxPoints = -1
     local topName = nil
-    local p = {}
-    for tab = 1, numTabs do
-        local _, name, _, _, points = GetTalentTabInfo(tab, true)
-        points = points or 0
-        p[#p + 1] = points
-        if points > maxPoints then
-            maxPoints = points
-            topName = name
+    local pts = nil
+
+    -- 1. Modern WoW Inspect Specialization (Retail, TWW 11.0+)
+    if GetInspectSpecialization and GetSpecializationInfoByID then
+        local ok, specID = pcall(GetInspectSpecialization, currentTooltipUnit or "target")
+        if ok and specID and type(specID) == "number" and specID > 0 then
+            local okInfo, _, name = pcall(GetSpecializationInfoByID, specID)
+            if okInfo and name and type(name) == "string" and name ~= "" then
+                topName = name
+            end
         end
     end
-    local pts = table.concat(p, "/")
+
+    -- 2. Classic Talent Tabs Inspect (Classic Era, TBC, WotLK)
+    if not topName and type(GetTalentTabInfo) == "function" then
+        local rawNum = (type(GetNumTalentTabs) == "function") and GetNumTalentTabs(true) or 3
+        local numTabs = tonumber(rawNum) or 3
+        local maxPoints = -1
+        local p = {}
+        for tab = 1, numTabs do
+            local ok, _, name, _, _, points = pcall(GetTalentTabInfo, tab, true)
+            if ok then
+                points = tonumber(points) or 0
+                p[#p + 1] = points
+                if points > maxPoints then
+                    maxPoints = points
+                    topName = name
+                end
+            end
+        end
+        if #p > 0 then
+            pts = table.concat(p, "/")
+        end
+        if maxPoints <= 0 then
+            topName = nil
+        end
+    end
+
     cachedPlayerSpecs[actualGuid] = {
-        specName = (maxPoints > 0) and topName or nil,
+        specName = topName,
         pts = pts,
         time = (GetTime and GetTime()) or 0,
     }
