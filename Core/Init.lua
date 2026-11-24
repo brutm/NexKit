@@ -442,7 +442,7 @@ local castCooldownDurations = {}
 
 local FALLBACK_BASE_COOLDOWNS = {
     [680]   = 10.0, [10332] = 10.0, -- Holy Strike (WoW Forever)
-    [20271] = 8.0, [53408] = 8.0, [53407] = 8.0, -- Judgement
+    [20271] = 8.0, [53408] = 8.0, [53407] = 8.0, [440677] = 8.0, -- Judgement
     [35395] = 4.0, [53385] = 10.0, -- Crusader Strike / Divine Storm
     [26573] = 8.0, [20116] = 8.0, [20922] = 8.0, [20923] = 8.0, [20924] = 8.0, [27173] = 8.0, [48819] = 8.0, -- Consecration
     [20925] = 10.0, [20927] = 10.0, [20928] = 10.0, [27179] = 10.0, [48952] = 8.0, -- Holy Shield
@@ -456,9 +456,22 @@ local FALLBACK_BASE_COOLDOWNS = {
     [12294] = 6.0, [21551] = 6.0, [21552] = 6.0, [21553] = 6.0, [25248] = 6.0, [30330] = 6.0, [47486] = 6.0, -- Mortal Strike
     [23881] = 4.0, [23892] = 4.0, [23893] = 4.0, [23894] = 4.0, [25251] = 4.0, [30335] = 4.0, -- Bloodthirst
     [6572]  = 5.0, [6574]  = 5.0, [7379]  = 5.0, [11600] = 5.0, [11601] = 5.0, [25288] = 5.0, [57823] = 5.0, -- Revenge
+    [7384]  = 5.0, [7887]  = 5.0, [11584] = 5.0, [11585] = 5.0, [46968] = 20.0, -- Overpower / Shockwave
+    [6343]  = 6.0, [8198]  = 6.0, [8204]  = 6.0, [8205]  = 6.0, [11580] = 6.0, [11581] = 6.0, [25264] = 6.0, [47502] = 6.0, -- Thunder Clap
+    [1680]  = 8.0, [2565]  = 5.0, -- Whirlwind / Shield Block
     [2136]  = 8.0, [2137]  = 8.0, [2138]  = 8.0, [8412]  = 8.0, [8413]  = 8.0, [10197] = 8.0, [10199] = 8.0, [10200] = 8.0, [27079] = 8.0, [42873] = 8.0, -- Fire Blast
+    [44572] = 30.0, [44425] = 3.0, [44780] = 3.0, [44781] = 3.0, -- Deep Freeze / Arcane Barrage
+    [14251] = 6.0, -- Riposte
+    [17962] = 10.0, [50796] = 12.0, [59170] = 12.0, [59171] = 12.0, [59172] = 12.0, -- Conflagrate / Chaos Bolt
+    [17877] = 15.0, [18867] = 15.0, [18868] = 15.0, [18869] = 15.0, [18870] = 15.0, [18871] = 15.0, [27263] = 15.0, [30546] = 15.0, [47827] = 15.0, -- Shadowburn
+    [48181] = 8.0, [59161] = 8.0, [59163] = 8.0, [59164] = 8.0, -- Haunt
     [8092]  = 8.0, [8102]  = 8.0, [8103]  = 8.0, [8104]  = 8.0, [10945] = 8.0, [10946] = 8.0, [10947] = 8.0, [25375] = 8.0, [48127] = 8.0, -- Mind Blast
-    [17364] = 8.0, [60103] = 6.0, [51505] = 8.0, -- Stormstrike / Lava Lash / Lava Burst
+    [32379] = 12.0, [32996] = 12.0, [48158] = 12.0, [47540] = 12.0, [53005] = 12.0, [53006] = 12.0, [53007] = 12.0, -- SW:D / Penance
+    [44041] = 30.0, [44043] = 30.0, [44044] = 30.0, [44045] = 30.0, [44046] = 30.0, [44047] = 30.0, -- Chastise
+    [53351] = 15.0, [61005] = 15.0, [61006] = 15.0, [53209] = 10.0, [53301] = 6.0, [60051] = 6.0, [60052] = 6.0, [60053] = 6.0, -- Kill Shot / Chimera / Explosive
+    [3674]  = 30.0, [63668] = 30.0, [63669] = 30.0, [63670] = 30.0, -- Black Arrow
+    [33878] = 6.0, [33986] = 6.0, [33987] = 6.0, [48564] = 6.0, [78674] = 15.0, -- Mangle (Bear) / Starsurge
+    [17364] = 8.0, [60103] = 6.0, [51505] = 8.0, [60043] = 8.0, [49184] = 8.0, -- Stormstrike / Lava Lash / Lava Burst / Howling Blast
 }
 
 local FALLBACK_NAME_COOLDOWNS = {
@@ -473,14 +486,25 @@ local FALLBACK_NAME_COOLDOWNS = {
     ["holy shock"]              = 6.0,  ["folgore sacra"]         = 6.0,
     ["divine storm"]            = 10.0, ["tempesta divina"]       = 10.0,
     ["shield of righteousness"] = 6.0,  ["hammer of the righteous"] = 6.0,
+    ["hammer of justice"]       = 60.0, ["martello della giustizia"] = 60.0,
     ["shield slam"]             = 6.0,  ["mortal strike"]         = 6.0,  ["bloodthirst"]             = 4.0,
-    ["revenge"]                 = 5.0,  ["whirlwind"]             = 8.0,  ["thunder clap"]            = 6.0,
-    ["spearing strike"]         = 10.0, ["fire blast"]            = 8.0,  ["mind blast"]              = 8.0,
-    ["penance"]                 = 12.0, ["chastise"]              = 10.0,
+    ["revenge"]                 = 5.0,  ["overpower"]             = 5.0,  ["whirlwind"]               = 8.0,
+    ["thunder clap"]            = 6.0,  ["shockwave"]             = 20.0, ["shield block"]            = 5.0,
+    ["spearing strike"]         = 20.0, ["colpo perforante"]      = 20.0,
+    ["shank"]                   = 6.0,  ["riposte"]               = 6.0,
+    ["fire blast"]              = 8.0,  ["deep freeze"]           = 30.0, ["arcane barrage"]          = 3.0,
+    ["conflagrate"]             = 10.0, ["chaos bolt"]            = 12.0, ["shadowburn"]              = 15.0,
+    ["haunt"]                   = 8.0,  ["drain hope"]            = 10.0,
+    ["mind blast"]              = 8.0,  ["shadow word: death"]    = 12.0, ["holy fire"]               = 10.0,
+    ["penance"]                 = 12.0, ["chastise"]              = 30.0, ["castigo"]                 = 30.0,
     ["stormstrike"]             = 8.0,  ["lava burst"]            = 8.0,  ["lava lash"]               = 6.0,
-    ["sniper shot"]             = 10.0, ["strider kick"]          = 6.0,  ["aimed shot"]              = 10.0,
-    ["multi-shot"]              = 10.0, ["arcane shot"]           = 6.0,
-    ["mangle (bear)"]           = 6.0,  ["mangle (cat)"]          = 6.0,
+    ["chain lightning"]         = 6.0,  ["flame shock"]           = 6.0,  ["earth shock"]             = 6.0,
+    ["kill shot"]               = 15.0, ["chimera shot"]          = 10.0, ["explosive shot"]          = 6.0,
+    ["black arrow"]             = 30.0, ["sniper shot"]           = 10.0, ["strider kick"]            = 6.0,
+    ["aimed shot"]              = 10.0, ["multi-shot"]            = 10.0, ["arcane shot"]             = 6.0,
+    ["mongoose bite"]           = 5.0,  ["raptor strike"]         = 6.0,
+    ["mangle (bear)"]           = 6.0,  ["mangle (cat)"]          = 6.0,  ["starsurge"]               = 15.0,
+    ["faerie fire"]             = 6.0,  ["howling blast"]         = 8.0,
 }
 
 local function CacheObservedCooldown(spellID, spellName, dur)
@@ -864,7 +888,7 @@ function FP:GetPlayerDispelInfo()
             if singe then
                 RegisterSchoolSpell({ "Magic" }, singe, "Singe Magic")
             else
-                for _, dId in ipairs({ 27277, 27276, 19740, 19738, 19736, 19505 }) do
+                for _, dId in ipairs({ 27277, 27276, 19736, 19734, 19731, 19505 }) do
                     if IsSpellKnownCompat(dId) and IsSpellHelpfulCompat(dId) == true then
                         RegisterSchoolSpell({ "Magic" }, dId, "Devour Magic")
                         break

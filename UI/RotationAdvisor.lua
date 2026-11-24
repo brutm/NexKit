@@ -234,9 +234,92 @@ local function IsSpellInRangeCompat(spellID, unit)
     return nil
 end
 
-local function MatchesAuraTarget(name, spellId, expTime, caster, spellNames, ownOnly, minRemaining)
+local combatSelfBuffUntil = {}
+local combatTargetDebuffUntil = {}
+
+local CAST_SELF_BUFF_DURATIONS = {
+    ["battle shout"]      = { key = "battle shout", dur = 120.0 },
+    ["urlo di battaglia"] = { key = "battle shout", dur = 120.0 },
+    ["commanding shout"]  = { key = "battle shout", dur = 120.0 },
+    ["slice and dice"]    = { key = "slice and dice", dur = 18.0 },
+    ["affettamento"]      = { key = "slice and dice", dur = 18.0 },
+    ["savage roar"]       = { key = "savage roar", dur = 24.0 },
+    ["ruggito selvaggio"] = { key = "savage roar", dur = 24.0 },
+    ["holy shield"]       = { key = "holy shield", dur = 10.0 },
+    ["scudo sacro"]       = { key = "holy shield", dur = 10.0 },
+    ["shield block"]      = { key = "shield block", dur = 6.0 },
+    ["blocco con lo scudo"] = { key = "shield block", dur = 6.0 },
+}
+
+local CAST_TARGET_DEBUFF_DURATIONS = {
+    ["rend"]                     = { key = "rend", dur = 15.0 },
+    ["lacerazione"]              = { key = "rend", dur = 15.0 },
+    ["living bomb"]              = { key = "living bomb", dur = 12.0 },
+    ["bomba vivente"]            = { key = "living bomb", dur = 12.0 },
+    ["rupture"]                  = { key = "rupture", dur = 16.0 },
+    ["perforazione"]             = { key = "rupture", dur = 16.0 },
+    ["immolate"]                 = { key = "immolate", dur = 15.0 },
+    ["immolazione"]              = { key = "immolate", dur = 15.0 },
+    ["corruption"]               = { key = "corruption", dur = 18.0 },
+    ["corruzione"]               = { key = "corruption", dur = 18.0 },
+    ["bane of agony"]            = { key = "agony", dur = 24.0 },
+    ["curse of agony"]           = { key = "agony", dur = 24.0 },
+    ["maledizione dell'agonia"]  = { key = "agony", dur = 24.0 },
+    ["anatema dell'agonia"]      = { key = "agony", dur = 24.0 },
+    ["unstable affliction"]      = { key = "unstable affliction", dur = 15.0 },
+    ["afflizione instabile"]     = { key = "unstable affliction", dur = 15.0 },
+    ["haunt"]                    = { key = "haunt", dur = 12.0 },
+    ["infestazione"]             = { key = "haunt", dur = 12.0 },
+    ["vampiric touch"]           = { key = "vampiric touch", dur = 15.0 },
+    ["tocco vampirico"]          = { key = "vampiric touch", dur = 15.0 },
+    ["devouring plague"]         = { key = "devouring plague", dur = 24.0 },
+    ["piaga divoratrice"]        = { key = "devouring plague", dur = 24.0 },
+    ["shadow word: pain"]        = { key = "shadow word: pain", dur = 18.0 },
+    ["parola d'ombra: dolore"]   = { key = "shadow word: pain", dur = 18.0 },
+    ["hunter's mark"]            = { key = "hunter's mark", dur = 120.0 },
+    ["marchio del cacciatore"]   = { key = "hunter's mark", dur = 120.0 },
+    ["serpent sting"]            = { key = "serpent sting", dur = 15.0 },
+    ["morso del serpente"]       = { key = "serpent sting", dur = 15.0 },
+    ["faerie fire"]              = { key = "faerie fire", dur = 40.0 },
+    ["faerie fire (feral)"]      = { key = "faerie fire", dur = 40.0 },
+    ["fuoco fatato"]             = { key = "faerie fire", dur = 40.0 },
+    ["lacerate"]                 = { key = "lacerate", dur = 15.0 },
+    ["rake"]                     = { key = "rake", dur = 9.0 },
+    ["graffio"]                  = { key = "rake", dur = 9.0 },
+    ["rip"]                      = { key = "rip", dur = 12.0 },
+    ["squarcio"]                 = { key = "rip", dur = 12.0 },
+    ["insect swarm"]             = { key = "insect swarm", dur = 12.0 },
+    ["sciame d'insetti"]         = { key = "insect swarm", dur = 12.0 },
+    ["moonfire"]                 = { key = "moonfire", dur = 12.0 },
+    ["fuoco lunare"]             = { key = "moonfire", dur = 12.0 },
+    ["flame shock"]              = { key = "flame shock", dur = 12.0 },
+    ["folgore del fuoco"]        = { key = "flame shock", dur = 12.0 },
+    ["icy touch"]                = { key = "frost fever", dur = 15.0 },
+    ["frost fever"]              = { key = "frost fever", dur = 15.0 },
+    ["febbre del gelo"]          = { key = "frost fever", dur = 15.0 },
+    ["plague strike"]            = { key = "blood plague", dur = 15.0 },
+    ["blood plague"]             = { key = "blood plague", dur = 15.0 },
+    ["piaga del sangue"]         = { key = "blood plague", dur = 15.0 },
+}
+
+local function ResolveTrackKey(spellNames, map)
+    for _, v in ipairs(spellNames) do
+        if type(v) == "string" then
+            local rec = map[string.lower(v)]
+            if rec then return rec.key end
+        end
+    end
+    return nil
+end
+
+local function MatchesAuraTarget(name, spellId, expTime, caster, spellNames, ownOnly, minRemaining, stacks, minStacks)
     if caster and ownOnly and caster ~= "player" then
         return false
+    end
+    if minStacks and minStacks > 0 then
+        if type(stacks) ~= "number" or stacks < minStacks then
+            return false
+        end
     end
     if minRemaining and minRemaining > 0 and type(expTime) == "number" and expTime > 0 then
         local now = (GetTime and SafeCall(GetTime)) or 0
@@ -258,38 +341,79 @@ local function MatchesAuraTarget(name, spellId, expTime, caster, spellNames, own
     return false
 end
 
-local function UnitHasAuraNamed(unit, spellNames, ownOnly, minRemaining)
+local function UnitHasAuraNamed(unit, spellNames, ownOnly, minRemaining, minStacks)
     if not unit or not SafeBoolean(UnitExists(unit), false) or not spellNames then return false end
     if type(spellNames) == "string" then spellNames = { spellNames } end
 
+    local totalSlots = 0
+    local readableSlots = 0
+    local hadErr = false
+
     for i = 1, 40 do
-        local name, spellId, expTime, caster = nil, nil, nil, nil
-        if UnitBuff then
-            local ok, bName, _, _, _, _, bExp, bCaster, _, _, bSid = pcall(UnitBuff, unit, i)
-            if ok and IsAccessible(bName) then name = bName end
-            if ok and IsAccessible(bExp) then expTime = bExp end
-            if ok and IsAccessible(bCaster) then caster = bCaster end
-            if ok and IsAccessible(bSid) then spellId = bSid end
-        end
-        if not name and C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
+        local name, spellId, expTime, caster, stacks = nil, nil, nil, nil, nil
+        local rowPresent = false
+        if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
             local ok, a = pcall(C_UnitAuras.GetAuraDataByIndex, unit, i, "HELPFUL")
-            if not ok then break end
+            if not ok then
+                hadErr = true
+                break
+            end
+            if not a then break end
+            rowPresent = true
+            totalSlots = totalSlots + 1
             if type(a) == "table" then
                 local okF = pcall(function()
                     if IsAccessible(a.name) then name = a.name end
                     if IsAccessible(a.expirationTime) then expTime = a.expirationTime end
                     if IsAccessible(a.sourceUnit) then caster = a.sourceUnit end
                     if IsAccessible(a.spellId) then spellId = a.spellId end
+                    if IsAccessible(a.applications) then stacks = a.applications end
                 end)
-                if not okF then break end
+                if not okF then
+                    hadErr = true
+                    break
+                end
             end
+        elseif UnitBuff then
+            local ok, bName, _, _, bCount, _, bExp, bCaster, _, _, bSid = pcall(UnitBuff, unit, i)
+            if not ok then
+                hadErr = true
+                break
+            end
+            if bName == nil and bSid == nil then break end
+            rowPresent = true
+            totalSlots = totalSlots + 1
+            if IsAccessible(bName) then name = bName end
+            if IsAccessible(bCount) then stacks = bCount end
+            if IsAccessible(bExp) then expTime = bExp end
+            if IsAccessible(bCaster) then caster = bCaster end
+            if IsAccessible(bSid) then spellId = bSid end
         end
+
         if name or spellId then
-            if MatchesAuraTarget(name, spellId, expTime, caster, spellNames, ownOnly, minRemaining) then
+            readableSlots = readableSlots + 1
+            if MatchesAuraTarget(name, spellId, expTime, caster, spellNames, ownOnly, minRemaining, stacks, minStacks) then
+                if unit == "player" then
+                    local tKey = ResolveTrackKey(spellNames, CAST_SELF_BUFF_DURATIONS)
+                    if tKey and type(expTime) == "number" and expTime > 0 then
+                        combatSelfBuffUntil[tKey] = expTime
+                    end
+                end
                 return true
             end
-        elseif i > 8 then
+        elseif not rowPresent and i > 8 then
             break
+        end
+    end
+
+    if unit == "player" and not minStacks then
+        local globalSecret = (C_Secrets and C_Secrets.ShouldAurasBeSecret and SafeCall(C_Secrets.ShouldAurasBeSecret)) == true
+        if globalSecret or hadErr or (totalSlots > 0 and readableSlots < totalSlots) then
+            local tKey = ResolveTrackKey(spellNames, CAST_SELF_BUFF_DURATIONS)
+            local now = (GetTime and SafeCall(GetTime)) or 0
+            if tKey and type(now) == "number" and combatSelfBuffUntil[tKey] then
+                return combatSelfBuffUntil[tKey] > (now + (minRemaining or 0))
+            end
         end
     end
     return false
@@ -299,34 +423,81 @@ local function UnitHasDebuffNamed(unit, spellNames, ownOnly, minRemaining)
     if not unit or not SafeBoolean(UnitExists(unit), false) or not spellNames then return false end
     if type(spellNames) == "string" then spellNames = { spellNames } end
 
+    local totalSlots = 0
+    local readableSlots = 0
+    local hadErr = false
+    local rawGuid = (unit == "target" and UnitGUID) and SafeCall(UnitGUID, "target") or nil
+    local tgtGuid = IsSafeStr(rawGuid) and rawGuid or "target"
+
     for i = 1, 40 do
         local name, spellId, expTime, caster = nil, nil, nil, nil
-        if UnitDebuff then
-            local ok, dName, _, _, _, _, dExp, dCaster, _, _, dSid = pcall(UnitDebuff, unit, i)
-            if ok and IsAccessible(dName) then name = dName end
-            if ok and IsAccessible(dExp) then expTime = dExp end
-            if ok and IsAccessible(dCaster) then caster = dCaster end
-            if ok and IsAccessible(dSid) then spellId = dSid end
-        end
-        if not name and C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
+        local rowPresent = false
+        if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
             local ok, a = pcall(C_UnitAuras.GetAuraDataByIndex, unit, i, "HARMFUL")
-            if not ok then break end
+            if not ok then
+                hadErr = true
+                break
+            end
+            if not a then break end
+            rowPresent = true
+            totalSlots = totalSlots + 1
             if type(a) == "table" then
                 local okF = pcall(function()
                     if IsAccessible(a.name) then name = a.name end
                     if IsAccessible(a.expirationTime) then expTime = a.expirationTime end
                     if IsAccessible(a.sourceUnit) then caster = a.sourceUnit end
+                    if not caster and IsAccessible(a.isFromPlayerOrPlayerPet) and a.isFromPlayerOrPlayerPet == true then
+                        caster = "player"
+                    end
                     if IsAccessible(a.spellId) then spellId = a.spellId end
                 end)
-                if not okF then break end
+                if not okF then
+                    hadErr = true
+                    break
+                end
             end
+        elseif UnitDebuff then
+            local ok, dName, _, _, _, _, dExp, dCaster, _, _, dSid = pcall(UnitDebuff, unit, i)
+            if not ok then
+                hadErr = true
+                break
+            end
+            if dName == nil and dSid == nil then break end
+            rowPresent = true
+            totalSlots = totalSlots + 1
+            if IsAccessible(dName) then name = dName end
+            if IsAccessible(dExp) then expTime = dExp end
+            if IsAccessible(dCaster) then caster = dCaster end
+            if IsAccessible(dSid) then spellId = dSid end
         end
+
         if name or spellId then
+            readableSlots = readableSlots + 1
             if MatchesAuraTarget(name, spellId, expTime, caster, spellNames, ownOnly, minRemaining) then
+                if unit == "target" then
+                    local tKey = ResolveTrackKey(spellNames, CAST_TARGET_DEBUFF_DURATIONS)
+                    if tKey and type(expTime) == "number" and expTime > 0 then
+                        combatTargetDebuffUntil[tgtGuid .. ":" .. tKey] = expTime
+                    end
+                end
                 return true
             end
-        elseif i > 8 then
+        elseif not rowPresent and i > 8 then
             break
+        end
+    end
+
+    if unit == "target" then
+        local globalSecret = (C_Secrets and C_Secrets.ShouldAurasBeSecret and SafeCall(C_Secrets.ShouldAurasBeSecret)) == true
+        if globalSecret or hadErr or (totalSlots > 0 and readableSlots < totalSlots) then
+            local tKey = ResolveTrackKey(spellNames, CAST_TARGET_DEBUFF_DURATIONS)
+            local now = (GetTime and SafeCall(GetTime)) or 0
+            if tKey and type(now) == "number" then
+                local exp = combatTargetDebuffUntil[tgtGuid .. ":" .. tKey]
+                if exp and exp > (now + (minRemaining or 0)) then
+                    return true
+                end
+            end
         end
     end
     return false
@@ -996,7 +1167,7 @@ local function BuildRotation(ctx)
                 AddCandidate(revenge, "PROC", "Revenge: Contrattacco ad alta minaccia", { requireUsable = true })
             end
             if canAttack and spearingStrike then
-                AddCandidate(spearingStrike, "STRIKE", "Spearing Strike: Danno/minaccia")
+                AddCandidate(spearingStrike, "STRIKE", "Spearing Strike: Danno/minaccia", { requireUsable = true })
             end
             if canAttack and shockwave then
                 AddCandidate(shockwave, "STUN", "Shockwave: Cono stordimento/minaccia", { noRangeCheck = true })
@@ -1011,8 +1182,8 @@ local function BuildRotation(ctx)
             end
         elseif canAttack and isFury then
             if bloodthirst then AddCandidate(bloodthirst, "BURST", "Bloodthirst su ricarica") end
-            if whirlwind then AddCandidate(whirlwind, "AOE", "Whirlwind su ricarica", { noRangeCheck = true }) end
-            if spearingStrike then AddCandidate(spearingStrike, "STRIKE", "Spearing Strike") end
+            if whirlwind then AddCandidate(whirlwind, "AOE", "Whirlwind su ricarica", { noRangeCheck = true, requireUsable = true }) end
+            if spearingStrike then AddCandidate(spearingStrike, "STRIKE", "Spearing Strike", { requireUsable = true }) end
             if slam and UnitHasAuraNamed("player", { "Bloodsurge", "Slam!", "Ondata di Sangue" }) then
                 AddCandidate(slam, "PROC", "Slam istantaneo (Bloodsurge)!")
             end
@@ -1022,11 +1193,11 @@ local function BuildRotation(ctx)
                 AddCandidate(overpower, "PROC", "Overpower: Colpo imparabile su schivata", { requireUsable = true })
             end
             if mortalStrike then AddCandidate(mortalStrike, "BURST", "Mortal Strike su ricarica") end
-            if spearingStrike then AddCandidate(spearingStrike, "STRIKE", "Spearing Strike") end
+            if spearingStrike then AddCandidate(spearingStrike, "STRIKE", "Spearing Strike", { requireUsable = true }) end
             if rend and not UnitHasDebuffNamed("target", { "Rend", "Lacerazione" }, true, 1.5) then
                 AddCandidate(rend, "DOT", "Rend: Applica sanguinamento")
             end
-            if whirlwind then AddCandidate(whirlwind, "AOE", "Whirlwind", { noRangeCheck = true }) end
+            if whirlwind then AddCandidate(whirlwind, "AOE", "Whirlwind", { noRangeCheck = true, requireUsable = true }) end
             if slam then AddCandidate(slam, "FILLER", "Slam") end
         end
 
@@ -1102,6 +1273,7 @@ local function BuildRotation(ctx)
     ---------------------------------------------------------------------------
     elseif cls == "ROGUE" then
         local ambush       = FindBestSpellInRanks({ 8676, 8724, 8725, 11267, 11268, 11269, 27441, 48691 }, { "Ambush", "Agguato" })
+        local garrote      = FindBestSpellInRanks({ 703, 8631, 8632, 8633, 11289, 11290, 26839, 26884, 48676 }, { "Garrote", "Garrota" })
         local cheapShot    = FindBestSpellInRanks({ 1833 }, { "Cheap Shot", "Colpo Basso" })
         local sliceAndDice = FindBestSpellInRanks({ 5171, 6774 }, { "Slice and Dice", "Affettamento" })
         local mutilate     = FindBestSpellInRanks({ 1329, 34411, 34412, 34413, 48663, 48666 }, { "Mutilate", "Mutilazione" })
@@ -1109,6 +1281,7 @@ local function BuildRotation(ctx)
         local rupture      = FindBestSpellInRanks({ 1943, 8639, 8640, 11273, 11274, 11275, 26867, 48672 }, { "Rupture", "Perforazione" })
         local eviscerate   = FindBestSpellInRanks({ 2098, 6747, 8623, 8624, 11299, 11300, 11301, 26865, 48668 }, { "Eviscerate", "Sventramento" })
         local hemorrhage   = FindBestSpellInRanks({ 16511, 17347, 17348, 26864, 48660 }, { "Hemorrhage", "Emorragia" })
+        local backstab     = FindBestSpellInRanks({ 53, 2589, 2590, 2591, 8721, 11279, 11280, 11281, 25300, 48657 }, { "Backstab", "Pugnalata alle Spalle" })
         local shank        = FindBestSpellInRanks({}, { "Shank" })
         local sinister     = FindBestSpellInRanks({ 1752, 1757, 1758, 1759, 1760, 8621, 11293, 11294, 26861, 48638 }, { "Sinister Strike", "Assalto Funesto" })
         local riposte      = FindBestSpellInRanks({ 14251 }, { "Riposte", "Risposta" })
@@ -1116,6 +1289,7 @@ local function BuildRotation(ctx)
         if canAttack then
             if ctx.isStealthed then
                 if ambush then AddCandidate(ambush, "STEALTH", "Ambush da Furtività!", { requireUsable = true }) end
+                if garrote then AddCandidate(garrote, "STEALTH", "Garrote: Sanguinamento da Furtività", { requireUsable = true }) end
                 if cheapShot then AddCandidate(cheapShot, "STUN", "Cheap Shot: Apri con stordimento") end
             end
             local hasSnD = UnitHasAuraNamed("player", { "Slice and Dice", "Affettamento" }, false, 1.5)
@@ -1124,6 +1298,9 @@ local function BuildRotation(ctx)
             end
             if ctx.comboPoints >= 1 and not hasSnD and sliceAndDice then
                 AddCandidate(sliceAndDice, "BUFF", "Slice and Dice: +Velocità d'attacco", { noRangeCheck = true })
+            end
+            if shank and ctx.power <= 85 then
+                AddCandidate(shank, "ENERGY", "Shank: Rigenera Energia + Proc", { requireUsable = true })
             end
             if (ctx.comboPoints >= 4 or (ctx.targetHp <= 20 and ctx.comboPoints >= 2)) then
                 if ctx.tabIdx == 1 and envenom then
@@ -1136,14 +1313,12 @@ local function BuildRotation(ctx)
             end
             if ctx.tabIdx == 1 and mutilate then
                 AddCandidate(mutilate, "BUILDER", "Mutilate: Genera 2 punti combo")
-            elseif shank and (ctx.tabIdx == 3 or not sinister) then
-                AddCandidate(shank, "BUILDER", "Shank: Attacco rapido")
             elseif ctx.tabIdx == 3 and hemorrhage then
                 AddCandidate(hemorrhage, "BUILDER", "Hemorrhage: Debuff & combo")
             elseif sinister then
                 AddCandidate(sinister, "BUILDER", "Sinister Strike: Genera punti combo")
-            elseif shank then
-                AddCandidate(shank, "BUILDER", "Shank: Genera punti combo")
+            elseif backstab then
+                AddCandidate(backstab, "BUILDER", "Backstab", { requireUsable = true })
             end
         end
 
@@ -1165,10 +1340,14 @@ local function BuildRotation(ctx)
         local drainSoul  = FindBestSpellInRanks({ 1120, 8288, 8289, 11675, 27217, 47855 }, { "Drain Soul", "Risucchio d'Anima" })
 
         if canAttack then
-            if ctx.targetHp <= 20 and drainSoul then
+            if drainSoul and (ctx.targetHp <= 15 or (ctx.tabIdx ~= 3 and ctx.targetHp <= 20)) then
                 AddCandidate(drainSoul, "SHARD", "Drain Soul: Frammento / Esecuzione < 20%")
             end
             if ctx.tabIdx == 3 then -- Destruction
+                if UnitHasAuraNamed("player", { "Backlash", "Ritorno di Fiamma" }) then
+                    if incinerate then AddCandidate(incinerate, "PROC", "Incinerate istantaneo (Backlash)!")
+                    elseif shadowbolt then AddCandidate(shadowbolt, "PROC", "Shadow Bolt istantaneo (Backlash)!") end
+                end
                 if immolate and not UnitHasDebuffNamed("target", { "Immolate", "Immolazione" }, true, 1.5) then
                     AddCandidate(immolate, "DOT", "Immolate: Prepara Conflagrate")
                 end
@@ -1182,6 +1361,9 @@ local function BuildRotation(ctx)
                 if incinerate then AddCandidate(incinerate, "NUKE", "Incinerate")
                 elseif shadowbolt then AddCandidate(shadowbolt, "NUKE", "Shadow Bolt") end
             else -- Affliction / Demonology / Leveling
+                if shadowbolt and UnitHasAuraNamed("player", { "Shadow Trance", "Trance d'Ombra" }) then
+                    AddCandidate(shadowbolt, "PROC", "Shadow Bolt istantaneo (Nightfall)!")
+                end
                 if haunt and not UnitHasDebuffNamed("target", { "Haunt", "Infestazione" }, true, 1.5) then
                     AddCandidate(haunt, "DOT", "Haunt: Potenzia i DoT")
                 end
@@ -1197,7 +1379,7 @@ local function BuildRotation(ctx)
                 if immolate and not ua and not UnitHasDebuffNamed("target", { "Immolate", "Immolazione" }, true, 1.5) then
                     AddCandidate(immolate, "DOT", "Immolate")
                 end
-                if drainHope then AddCandidate(drainHope, "DRAIN", "Drain Hope") end
+                if drainHope then AddCandidate(drainHope, "DRAIN", "Drain Hope", { requireUsable = true }) end
                 if shadowbolt then AddCandidate(shadowbolt, "NUKE", "Shadow Bolt") end
             end
         end
@@ -1230,6 +1412,7 @@ local function BuildRotation(ctx)
                 if swp and not UnitHasDebuffNamed("target", { "Shadow Word: Pain", "Parola d'Ombra: Dolore" }, true, 1.5) then
                     AddCandidate(swp, "DOT", "Shadow Word: Pain")
                 end
+                if chastise then AddCandidate(chastise, "BURST", "Chastise") end
                 if mindBlast then AddCandidate(mindBlast, "BURST", "Mind Blast") end
                 if mindFlay then AddCandidate(mindFlay, "CHANNEL", "Mind Flay") elseif smite then AddCandidate(smite, "NUKE", "Smite") end
             else
@@ -1248,18 +1431,21 @@ local function BuildRotation(ctx)
     -- 7. HUNTER ROTATION (BM, Marksmanship, Survival)
     ---------------------------------------------------------------------------
     elseif cls == "HUNTER" then
-        local killShot   = FindBestSpellInRanks({ 53351, 61005, 61006 }, { "Kill Shot", "Tiro Mortale" })
-        local mark       = FindBestSpellInRanks({ 1130, 14323, 14324, 14325, 53338 }, { "Hunter's Mark", "Marchio del Cacciatore" })
-        local sting      = FindBestSpellInRanks({ 1978, 13549, 13550, 13551, 13552, 13553, 13554, 13555, 25295, 27016, 49001 }, { "Serpent Sting", "Morso del Serpente" })
-        local chimera    = FindBestSpellInRanks({ 53209 }, { "Chimera Shot", "Tiro della Chimera" })
-        local explosive  = FindBestSpellInRanks({ 53301, 60051, 60052, 60053 }, { "Explosive Shot", "Tiro Esplosivo" })
-        local sniperShot = FindBestSpellInRanks({}, { "Sniper Shot", "Tiro da Cecchino" })
-        local blackArrow = FindBestSpellInRanks({ 3674, 63668, 63669, 63670 }, { "Black Arrow", "Freccia Nera" })
-        local aimed      = FindBestSpellInRanks({ 19434, 20900, 20901, 20902, 20903, 20904, 27065, 49050 }, { "Aimed Shot", "Tiro Mirato" })
-        local multi      = FindBestSpellInRanks({ 2643, 14288, 14289, 14290, 25294, 27021, 49048 }, { "Multi-Shot", "Tiro Multiplo" })
-        local arcane     = FindBestSpellInRanks({ 3044, 14281, 14282, 14283, 14284, 14285, 14286, 14287, 27019, 49045 }, { "Arcane Shot", "Tiro Arcano" })
-        local steady     = FindBestSpellInRanks({ 34120, 49051, 49052 }, { "Steady Shot", "Tiro Stabilizzato" })
+        local killShot    = FindBestSpellInRanks({ 53351, 61005, 61006 }, { "Kill Shot", "Tiro Mortale" })
+        local killCmd     = FindBestSpellInRanks({ 34026 }, { "Kill Command", "Ordine di Morte" })
+        local mark        = FindBestSpellInRanks({ 1130, 14323, 14324, 14325, 53338 }, { "Hunter's Mark", "Marchio del Cacciatore" })
+        local sting       = FindBestSpellInRanks({ 1978, 13549, 13550, 13551, 13552, 13553, 13554, 13555, 25295, 27016, 49001 }, { "Serpent Sting", "Morso del Serpente" })
+        local chimera     = FindBestSpellInRanks({ 53209 }, { "Chimera Shot", "Tiro della Chimera" })
+        local explosive   = FindBestSpellInRanks({ 53301, 60051, 60052, 60053 }, { "Explosive Shot", "Tiro Esplosivo" })
+        local sniperShot  = FindBestSpellInRanks({}, { "Sniper Shot", "Tiro da Cecchino" })
+        local blackArrow  = FindBestSpellInRanks({ 3674, 63668, 63669, 63670 }, { "Black Arrow", "Freccia Nera" })
+        local aimed       = FindBestSpellInRanks({ 19434, 20900, 20901, 20902, 20903, 20904, 27065, 49050 }, { "Aimed Shot", "Tiro Mirato" })
+        local multi       = FindBestSpellInRanks({ 2643, 14288, 14289, 14290, 25294, 27021, 49048 }, { "Multi-Shot", "Tiro Multiplo" })
+        local arcane      = FindBestSpellInRanks({ 3044, 14281, 14282, 14283, 14284, 14285, 14286, 14287, 27019, 49045 }, { "Arcane Shot", "Tiro Arcano" })
+        local steady      = FindBestSpellInRanks({ 34120, 49051, 49052 }, { "Steady Shot", "Tiro Stabilizzato" })
         local striderKick = FindBestSpellInRanks({}, { "Strider Kick" })
+        local mongooseBite = FindBestSpellInRanks({ 1495, 14269, 14270, 14271, 36916, 53339 }, { "Mongoose Bite", "Morso della Mangusta" })
+        local raptorStrike = FindBestSpellInRanks({ 2973, 14260, 14261, 14262, 14263, 14264, 14265, 14266, 27014, 48996 }, { "Raptor Strike", "Assalto del Rapace" })
 
         if canAttack then
             if killShot and ctx.targetHp <= 20 then AddCandidate(killShot, "ESECUZIONE", "Kill Shot < 20%!") end
@@ -1268,6 +1454,9 @@ local function BuildRotation(ctx)
             end
             if sting and not UnitHasDebuffNamed("target", { "Serpent Sting", "Morso del Serpente" }, true, 1.5) then
                 AddCandidate(sting, "DOT", "Serpent Sting: Veleno continuativo")
+            end
+            if killCmd and SafeBoolean(UnitExists and SafeCall(UnitExists, "pet"), false) then
+                AddCandidate(killCmd, "PET", "Kill Command", { noRangeCheck = true, requireUsable = true })
             end
             if sniperShot then AddCandidate(sniperShot, "BURST", "Sniper Shot") end
             if explosive then AddCandidate(explosive, "BURST", "Explosive Shot") end
@@ -1278,6 +1467,8 @@ local function BuildRotation(ctx)
             if arcane then AddCandidate(arcane, "INSTANT", "Arcane Shot") end
             if steady then AddCandidate(steady, "FILLER", "Steady Shot") end
             if striderKick then AddCandidate(striderKick, "MELEE", "Strider Kick") end
+            if mongooseBite then AddCandidate(mongooseBite, "MELEE", "Mongoose Bite", { requireUsable = true }) end
+            if raptorStrike then AddCandidate(raptorStrike, "MELEE", "Raptor Strike") end
         end
 
     ---------------------------------------------------------------------------
@@ -1319,6 +1510,9 @@ local function BuildRotation(ctx)
                 if savageRoar and ctx.comboPoints >= 1 and not UnitHasAuraNamed("player", { "Savage Roar", "Ruggito Selvaggio" }, false, 1.5) then
                     AddCandidate(savageRoar, "BUFF", "Savage Roar: +30% danni fisici", { noRangeCheck = true })
                 end
+                if shred and UnitHasAuraNamed("player", { "Clearcasting", "Lancio Limpido" }) then
+                    AddCandidate(shred, "PROC", "Shred gratuito (Omen of Clarity)!", { requireUsable = true })
+                end
                 if faerieFire and not UnitHasDebuffNamed("target", { "Faerie Fire", "Fuoco Fatato" }) then
                     AddCandidate(faerieFire, "DEBUFF", "Faerie Fire: Riduci armatura")
                 end
@@ -1334,7 +1528,8 @@ local function BuildRotation(ctx)
                 end
                 if mangleCat then AddCandidate(mangleCat, "BUILDER", "Mangle (Cat)")
                 elseif shred and ctx.isStealthed then AddCandidate(shred, "STEALTH", "Shred", { requireUsable = true })
-                elseif claw then AddCandidate(claw, "BUILDER", "Claw: Accumula combo") end
+                elseif claw then AddCandidate(claw, "BUILDER", "Claw: Accumula combo")
+                elseif shred then AddCandidate(shred, "BUILDER", "Shred", { requireUsable = true }) end
             else -- Caster / Balance / Resto solo
                 if starsurge then AddCandidate(starsurge, "BURST", "Starsurge") end
                 if insectSwarm and not UnitHasDebuffNamed("target", { "Insect Swarm", "Sciame d'Insetti" }, true, 1.5) then
@@ -1368,9 +1563,9 @@ local function BuildRotation(ctx)
 
         if canAttack then
             if ctx.tabIdx == 2 and (stormstrike or lavaLash) then -- Enhancement
-                local hasMaelstrom = UnitHasAuraNamed("player", { "Maelstrom Weapon", "Arma del Maelstrom" }, false, nil)
+                local hasMaelstrom = UnitHasAuraNamed("player", { "Maelstrom Weapon", "Arma del Maelstrom" }, false, nil, 5)
                 if hasMaelstrom and lightning then
-                    AddCandidate(lightning, "PROC", "Lightning Bolt istantaneo (Maelstrom Weapon)!")
+                    AddCandidate(lightning, "PROC", "Lightning Bolt istantaneo (5x Maelstrom)!")
                 end
                 if stormstrike then AddCandidate(stormstrike, "BURST", "Stormstrike: Danno doppio con armi") end
                 if flameShock and not UnitHasDebuffNamed("target", { "Flame Shock", "Folgore del Fuoco" }, true, 1.5) then
@@ -2007,6 +2202,21 @@ evFrame:SetScript("OnEvent", function(self, event, arg1, arg2, arg3, arg4, arg5)
         if spellName and spellName ~= "" then lastCastName = spellName end
         if (spellID or (spellName and spellName ~= "")) and FP.RecordSpellCastCooldown then
             FP.RecordSpellCastCooldown(spellID, spellName)
+        end
+
+        -- Populate combat-secret aura/DoT trackers across ALL classes on cast completion
+        local lowCastName = (type(spellName) == "string" and spellName ~= "") and string.lower(spellName) or nil
+        if lowCastName then
+            local selfInfo = CAST_SELF_BUFF_DURATIONS[lowCastName]
+            if selfInfo then
+                combatSelfBuffUntil[selfInfo.key] = now + selfInfo.dur
+            end
+            local debuffInfo = CAST_TARGET_DEBUFF_DURATIONS[lowCastName]
+            if debuffInfo and UnitExists and SafeBoolean(SafeCall(UnitExists, "target"), false) then
+                local rawG = UnitGUID and SafeCall(UnitGUID, "target")
+                local tgtG = IsSafeStr(rawG) and rawG or "target"
+                combatTargetDebuffUntil[tgtG .. ":" .. debuffInfo.key] = now + debuffInfo.dur
+            end
         end
 
         if IsJudgementSpell(spellName, spellID) then

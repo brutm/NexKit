@@ -1420,7 +1420,10 @@ local function EvaluateRecommendations()
             end
         end
 
-        if not ctx.isMounted and not ctx.isFlying then
+        local hasLoneWolf = (auras.activeNames and (auras.activeNames["lone wolf"] or auras.activeNames["lupo solitario"]))
+            or (auras.activeIDs and auras.activeIDs[155228])
+            or IsSpellKnownCompat(155228)
+        if not ctx.isMounted and not ctx.isFlying and not hasLoneWolf then
             local callID, callName = FindKnownSpell(CLASS_SPELLS.CALL_PET)
             if callID then
                 local petExists = UnitExists and SafeCall(UnitExists, "pet")
@@ -1463,7 +1466,15 @@ local function EvaluateRecommendations()
             minDur = 120,
         })
 
-        if not ctx.isMounted and not ctx.isFlying then
+        local hasSacrifice = auras.activeNames and (
+            auras.activeNames["demonic sacrifice"]
+            or auras.activeNames["touch of shadow"]
+            or auras.activeNames["burning wish"]
+            or auras.activeNames["fel stamina"]
+            or auras.activeNames["fel energy"]
+            or auras.activeNames["sacrificio demoniaco"]
+        )
+        if not ctx.isMounted and not ctx.isFlying and not hasSacrifice then
             local petExists = UnitExists and SafeCall(UnitExists, "pet")
             local petDead = petExists and UnitIsDead and SafeCall(UnitIsDead, "pet")
             if not petExists or petDead then
