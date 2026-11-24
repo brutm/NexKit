@@ -1,0 +1,668 @@
+-- NexusKit - UI/DispelAlert.lua
+-- Real-Time Dispellable Debuff Alert HUD (Self, Party & Raid)
+-- Alerts when you or an ally has a Magic, Poison, Disease, or Curse debuff
+-- that your character can currently dispel, showing the target, debuff, spell & keybind.
+local addonName, FP = ...
+
+local ACCENT = { r = 0.25, g = 0.75, b = 1.00 }
+if FP.SyncAccentTable then FP:SyncAccentTable(ACCENT) end
+
+local IsSecret          = FP.IsSecret
+local IsAccessible      = FP.IsAccessible
+local IsSafeNum         = FP.IsSafeNum
+local IsSafeStr         = FP.IsSafeStr
+local SafeCall          = FP.SafeCall
+local SafeBoolean       = FP.SafeBoolean
+local SafeNumber        = FP.SafeNumber
+local SafeRegisterEvent = FP.SafeRegisterEvent
+local DISPEL_COLORS     = FP.DISPEL_COLORS or {
+    Magic   = { r = 0.20, g = 0.65, b = 1.00 },
+    Curse   = { r = 0.70, g = 0.25, b = 1.00 },
+    Disease = { r = 0.85, g = 0.48, b = 0.12 },
+    Poison  = { r = 0.10, g = 0.85, b = 0.20 },
+    none    = { r = 0.85, g = 0.15, b = 0.15 },
+}
+
+local function GetSettings()
+    local db = NexKitDB or NexusKitDB
+    return (db and db.settings) or {}
+end
+
+local function IsDispelAlertEnabled()
+    return GetSettings().enableDispelAlert ~= false
+end
+
+local function IsDispelSoundEnabled()
+    return GetSettings().dispelAlertSound ~= false
+end
+
+local function IsDispelAlertLocked()
+    return GetSettings().dispelAlertLocked ~= false
+end
+
+local function GetDispelAlertScale()
+    local s = tonumber(GetSettings().dispelAlertScale) or 1.0
+    if s < 0.70 then s = 0.70 elseif s > 1.50 then s = 1.50 end
+    return s
+end
+
+local function GetClassColorHex(unit)
+    local _, cls = UnitClass and SafeCall(UnitClass, unit)
+    if IsSafeStr(cls) and RAID_CLASS_COLORS and RAID_CLASS_COLORS[cls] then
+        local c = RAID_CLASS_COLORS[cls]
+        return string.format("%02x%02x%02x", math.floor(c.r * 255), math.floor(c.g * 255), math.floor(c.b * 255))
+    end
+    return "ffffff"
+end
+
+local function IsUnitSpellInRange(spellID, unit)
+    if not unit or unit == "player" or not spellID then return true end
+    if C_Spell and C_Spell.IsSpellInRange then
+        local r = SafeCall(C_Spell.IsSpellInRange, spellID, unit)
+        if IsAccessible(r) and r ~= nil then
+            return (r == true or r == 1)
+        end
+    elseif IsSpellInRange then
+        local r = SafeCall(IsSpellInRange, spellID, unit)
+        if IsAccessible(r) and r ~= nil then
+            return (r == true or r == 1)
+        end
+    end
+    return true
+end
+
+local function GetUnitHealthPct(unit)
+    if not UnitHealth or not UnitHealthMax then return 1.0 end
+    local hp = SafeCall(UnitHealth, unit)
+    local maxHp = SafeCall(UnitHealthMax, unit)
+    if IsSafeNum(hp) and IsSafeNum(maxHp) and maxHp > 0 then
+        return math.max(0, math.min(1, hp / maxHp))
+    end
+    return 1.0
+end
+
+local function GetLocalizedSchoolLabel(school)
+    local L = FP.L or {}
+    if school == "Magic" then
+        return L["DISPEL_TYPE_MAGIC"] or "DISPEL MAGIC"
+    elseif school == "Curse" then
+        return L["DISPEL_TYPE_CURSE"] or "REMOVE CURSE"
+    elseif school == "Disease" then
+        return L["DISPEL_TYPE_DISEASE"] or "CURE DISEASE"
+    elseif school == "Poison" then
+        return L["DISPEL_TYPE_POISON"] or "CURE POISON"
+    end
+    return L["DISPEL_TYPE_GENERIC"] or "DISPEL DEBUFF"
+end
+
+-------------------------------------------------------------------------------
+-- Scanner: Self, Party1..4, or Raid1..40
+-------------------------------------------------------------------------------
+local function CollectTargetUnits()
+    local units = { "player" }
+    local inRaid = IsInRaid and SafeBoolean(SafeCall(IsInRaid), false)
+    if inRaid then
+        local n = (GetNumGroupMembers and SafeNumber(SafeCall(GetNumGroupMembers), 0)) or 0
+        n = math.min(n, 40)
+        for i = 1, n do
+            local u = "raid" .. i
+            if UnitExists and SafeBoolean(SafeCall(UnitExists, u), false) then
+                if not (UnitIsUnit and SafeBoolean(SafeCall(UnitIsUnit, u, "player"), false)) then
+                    units[#units + 1] = u
+                end
+            end
+        end
+    else
+        local inParty = (IsInGroup and SafeBoolean(SafeCall(IsInGroup), false))
+            or (GetNumPartyMembers and SafeNumber(SafeCall(GetNumPartyMembers), 0) > 0)
+        if inParty then
+            for i = 1, 4 do
+                local u = "party" .. i
+                if UnitExists and SafeBoolean(SafeCall(UnitExists, u), false) then
+                    units[#units + 1] = u
+                end
+            end
+        end
+    end
+    return units
+end
+
+local function ScanUnitDispellables(unit, dispelInfo, outList)
+    if not UnitExists or SafeBoolean(SafeCall(UnitExists, unit), false) ~= true then return end
+    if UnitIsConnected and SafeBoolean(SafeCall(UnitIsConnected, unit), true) ~= true then return end
+    if UnitIsDeadOrGhost and SafeBoolean(SafeCall(UnitIsDeadOrGhost, unit), false) == true then return end
+
+    local isPlayer = (unit == "player") or (UnitIsUnit and SafeBoolean(SafeCall(UnitIsUnit, unit, "player"), false) == true)
+    local unitRole = UnitGroupRolesAssigned and SafeCall(UnitGroupRolesAssigned, unit)
+    local hpPct = GetUnitHealthPct(unit)
+    local rawName = UnitName and SafeCall(UnitName, unit)
+    local unitName = IsSafeStr(rawName) and rawName or unit
+    local unitGUID = (UnitGUID and SafeCall(UnitGUID, unit))
+    unitGUID = IsSafeStr(unitGUID) and unitGUID or unit
+    local colorHex = GetClassColorHex(unit)
+    local now = (GetTime and SafeCall(GetTime)) or 0
+
+    for i = 1, 24 do
+        local name, icon, count, dType, duration, expirationTime, auraInstanceID
+        local found = false
+
+        if UnitDebuff then
+            local okD, dName, dIcon, dCount, dDispel, dDur, dExp = pcall(UnitDebuff, unit, i)
+            if okD and dName and (not IsSecret or not IsSecret(dName)) then
+                name = dName
+                icon = dIcon
+                count = dCount
+                dType = dDispel
+                duration = dDur
+                expirationTime = dExp
+                found = true
+            elseif okD and not dName then
+                break
+            end
+        end
+
+        if not found and C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
+            local okC, aura = pcall(C_UnitAuras.GetAuraDataByIndex, unit, i, "HARMFUL")
+            if okC and type(aura) == "table" then
+                local okRead = pcall(function()
+                    local aName = aura.name
+                    if aName and (not IsSecret or not IsSecret(aName)) then
+                        name = aName
+                        icon = aura.icon
+                        count = aura.applications
+                        dType = aura.dispelName
+                        duration = aura.duration
+                        expirationTime = aura.expirationTime
+                        auraInstanceID = aura.auraInstanceID
+                        found = true
+                    end
+                end)
+                if not okRead then break end
+            elseif okC and not aura then
+                break
+            elseif not okC then
+                break
+            end
+        end
+
+        if not found then break end
+
+        local matchedSchool = nil
+        if IsSafeStr(dType) and dispelInfo.schools[dType] then
+            matchedSchool = dType
+        elseif auraInstanceID and C_UnitAuras and C_UnitAuras.IsAuraFilteredOutByInstanceID then
+            local filteredOut = SafeCall(C_UnitAuras.IsAuraFilteredOutByInstanceID, unit, auraInstanceID, "HARMFUL|RAID_PLAYER_DISPELLABLE")
+            if filteredOut == false then
+                matchedSchool = next(dispelInfo.schools) or "Magic"
+            end
+        end
+
+        if matchedSchool then
+            local spellInfo = dispelInfo.spellsBySchool[matchedSchool]
+            if not spellInfo then
+                local _, firstSpell = next(dispelInfo.spellsBySchool)
+                spellInfo = firstSpell
+            end
+
+            if spellInfo then
+                local inRange = isPlayer or IsUnitSpellInRange(spellInfo.spellID, unit)
+                local cdRem, cdDur, isReady = 0, 0, true
+                if FP.GetSpellCooldown then
+                    cdRem, cdDur, isReady = FP.GetSpellCooldown(spellInfo.spellID)
+                end
+
+                local expNum = SafeNumber(expirationTime, 0)
+                local remSec = (expNum > 0 and IsSafeNum(now)) and math.max(0, expNum - now) or 0
+                local stacks = SafeNumber(count, 0)
+
+                local score = 0
+                if inRange then score = score + 10000 end
+                if isReady then score = score + 5000 end
+                if isPlayer then
+                    score = score + 2000
+                elseif unitRole == "TANK" then
+                    score = score + 1200
+                elseif unitRole == "HEALER" then
+                    score = score + 1000
+                end
+                score = score + math.floor((1 - hpPct) * 500) + math.min(stacks, 10) * 15
+
+                outList[#outList + 1] = {
+                    unit          = unit,
+                    unitGUID      = unitGUID,
+                    unitName      = unitName,
+                    isPlayer      = isPlayer,
+                    colorHex      = colorHex,
+                    debuffName    = IsSafeStr(name) and name or "Debuff",
+                    debuffIcon    = icon or "Interface\\Icons\\INV_Misc_QuestionMark",
+                    stacks        = stacks,
+                    remaining     = remSec,
+                    duration      = SafeNumber(duration, 0),
+                    school        = matchedSchool,
+                    spellID       = spellInfo.spellID,
+                    spellName     = spellInfo.name,
+                    spellIcon     = spellInfo.icon,
+                    inRange       = inRange,
+                    cdRemaining   = cdRem or 0,
+                    cdDuration    = cdDur or 0,
+                    isSpellReady  = isReady,
+                    score         = score,
+                }
+            end
+        end
+    end
+end
+
+local function ScanGroupDispellables()
+    local dispelInfo = FP.GetPlayerDispelInfo and FP:GetPlayerDispelInfo()
+    if not dispelInfo or not dispelInfo.canDispelAny then
+        return {}
+    end
+
+    local results = {}
+    local units = CollectTargetUnits()
+    for _, u in ipairs(units) do
+        ScanUnitDispellables(u, dispelInfo, results)
+    end
+
+    if #results > 1 then
+        table.sort(results, function(a, b)
+            if a.score ~= b.score then return a.score > b.score end
+            if a.remaining ~= b.remaining then
+                if a.remaining == 0 then return false end
+                if b.remaining == 0 then return true end
+                return a.remaining < b.remaining
+            end
+            return a.unit < b.unit
+        end)
+    end
+    return results
+end
+
+-------------------------------------------------------------------------------
+-- Alert HUD Frame (Non-Secure, 100% Combat-Safe Visuals & Movement)
+-------------------------------------------------------------------------------
+local alertFrame = CreateFrame("Frame", "NKDispelAlertFrame", UIParent, "BackdropTemplate")
+alertFrame:SetSize(304, 58)
+alertFrame:SetPoint("CENTER", UIParent, "CENTER", 0, 155)
+alertFrame:SetClampedToScreen(true)
+alertFrame:SetMovable(true)
+alertFrame:EnableMouse(false)
+alertFrame:SetFrameStrata("HIGH")
+alertFrame:SetFrameLevel(60)
+alertFrame:SetBackdrop({
+    bgFile   = "Interface\\Buttons\\WHITE8X8",
+    edgeFile = "Interface\\Buttons\\WHITE8X8",
+    tile = false, tileSize = 16, edgeSize = 2,
+    insets = { left = 2, right = 2, top = 2, bottom = 2 }
+})
+alertFrame:SetBackdropColor(0.05, 0.06, 0.09, 0.94)
+alertFrame:SetBackdropBorderColor(0.20, 0.65, 1.00, 1.00)
+alertFrame:Hide()
+
+local dragLabel = alertFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+dragLabel:SetPoint("BOTTOM", alertFrame, "TOP", 0, 3)
+dragLabel:SetText("|cff33aaff[Dispel Alert]|r (Trascina)")
+dragLabel:Hide()
+
+alertFrame:RegisterForDrag("LeftButton")
+alertFrame:SetScript("OnDragStart", function(self)
+    if not IsDispelAlertLocked() then
+        self:StartMoving()
+    end
+end)
+alertFrame:SetScript("OnDragStop", function(self)
+    self:StopMovingOrSizing()
+    local point, _, relPoint, x, y = self:GetPoint()
+    local s = GetSettings()
+    s.dispelAlertPos = { point = point, relPoint = relPoint, x = x, y = y }
+end)
+
+-- Debuff Icon Box (Left)
+local debuffBox = CreateFrame("Frame", nil, alertFrame, "BackdropTemplate")
+debuffBox:SetSize(42, 42)
+debuffBox:SetPoint("LEFT", alertFrame, "LEFT", 8, 0)
+debuffBox:SetBackdrop({
+    bgFile   = "Interface\\Buttons\\WHITE8X8",
+    edgeFile = "Interface\\Buttons\\WHITE8X8",
+    tile = false, tileSize = 16, edgeSize = 2,
+    insets = { left = 2, right = 2, top = 2, bottom = 2 }
+})
+debuffBox:SetBackdropColor(0, 0, 0, 0.9)
+
+local debuffIcon = debuffBox:CreateTexture(nil, "ARTWORK")
+debuffIcon:SetPoint("TOPLEFT", 2, -2)
+debuffIcon:SetPoint("BOTTOMRIGHT", -2, 2)
+debuffIcon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+
+local debuffTimer = debuffBox:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmallOutline")
+debuffTimer:SetPoint("CENTER", debuffBox, "CENTER", 0, 0)
+debuffTimer:SetTextColor(1, 0.95, 0.25, 1)
+
+local debuffStacks = debuffBox:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmallOutline")
+debuffStacks:SetPoint("BOTTOMRIGHT", debuffBox, "BOTTOMRIGHT", -2, 2)
+
+-- Dispel Spell Icon Box (Right)
+local spellBox = CreateFrame("Frame", nil, alertFrame, "BackdropTemplate")
+spellBox:SetSize(38, 38)
+spellBox:SetPoint("RIGHT", alertFrame, "RIGHT", -8, 0)
+spellBox:SetBackdrop({
+    bgFile   = "Interface\\Buttons\\WHITE8X8",
+    edgeFile = "Interface\\Buttons\\WHITE8X8",
+    tile = false, tileSize = 16, edgeSize = 1.5,
+    insets = { left = 1.5, right = 1.5, top = 1.5, bottom = 1.5 }
+})
+spellBox:SetBackdropColor(0.03, 0.04, 0.06, 0.95)
+spellBox:SetBackdropBorderColor(0.85, 0.85, 0.90, 0.9)
+
+local spellIcon = spellBox:CreateTexture(nil, "ARTWORK")
+spellIcon:SetPoint("TOPLEFT", 1.5, -1.5)
+spellIcon:SetPoint("BOTTOMRIGHT", -1.5, 1.5)
+spellIcon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+
+local spellCooldown = CreateFrame("Cooldown", nil, spellBox, "CooldownFrameTemplate")
+spellCooldown:SetPoint("TOPLEFT", 1.5, -1.5)
+spellCooldown:SetPoint("BOTTOMRIGHT", -1.5, 1.5)
+if spellCooldown.SetDrawEdge then spellCooldown:SetDrawEdge(true) end
+if spellCooldown.SetSwipeColor then spellCooldown:SetSwipeColor(0, 0, 0, 0.72) end
+
+local spellKeybind = spellBox:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmallOutline")
+spellKeybind:SetPoint("TOPRIGHT", spellBox, "TOPRIGHT", -2, -2)
+spellKeybind:SetTextColor(1, 1, 1, 1)
+
+-- Center Info Texts
+local titleText = alertFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+titleText:SetPoint("TOPLEFT", debuffBox, "TOPRIGHT", 8, -1)
+titleText:SetPoint("RIGHT", spellBox, "LEFT", -8, 0)
+titleText:SetJustifyH("LEFT")
+if titleText.SetWordWrap then titleText:SetWordWrap(false) end
+
+local targetText = alertFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+targetText:SetPoint("TOPLEFT", titleText, "BOTTOMLEFT", 0, -2)
+targetText:SetPoint("RIGHT", spellBox, "LEFT", -8, 0)
+targetText:SetJustifyH("LEFT")
+if targetText.SetWordWrap then targetText:SetWordWrap(false) end
+
+local actionText = alertFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+actionText:SetPoint("TOPLEFT", targetText, "BOTTOMLEFT", 0, -2)
+actionText:SetPoint("RIGHT", spellBox, "LEFT", -8, 0)
+actionText:SetJustifyH("LEFT")
+if actionText.SetWordWrap then actionText:SetWordWrap(false) end
+
+-------------------------------------------------------------------------------
+-- State, Sound Throttle & Rendering
+-------------------------------------------------------------------------------
+local previewUntil = 0
+local lastSoundAt = 0
+local lastAlertKey = nil
+local lastScale = nil
+local lastLocked = nil
+local pulsePhase = 0
+
+local function PlayDispelCue()
+    if not IsDispelSoundEnabled() then return end
+    local now = (GetTime and SafeCall(GetTime)) or 0
+    if (now - lastSoundAt) < 3.0 then return end
+    lastSoundAt = now
+    local soundId = (SOUNDKIT and (SOUNDKIT.TELL_MESSAGE or SOUNDKIT.IG_QUEST_LIST_OPEN)) or 3081
+    pcall(PlaySound, soundId, "Master")
+end
+
+local function BuildPreviewEntry()
+    local L = FP.L or {}
+    local dispelInfo = FP.GetPlayerDispelInfo and FP:GetPlayerDispelInfo()
+    local school = (dispelInfo and next(dispelInfo.schools)) or "Magic"
+    local spellInfo = dispelInfo and dispelInfo.spellsBySchool and dispelInfo.spellsBySchool[school]
+    local playerName = (UnitName and SafeCall(UnitName, "player")) or "Player"
+    if not IsSafeStr(playerName) then playerName = "Player" end
+
+    return {
+        unit         = "player",
+        unitGUID     = "preview",
+        unitName     = playerName,
+        isPlayer     = true,
+        colorHex     = GetClassColorHex("player"),
+        debuffName   = L["DISPEL_TEST_DEBUFF"] or "Polymorph (Test)",
+        debuffIcon   = "Interface\\Icons\\Spell_Nature_Polymorph",
+        stacks       = 0,
+        remaining    = 8.0,
+        duration     = 10.0,
+        school       = school,
+        spellID      = spellInfo and spellInfo.spellID or 4987,
+        spellName    = (spellInfo and spellInfo.name) or (L["DISPEL_TEST_SPELL"] or "Dispel"),
+        spellIcon    = (spellInfo and spellInfo.icon) or "Interface\\Icons\\Spell_Holy_DispelMagic",
+        inRange      = true,
+        cdRemaining  = 0,
+        cdDuration   = 0,
+        isSpellReady = true,
+        isPreview    = true,
+    }
+end
+
+local function ApplyAlertVisual(entry, totalCount)
+    local L = FP.L or {}
+    local col = DISPEL_COLORS[entry.school] or DISPEL_COLORS.none
+    alertFrame:SetBackdropBorderColor(col.r, col.g, col.b, 1.0)
+    debuffBox:SetBackdropBorderColor(col.r, col.g, col.b, 1.0)
+    debuffIcon:SetTexture(entry.debuffIcon)
+
+    if entry.stacks and entry.stacks > 1 then
+        debuffStacks:SetText(tostring(entry.stacks))
+        debuffStacks:Show()
+    else
+        debuffStacks:Hide()
+    end
+
+    if entry.remaining and entry.remaining > 0.3 then
+        if entry.remaining >= 10 then
+            debuffTimer:SetText(string.format("%ds", math.ceil(entry.remaining)))
+        else
+            debuffTimer:SetText(string.format("%.1f", entry.remaining))
+        end
+        debuffTimer:Show()
+    else
+        debuffTimer:Hide()
+    end
+
+    local schoolLabel = GetLocalizedSchoolLabel(entry.school)
+    local suffix = ""
+    if not entry.inRange then
+        suffix = string.format(" |cffff5555(%s)|r", L["DISPEL_OUT_OF_RANGE"] or "Out of range")
+    elseif totalCount and totalCount > 1 then
+        suffix = string.format(" |cffaaaaaa(+%d)|r", totalCount - 1)
+    end
+    titleText:SetText(string.format("|cff%02x%02x%02x%s|r%s", math.floor(col.r * 255), math.floor(col.g * 255), math.floor(col.b * 255), schoolLabel, suffix))
+
+    local targetPrefix = entry.isPlayer and (L["DISPEL_YOU"] or "YOU") or entry.unitName
+    targetText:SetText(string.format("|cff%s%s|r — |cffffffff%s|r", entry.colorHex or "ffffff", targetPrefix, entry.debuffName))
+
+    spellIcon:SetTexture(entry.spellIcon or "Interface\\Icons\\Spell_Holy_DispelMagic")
+    local key = FP.GetSpellKeybind and FP:GetSpellKeybind(entry.spellID)
+    if key and key ~= "" then
+        spellKeybind:SetText(key)
+        spellKeybind:Show()
+    else
+        spellKeybind:Hide()
+    end
+
+    if not entry.isSpellReady and entry.cdRemaining > 0 and entry.cdDuration > 0 then
+        local now = (GetTime and SafeCall(GetTime)) or 0
+        local start = (now + entry.cdRemaining) - entry.cdDuration
+        if start > 0 then
+            spellCooldown:SetCooldown(start, entry.cdDuration)
+        else
+            spellCooldown:Clear()
+        end
+        spellIcon:SetVertexColor(0.5, 0.5, 0.5)
+        spellBox:SetBackdropBorderColor(0.85, 0.5, 0.2, 0.95)
+        actionText:SetText(string.format("|cffffb040%s (%.1fs)|r", entry.spellName, entry.cdRemaining))
+    else
+        spellCooldown:Clear()
+        if not entry.inRange then
+            spellIcon:SetVertexColor(1.0, 0.45, 0.45)
+            spellBox:SetBackdropBorderColor(1.0, 0.3, 0.3, 1.0)
+            actionText:SetText(string.format("|cffff7070%s: %s|r", L["DISPEL_MOVE_CLOSER"] or "Move closer", entry.spellName))
+        else
+            spellIcon:SetVertexColor(1.0, 1.0, 1.0)
+            spellBox:SetBackdropBorderColor(col.r, col.g, col.b, 0.95)
+            actionText:SetText(string.format("|cff90e8ff%s: |cffffffff%s|r", L["DISPEL_USE_SPELL"] or "Cast", entry.spellName))
+        end
+    end
+end
+
+local function UpdateDispelAlert()
+    local L = FP.L or {}
+    local s = GetSettings()
+    if s.dispelAlertPos and not alertFrame.posLoaded then
+        alertFrame.posLoaded = true
+        alertFrame:ClearAllPoints()
+        alertFrame:SetPoint(s.dispelAlertPos.point, UIParent, s.dispelAlertPos.relPoint, s.dispelAlertPos.x, s.dispelAlertPos.y)
+    end
+
+    local locked = IsDispelAlertLocked()
+    if locked ~= lastLocked then
+        lastLocked = locked
+        alertFrame:EnableMouse(not locked)
+        if locked then
+            dragLabel:Hide()
+        else
+            dragLabel:SetText(L["DISPEL_DRAG_TITLE"] or "|cff33aaff[Dispel Alert]|r (Drag)")
+            dragLabel:Show()
+        end
+    end
+
+    local scale = GetDispelAlertScale()
+    if scale ~= lastScale then
+        lastScale = scale
+        alertFrame:SetScale(scale)
+    end
+
+    if not IsDispelAlertEnabled() then
+        lastAlertKey = nil
+        if alertFrame:IsShown() then alertFrame:Hide() end
+        return
+    end
+
+    local matches = ScanGroupDispellables()
+    local top = matches[1]
+    local now = (GetTime and SafeCall(GetTime)) or 0
+    local inPreview = (not locked) or (previewUntil > now)
+
+    if top then
+        local alertKey = tostring(top.unitGUID) .. "|" .. tostring(top.debuffName) .. "|" .. tostring(top.school)
+        if alertKey ~= lastAlertKey then
+            lastAlertKey = alertKey
+            PlayDispelCue()
+        end
+        ApplyAlertVisual(top, #matches)
+        if not alertFrame:IsShown() then alertFrame:Show() end
+    elseif inPreview then
+        lastAlertKey = nil
+        ApplyAlertVisual(BuildPreviewEntry(), 1)
+        if not alertFrame:IsShown() then alertFrame:Show() end
+    else
+        lastAlertKey = nil
+        if alertFrame:IsShown() then
+            alertFrame:SetAlpha(1.0)
+            alertFrame:Hide()
+        end
+    end
+end
+
+-------------------------------------------------------------------------------
+-- Public API
+-------------------------------------------------------------------------------
+function FP:RefreshDispelAlert()
+    if self.InvalidateDispelCache then self:InvalidateDispelCache() end
+    UpdateDispelAlert()
+end
+
+function FP:SetDispelAlertLocked(locked)
+    local L = FP.L or {}
+    local s = GetSettings()
+    s.dispelAlertLocked = (locked == true)
+    UpdateDispelAlert()
+    if s.dispelAlertLocked then
+        FP:Print(L["DISPEL_LOCKED_MSG"] or "Dispel Alert position locked.")
+    else
+        FP:Print(L["DISPEL_UNLOCKED_MSG"] or "Dispel Alert unlocked: drag it anywhere on screen, then lock it again.")
+    end
+    if self.RefreshSettingsUI then self:RefreshSettingsUI() end
+end
+
+function FP:ResetDispelAlertPos()
+    local L = FP.L or {}
+    local s = GetSettings()
+    s.dispelAlertPos = nil
+    alertFrame.posLoaded = true
+    alertFrame:ClearAllPoints()
+    alertFrame:SetPoint("CENTER", UIParent, "CENTER", 0, 155)
+    UpdateDispelAlert()
+    FP:Print(L["DISPEL_POS_RESET_MSG"] or "Dispel Alert position reset.")
+end
+
+function FP:ToggleDispelAlert()
+    local L = FP.L or {}
+    local s = GetSettings()
+    s.enableDispelAlert = not (s.enableDispelAlert ~= false)
+    UpdateDispelAlert()
+    if s.enableDispelAlert then
+        FP:Print(L["DISPEL_ENABLED_MSG"] or "|cff00ff00Dispel Alert HUD enabled.|r")
+    else
+        FP:Print(L["DISPEL_DISABLED_MSG"] or "|cffff5555Dispel Alert HUD disabled.|r")
+    end
+    if self.RefreshSettingsUI then self:RefreshSettingsUI() end
+end
+
+function FP:TriggerDispelAlertTest()
+    local s = GetSettings()
+    s.enableDispelAlert = true
+    local now = (GetTime and SafeCall(GetTime)) or 0
+    previewUntil = now + 6.0
+    lastSoundAt = 0
+    PlayDispelCue()
+    UpdateDispelAlert()
+end
+
+-------------------------------------------------------------------------------
+-- Event Watcher & Pulse Loop
+-------------------------------------------------------------------------------
+local ev = CreateFrame("Frame")
+SafeRegisterEvent(ev, "PLAYER_LOGIN")
+SafeRegisterEvent(ev, "PLAYER_ENTERING_WORLD")
+SafeRegisterEvent(ev, "UNIT_AURA")
+SafeRegisterEvent(ev, "GROUP_ROSTER_UPDATE")
+SafeRegisterEvent(ev, "PARTY_MEMBERS_CHANGED")
+SafeRegisterEvent(ev, "RAID_ROSTER_UPDATE")
+SafeRegisterEvent(ev, "SPELLS_CHANGED")
+SafeRegisterEvent(ev, "PLAYER_TALENT_UPDATE")
+SafeRegisterEvent(ev, "CHARACTER_POINTS_CHANGED")
+SafeRegisterEvent(ev, "PLAYER_SPECIALIZATION_CHANGED")
+SafeRegisterEvent(ev, "SPELL_UPDATE_COOLDOWN")
+SafeRegisterEvent(ev, "PLAYER_REGEN_ENABLED")
+SafeRegisterEvent(ev, "PLAYER_REGEN_DISABLED")
+
+ev:SetScript("OnEvent", function(_, event, unit)
+    if event == "UNIT_AURA" and type(unit) == "string" then
+        if unit ~= "player" and not unit:match("^party%d+$") and not unit:match("^raid%d+$") then
+            return
+        end
+    end
+    pcall(UpdateDispelAlert)
+end)
+
+local tickerAccum = 0
+ev:SetScript("OnUpdate", function(_, elapsed)
+    local hasActive = alertFrame:IsShown()
+    if hasActive then
+        pulsePhase = pulsePhase + (elapsed * 4.5)
+        local alpha = 0.80 + 0.20 * math.sin(pulsePhase)
+        alertFrame:SetAlpha(alpha)
+    end
+    tickerAccum = tickerAccum + elapsed
+    local interval = hasActive and 0.15 or 0.45
+    if tickerAccum >= interval then
+        tickerAccum = 0
+        pcall(UpdateDispelAlert)
+    end
+end)

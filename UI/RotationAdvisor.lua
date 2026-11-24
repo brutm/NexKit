@@ -336,75 +336,18 @@ local function UnitHasDebuffNamed(unit, spellNames)
 end
 
 -------------------------------------------------------------------------------
--- Action Bar Keybind Finder Helper
+-- Action Bar Keybind Finder Helper (delegates to shared FP:GetSpellKeybind)
 -------------------------------------------------------------------------------
-local keybindCache = {}
-
 local function InvalidateKeybindCache()
-    for k in pairs(keybindCache) do
-        keybindCache[k] = nil
+    if FP.InvalidateSpellKeybindCache then
+        FP:InvalidateSpellKeybindCache()
     end
 end
 
 local function GetKeybindForSpell(spellID)
-    if not spellID then return nil end
-    if keybindCache[spellID] ~= nil then
-        return (keybindCache[spellID] ~= false) and keybindCache[spellID] or nil
+    if FP.GetSpellKeybind then
+        return FP:GetSpellKeybind(spellID)
     end
-
-    local spellName = GetSpellNameCompat(spellID)
-    if not spellName or spellName == "" then
-        keybindCache[spellID] = false
-        return nil
-    end
-
-    for slot = 1, 120 do
-        local actionType, id = SafeCall(GetActionInfo, slot)
-        local match = false
-        if actionType == "spell" then
-            if id == spellID then
-                match = true
-            else
-                local name = GetSpellNameCompat(id)
-                if name and name == spellName then match = true end
-            end
-        elseif actionType == "macro" and id then
-            local mSpell = GetMacroSpell and SafeCall(GetMacroSpell, id)
-            if mSpell and (mSpell == spellID or GetSpellNameCompat(mSpell) == spellName) then
-                match = true
-            end
-        end
-
-        if match then
-            local actionName = nil
-            if slot <= 12 then
-                actionName = "ACTIONBUTTON" .. slot
-            elseif slot >= 13 and slot <= 24 then
-                actionName = "ACTIONBUTTON" .. (slot - 12)
-            elseif slot >= 25 and slot <= 36 then
-                actionName = "MULTIACTIONBAR3BUTTON" .. (slot - 24) -- Right Action Bar
-            elseif slot >= 37 and slot <= 48 then
-                actionName = "MULTIACTIONBAR4BUTTON" .. (slot - 36) -- Right Action Bar 2
-            elseif slot >= 49 and slot <= 60 then
-                actionName = "MULTIACTIONBAR2BUTTON" .. (slot - 48) -- Bottom Right Action Bar
-            elseif slot >= 61 and slot <= 72 then
-                actionName = "MULTIACTIONBAR1BUTTON" .. (slot - 60) -- Bottom Left Action Bar
-            elseif slot >= 73 and slot <= 120 then
-                actionName = "ACTIONBUTTON" .. (((slot - 1) % 12) + 1) -- Stance / Stealth / Shapeshift bars
-            end
-
-            if actionName and GetBindingKey then
-                local key = SafeCall(GetBindingKey, actionName)
-                if type(key) == "string" and key ~= "" then
-                    key = key:gsub("CTRL%-", "C-"):gsub("ALT%-", "A-"):gsub("SHIFT%-", "S-"):gsub("BUTTON", "M")
-                    keybindCache[spellID] = key
-                    return key
-                end
-            end
-        end
-    end
-
-    keybindCache[spellID] = false
     return nil
 end
 

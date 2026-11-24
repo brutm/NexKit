@@ -402,6 +402,12 @@ end
 -- Party Member Dispel & Buff Detection
 -------------------------------------------------------------------------------
 local function GetPlayerDispelCapabilities()
+    if FP.GetPlayerDispelInfo then
+        local info = FP:GetPlayerDispelInfo()
+        if info and info.schools then
+            return info.schools, info.classTag
+        end
+    end
     local _, playerClass = UnitClass("player")
     local dispels = {}
     if playerClass == "PRIEST" then
@@ -479,7 +485,7 @@ local function GetPartyUnitDebuffs(unit)
     local dispels, playerClass = GetPlayerDispelCapabilities()
 
     for i = 1, 16 do
-        local name, icon, count, dType, duration, expirationTime, spellId
+        local name, icon, count, dType, duration, expirationTime, spellId, auraInstanceID
         local found = false
 
         -- 1. Try native Classic UnitDebuff first (safe, fast, never triggers taint error)
@@ -513,6 +519,7 @@ local function GetPartyUnitDebuffs(unit)
                         duration = aura.duration
                         expirationTime = aura.expirationTime
                         spellId = aura.spellId
+                        auraInstanceID = aura.auraInstanceID
                         found = true
                     end
                 end)
@@ -528,19 +535,22 @@ local function GetPartyUnitDebuffs(unit)
 
         if not found then break end
 
-        local canDispel = false
-        pcall(function()
-            if dType and dispels and dispels[dType] then
+        local safeType = IsSafeStr(dType) and dType or nil
+        local canDispel = (safeType ~= nil and dispels and dispels[safeType] == true) or false
+        if not canDispel and not safeType and auraInstanceID and C_UnitAuras and C_UnitAuras.IsAuraFilteredOutByInstanceID then
+            local filteredOut = SafeCall(C_UnitAuras.IsAuraFilteredOutByInstanceID, unit, auraInstanceID, "HARMFUL|RAID_PLAYER_DISPELLABLE")
+            if filteredOut == false then
                 canDispel = true
+                safeType = next(dispels or {}) or "Magic"
             end
-        end)
+        end
 
         debuffs[#debuffs + 1] = {
             index = i,
             name = (type(name) == "string" and name) or "Debuff",
             icon = icon or "Interface\\Icons\\INV_Misc_QuestionMark",
             count = SafeNumber(count, 0),
-            dispelType = (type(dType) == "string" and dType) or "none",
+            dispelType = safeType or "none",
             canDispel = canDispel,
             duration = SafeNumber(duration, 0),
             expirationTime = SafeNumber(expirationTime, 0),
@@ -1276,6 +1286,19 @@ for i = 1, 5 do
     targetBorder:Hide()
     btn.targetBorder = targetBorder
 
+    -- Dispellable Debuff Glow Border (Bright school color around grid member)
+    local dispelBorder = CreateFrame("Frame", nil, btn, "BackdropTemplate")
+    dispelBorder:SetPoint("TOPLEFT", btn, "TOPLEFT", -2, 2)
+    dispelBorder:SetPoint("BOTTOMRIGHT", btn, "BOTTOMRIGHT", 2, -2)
+    dispelBorder:SetFrameLevel(btn:GetFrameLevel() + 6)
+    dispelBorder:SetBackdrop({
+        edgeFile = "Interface\\Buttons\\WHITE8x8",
+        edgeSize = 2.5,
+    })
+    dispelBorder:SetBackdropBorderColor(0.20, 0.65, 1.00, 1.00)
+    dispelBorder:Hide()
+    btn.dispelBorder = dispelBorder
+
     -- Health Bar
     local hpBar = CreateFrame("StatusBar", nil, btn)
     hpBar:SetPoint("TOPLEFT", btn, "TOPLEFT", 1, -1)
@@ -1631,8 +1654,24 @@ local function UpdateGridMember(btn)
         end
     end
 
-    -- Debuffs (Top right)
+    -- Debuffs (Top right) & Grid Dispel Glow
     local debuffs = GetPartyUnitDebuffs(unit)
+    local firstDispellable = nil
+    for d = 1, #debuffs do
+        if debuffs[d].canDispel then
+            firstDispellable = debuffs[d]
+            break
+        end
+    end
+    if btn.dispelBorder then
+        if firstDispellable then
+            local dCol = DISPEL_COLORS[firstDispellable.dispelType] or DISPEL_COLORS["Magic"]
+            btn.dispelBorder:SetBackdropBorderColor(dCol.r, dCol.g, dCol.b, 1.0)
+            btn.dispelBorder:Show()
+        else
+            btn.dispelBorder:Hide()
+        end
+    end
     for d = 1, 2 do
         local dBtn = btn.debuffSlots[d]
         if d <= #debuffs then

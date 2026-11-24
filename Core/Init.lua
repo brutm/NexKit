@@ -324,6 +324,354 @@ function FP:GetPlayerSpecInfo()
     }
 end
 
+------------------------------------------------------------------------
+-- Shared Dispel Capability Resolver & Action Bar Keybind Cache
+------------------------------------------------------------------------
+local DISPEL_COLORS = {
+    Magic   = { r = 0.20, g = 0.65, b = 1.00 },
+    Curse   = { r = 0.70, g = 0.25, b = 1.00 },
+    Disease = { r = 0.85, g = 0.48, b = 0.12 },
+    Poison  = { r = 0.10, g = 0.85, b = 0.20 },
+    none    = { r = 0.85, g = 0.15, b = 0.15 },
+}
+
+local keybindCache = {}
+local dispelCache = nil
+
+function FP:InvalidateSpellKeybindCache()
+    for k in pairs(keybindCache) do
+        keybindCache[k] = nil
+    end
+end
+
+function FP:InvalidateDispelCache()
+    dispelCache = nil
+end
+
+function FP:GetSpellKeybind(spellID)
+    if not spellID then return nil end
+    if keybindCache[spellID] ~= nil then
+        return (keybindCache[spellID] ~= false) and keybindCache[spellID] or nil
+    end
+
+    local spellName = GetSpellNameCompat(spellID)
+    if not IsSafeStr(spellName) then
+        keybindCache[spellID] = false
+        return nil
+    end
+
+    if not GetActionInfo then
+        keybindCache[spellID] = false
+        return nil
+    end
+
+    for slot = 1, 120 do
+        local actionType, id = SafeCall(GetActionInfo, slot)
+        local matched = false
+        if actionType == "spell" then
+            if id == spellID then
+                matched = true
+            else
+                local name = GetSpellNameCompat(id)
+                if name and name == spellName then
+                    matched = true
+                end
+            end
+        elseif actionType == "macro" and id and GetMacroSpell then
+            local mSpell = SafeCall(GetMacroSpell, id)
+            if mSpell and (mSpell == spellID or GetSpellNameCompat(mSpell) == spellName) then
+                matched = true
+            end
+        end
+
+        if matched then
+            local actionName = nil
+            if slot <= 12 then
+                actionName = "ACTIONBUTTON" .. slot
+            elseif slot <= 24 then
+                actionName = "ACTIONBUTTON" .. (slot - 12)
+            elseif slot <= 36 then
+                actionName = "MULTIACTIONBAR3BUTTON" .. (slot - 24)
+            elseif slot <= 48 then
+                actionName = "MULTIACTIONBAR4BUTTON" .. (slot - 36)
+            elseif slot <= 60 then
+                actionName = "MULTIACTIONBAR2BUTTON" .. (slot - 48)
+            elseif slot <= 72 then
+                actionName = "MULTIACTIONBAR1BUTTON" .. (slot - 60)
+            elseif slot <= 120 then
+                actionName = "ACTIONBUTTON" .. (((slot - 1) % 12) + 1)
+            end
+
+            if actionName and GetBindingKey then
+                local key = SafeCall(GetBindingKey, actionName)
+                if IsSafeStr(key) then
+                    key = key:gsub("CTRL%-", "C-"):gsub("ALT%-", "A-"):gsub("SHIFT%-", "S-"):gsub("BUTTON", "M")
+                    keybindCache[spellID] = key
+                    return key
+                end
+            end
+        end
+    end
+
+    keybindCache[spellID] = false
+    return nil
+end
+
+local function IsSpellHelpfulCompat(spellID)
+    if not spellID then return nil end
+    if C_Spell and C_Spell.IsSpellHelpful then
+        local ok = SafeCall(C_Spell.IsSpellHelpful, spellID)
+        if IsAccessible(ok) then return ok == true end
+    elseif IsHelpfulSpell then
+        local ok = SafeCall(IsHelpfulSpell, spellID)
+        if IsAccessible(ok) then return ok == true end
+    end
+    return nil
+end
+
+local function CollectSpellbookMap()
+    local byName = {}
+    if C_SpellBook and C_SpellBook.GetNumSpellBookSkillLines and C_SpellBook.GetSpellBookSkillLineInfo and C_SpellBook.GetSpellBookItemInfo then
+        local bank = (Enum and Enum.SpellBookSpellBank and Enum.SpellBookSpellBank.Player) or 0
+        local spellType = (Enum and Enum.SpellBookItemType and Enum.SpellBookItemType.Spell) or 1
+        local numLines = SafeCall(C_SpellBook.GetNumSpellBookSkillLines) or 0
+        for l = 1, numLines do
+            local lineInfo = SafeCall(C_SpellBook.GetSpellBookSkillLineInfo, l)
+            if type(lineInfo) == "table" and not lineInfo.shouldHide and (not lineInfo.offSpecID or lineInfo.offSpecID == 0) then
+                local offset = lineInfo.itemIndexOffset or 0
+                local numSlots = lineInfo.numSpellBookItems or 0
+                for s = offset + 1, offset + numSlots do
+                    local itemInfo = SafeCall(C_SpellBook.GetSpellBookItemInfo, s, bank)
+                    if type(itemInfo) == "table"
+                        and (itemInfo.itemType == spellType or itemInfo.itemType == "SPELL")
+                        and not itemInfo.isPassive
+                        and not itemInfo.isOffSpec
+                        and IsSafeNum(itemInfo.spellID)
+                        and IsSafeStr(itemInfo.name)
+                    then
+                        byName[string.lower(itemInfo.name)] = itemInfo.spellID
+                    end
+                end
+            end
+        end
+    elseif GetNumSpellTabs and GetSpellTabInfo and GetSpellBookItemName then
+        local bookType = BOOKTYPE_SPELL or "spell"
+        local numTabs = SafeCall(GetNumSpellTabs) or 0
+        for t = 1, numTabs do
+            local _, _, offset, numSlots, _, offSpecID = SafeCall(GetSpellTabInfo, t)
+            if (not offSpecID or offSpecID == 0) and IsSafeNum(offset) and IsSafeNum(numSlots) then
+                for s = offset + 1, offset + numSlots do
+                    local sName = SafeCall(GetSpellBookItemName, s, bookType)
+                    local sType, sid = nil, nil
+                    if GetSpellBookItemInfo then
+                        sType, sid = SafeCall(GetSpellBookItemInfo, s, bookType)
+                    end
+                    if IsSafeStr(sName) and (sType == "SPELL" or sType == nil) then
+                        local key = string.lower(sName)
+                        if IsSafeNum(sid) then
+                            byName[key] = sid
+                        elseif not byName[key] then
+                            byName[key] = true
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return byName
+end
+
+function FP:GetPlayerDispelInfo()
+    if dispelCache then
+        return dispelCache
+    end
+
+    local spec = self:GetPlayerSpecInfo()
+    local cls = (spec and spec.classTag) or (UnitClass and select(2, SafeCall(UnitClass, "player"))) or "WARRIOR"
+    local hasModernSpecs = (C_SpecializationInfo and type(C_SpecializationInfo.GetSpecialization) == "function")
+    local sbMap = nil
+
+    local function FindKnownDispel(spellID, aliases)
+        if spellID and IsSpellKnownCompat(spellID) then
+            return spellID
+        end
+        if aliases then
+            if not sbMap then sbMap = CollectSpellbookMap() end
+            for _, alias in ipairs(aliases) do
+                local hit = sbMap[string.lower(alias)]
+                if hit then
+                    return (type(hit) == "number") and hit or spellID
+                end
+            end
+        end
+        return nil
+    end
+
+    local schools = {}
+    local spellsBySchool = {}
+    local function RegisterSchoolSpell(schoolList, sid, fallbackName)
+        if not sid then return end
+        local name = GetSpellNameCompat(sid) or fallbackName or "Dispel"
+        local icon = GetSpellTextureCompat(sid) or "Interface\\Icons\\Spell_Holy_DispelMagic"
+        local info = { spellID = sid, name = name, icon = icon }
+        for _, sc in ipairs(schoolList) do
+            schools[sc] = true
+            if not spellsBySchool[sc] then
+                spellsBySchool[sc] = info
+            end
+        end
+    end
+
+    if cls == "PALADIN" then
+        local cleanse = FindKnownDispel(4987, { "Cleanse", "Purificazione", "Reinigung des Glaubens", "Limpiar", "Epuration", "Очищение" })
+        if cleanse then
+            RegisterSchoolSpell({ "Magic", "Poison", "Disease" }, cleanse, "Cleanse")
+        end
+        local cleanseTox = FindKnownDispel(213644, { "Cleanse Toxins", "Purificazione dalle Tossine" })
+        if cleanseTox then
+            RegisterSchoolSpell({ "Poison", "Disease" }, cleanseTox, "Cleanse Toxins")
+        end
+        local purify = FindKnownDispel(1152, { "Purify", "Purifica", "Läutern" })
+        if purify then
+            RegisterSchoolSpell({ "Poison", "Disease" }, purify, "Purify")
+        end
+    elseif cls == "PRIEST" then
+        local purify = FindKnownDispel(527, { "Dispel Magic", "Purify", "Dissoluzione Magica", "Purificazione" })
+        if not purify then
+            purify = FindKnownDispel(988)
+        end
+        if purify then
+            if hasModernSpecs and IsSpellKnownCompat(390632) then
+                RegisterSchoolSpell({ "Magic", "Disease" }, purify, "Purify")
+            else
+                RegisterSchoolSpell({ "Magic" }, purify, "Dispel Magic")
+            end
+        end
+        local purifyDis = FindKnownDispel(213634, { "Purify Disease" })
+        local abolishDis = FindKnownDispel(552, { "Abolish Disease", "Abolisci Malattia" })
+        local cureDis = (not hasModernSpecs or IsSpellHelpfulCompat(528) == true) and FindKnownDispel(528, { "Cure Disease", "Cura Malattia" }) or nil
+        local disSpell = purifyDis or abolishDis or cureDis
+        if disSpell then
+            RegisterSchoolSpell({ "Disease" }, disSpell, "Cure Disease")
+        end
+        if not spellsBySchool["Magic"] then
+            local mass = FindKnownDispel(32375, { "Mass Dispel", "Dissoluzione di Massa" })
+            if mass then
+                RegisterSchoolSpell({ "Magic" }, mass, "Mass Dispel")
+            end
+        end
+    elseif cls == "MAGE" then
+        local decurse = FindKnownDispel(475, { "Remove Curse", "Remove Lesser Curse", "Rimozione Maledizione", "Fluch aufheben" })
+        if decurse then
+            RegisterSchoolSpell({ "Curse" }, decurse, "Remove Curse")
+        end
+    elseif cls == "DRUID" then
+        local natCure = FindKnownDispel(88423, { "Nature's Cure", "Cura della Natura" })
+        if natCure then
+            RegisterSchoolSpell({ "Magic", "Curse", "Poison" }, natCure, "Nature's Cure")
+        end
+        local remCurse = FindKnownDispel(2782, { "Remove Corruption", "Remove Curse", "Rimozione Corruzione", "Rimozione Maledizione" })
+        local abolPoi = FindKnownDispel(2893, { "Abolish Poison", "Abolisci Veleno" })
+        local curePoi = FindKnownDispel(8946, { "Cure Poison", "Cura Veleno" })
+        if remCurse then
+            if hasModernSpecs and not abolPoi and not curePoi then
+                RegisterSchoolSpell({ "Curse", "Poison" }, remCurse, "Remove Corruption")
+            else
+                RegisterSchoolSpell({ "Curse" }, remCurse, "Remove Curse")
+            end
+        end
+        local poiSpell = abolPoi or curePoi
+        if poiSpell then
+            RegisterSchoolSpell({ "Poison" }, poiSpell, "Cure Poison")
+        end
+    elseif cls == "SHAMAN" then
+        local purifySpirit = FindKnownDispel(77130, { "Purify Spirit", "Purificazione dello Spirito" })
+        if purifySpirit then
+            RegisterSchoolSpell({ "Magic", "Curse" }, purifySpirit, "Purify Spirit")
+        end
+        local cleanseSpirit = FindKnownDispel(51886, { "Cleanse Spirit", "Purifica Spirito" })
+        if cleanseSpirit then
+            if not hasModernSpecs then
+                RegisterSchoolSpell({ "Curse", "Poison", "Disease" }, cleanseSpirit, "Cleanse Spirit")
+            else
+                RegisterSchoolSpell({ "Curse" }, cleanseSpirit, "Cleanse Spirit")
+            end
+        end
+        local curePoi = FindKnownDispel(526, { "Cure Toxins", "Cure Poison", "Cura Tossine", "Cura Veleno" })
+        if curePoi then
+            local pName = GetSpellNameCompat(curePoi) or ""
+            if pName:lower():find("toxin") or pName:lower():find("tossin") then
+                RegisterSchoolSpell({ "Poison", "Disease" }, curePoi, "Cure Toxins")
+            else
+                RegisterSchoolSpell({ "Poison" }, curePoi, "Cure Poison")
+            end
+        end
+        local cureDis = FindKnownDispel(2870, { "Cure Disease", "Cura Malattia" })
+        if cureDis then
+            RegisterSchoolSpell({ "Disease" }, cureDis, "Cure Disease")
+        end
+    elseif cls == "MONK" then
+        local detoxMW = FindKnownDispel(115450, { "Detox" })
+        if detoxMW then
+            RegisterSchoolSpell({ "Magic", "Poison", "Disease" }, detoxMW, "Detox")
+        end
+        local detoxOther = FindKnownDispel(218164, { "Detox" })
+        if detoxOther then
+            RegisterSchoolSpell({ "Poison", "Disease" }, detoxOther, "Detox")
+        end
+    elseif cls == "EVOKER" then
+        local nat = FindKnownDispel(360823, { "Naturalize" })
+        if nat then RegisterSchoolSpell({ "Magic", "Poison" }, nat, "Naturalize") end
+        local exp = FindKnownDispel(365585, { "Expunge" })
+        if exp then RegisterSchoolSpell({ "Poison" }, exp, "Expunge") end
+    elseif cls == "WARLOCK" then
+        local petAlive = UnitExists and SafeBoolean(SafeCall(UnitExists, "pet"), false)
+            and not (UnitIsDead and SafeBoolean(SafeCall(UnitIsDead, "pet"), false))
+        if petAlive then
+            local singe = FindKnownDispel(89808, { "Singe Magic", "Brucia Magia" }) or FindKnownDispel(119905)
+            if singe then
+                RegisterSchoolSpell({ "Magic" }, singe, "Singe Magic")
+            else
+                for _, dId in ipairs({ 27277, 27276, 19740, 19738, 19736, 19505 }) do
+                    if IsSpellKnownCompat(dId) and IsSpellHelpfulCompat(dId) == true then
+                        RegisterSchoolSpell({ "Magic" }, dId, "Devour Magic")
+                        break
+                    end
+                end
+            end
+        end
+    end
+
+    dispelCache = {
+        classTag       = cls,
+        schools        = schools,
+        spellsBySchool = spellsBySchool,
+        canDispelAny   = (next(schools) ~= nil),
+    }
+    return dispelCache
+end
+
+local sharedCacheFrame = CreateFrame("Frame")
+SafeRegisterEvent(sharedCacheFrame, "PLAYER_ENTERING_WORLD")
+SafeRegisterEvent(sharedCacheFrame, "SPELLS_CHANGED")
+SafeRegisterEvent(sharedCacheFrame, "PLAYER_TALENT_UPDATE")
+SafeRegisterEvent(sharedCacheFrame, "CHARACTER_POINTS_CHANGED")
+SafeRegisterEvent(sharedCacheFrame, "PLAYER_SPECIALIZATION_CHANGED")
+SafeRegisterEvent(sharedCacheFrame, "ACTIONBAR_SLOT_CHANGED")
+SafeRegisterEvent(sharedCacheFrame, "UPDATE_BINDINGS")
+SafeRegisterUnitEvent(sharedCacheFrame, "UNIT_PET", "player")
+sharedCacheFrame:SetScript("OnEvent", function(_, event)
+    if event == "ACTIONBAR_SLOT_CHANGED" or event == "UPDATE_BINDINGS" then
+        FP:InvalidateSpellKeybindCache()
+    elseif event == "PLAYER_ENTERING_WORLD" then
+        FP:InvalidateSpellKeybindCache()
+        FP:InvalidateDispelCache()
+    else
+        FP:InvalidateDispelCache()
+    end
+end)
+
+FP.DISPEL_COLORS         = DISPEL_COLORS
 FP.IsSecret              = IsSecret
 FP.IsAccessible          = IsAccessible
 FP.IsSafeNum             = IsSafeNum
@@ -708,6 +1056,7 @@ function FP:RefreshAllUI()
     if self.RefreshDungeonGuide then self:RefreshDungeonGuide() end
     if self.RefreshQuestRewardHighlights then self:RefreshQuestRewardHighlights() end
     if self.RefreshClassFrames then self:RefreshClassFrames() end
+    if self.RefreshDispelAlert then self:RefreshDispelAlert() end
     if self.RefreshRotationAdvisor then self:RefreshRotationAdvisor() end
     if self.RefreshTodoHUD then self:RefreshTodoHUD() end
     if self.RefreshTodoListUI then self:RefreshTodoListUI() end
@@ -807,6 +1156,13 @@ local SV_DEFAULTS = {
         rotationMode            = "always",
         rotationShowQueue       = false,
         rotationPos             = nil,
+
+        -- Dispel Alert HUD
+        enableDispelAlert       = true,
+        dispelAlertSound        = true,
+        dispelAlertLocked       = true,
+        dispelAlertScale        = 1.0,
+        dispelAlertPos          = nil,
     },
 }
 
@@ -1006,6 +1362,36 @@ local function HandleSlashCommand(input)
         else
             if FP.ToggleRotationAdvisor then
                 FP:ToggleRotationAdvisor()
+            end
+        end
+    elseif cmd == "dispel" or cmd == "cleanse" or cmd == "decurse" then
+        local sub = rest and rest:match("^(%S+)")
+        sub = sub and sub:lower() or ""
+        if sub == "lock" or sub == "unlock" then
+            local locked = (sub == "lock")
+            if sub == "lock" and NexusKitDB and NexusKitDB.settings and NexusKitDB.settings.dispelAlertLocked == true then
+                locked = false
+            end
+            if FP.SetDispelAlertLocked then
+                FP:SetDispelAlertLocked(locked)
+            end
+        elseif sub == "reset" then
+            if FP.ResetDispelAlertPos then
+                FP:ResetDispelAlertPos()
+            end
+        elseif sub == "sound" then
+            if NexusKitDB and NexusKitDB.settings then
+                NexusKitDB.settings.dispelAlertSound = not (NexusKitDB.settings.dispelAlertSound ~= false)
+                local st = NexusKitDB.settings.dispelAlertSound and "|cff00ff00ATTIVO|r" or "|cffff0000DISATTIVO|r"
+                FP:Print("Suono Avviso Dispel: " .. st)
+            end
+        elseif sub == "test" then
+            if FP.TriggerDispelAlertTest then
+                FP:TriggerDispelAlertTest()
+            end
+        else
+            if FP.ToggleDispelAlert then
+                FP:ToggleDispelAlert()
             end
         end
     elseif cmd == "taintlog" then

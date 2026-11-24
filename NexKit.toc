@@ -42,6 +42,7 @@ UI/TrackerFrame.lua
 UI/TodoList.lua
 UI/ClassFrames.lua
 UI/RotationAdvisor.lua
+UI/DispelAlert.lua
 UI/QuestStarterAlert.lua
 UI/MinimapButton.lua
 UI/ImporterFrame.lua

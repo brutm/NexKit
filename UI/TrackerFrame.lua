@@ -1857,6 +1857,34 @@ local SETTINGS_CONTROLS = {
             end,
         },
         {
+            kind = "checkbox", key = "enableDispelAlert", default = true,
+            labelKey = "SETTING_DISPEL_ALERT", tipKey = "SETTING_DISPEL_ALERT_TIP", fallback = "Dispel Alert HUD",
+            onChange = function()
+                if FP.RefreshDispelAlert then FP:RefreshDispelAlert() end
+            end,
+        },
+        {
+            kind = "checkbox", key = "dispelAlertSound", default = true,
+            labelKey = "SETTING_DISPEL_SOUND", tipKey = "SETTING_DISPEL_SOUND_TIP", fallback = "Dispel Alert sound cue",
+            onChange = function()
+                if FP.RefreshDispelAlert then FP:RefreshDispelAlert() end
+            end,
+        },
+        {
+            kind = "checkbox", key = "dispelAlertLocked", default = true,
+            labelKey = "SETTING_DISPEL_LOCKED", tipKey = "SETTING_DISPEL_LOCKED_TIP", fallback = "Lock Dispel Alert position",
+            onChange = function(checked)
+                if FP.SetDispelAlertLocked then FP:SetDispelAlertLocked(checked) end
+            end,
+        },
+        {
+            kind = "slider", key = "dispelAlertScale", default = 1.0, min = 0.70, max = 1.50, step = 0.05, fmt = "%.2fx",
+            labelKey = "SETTING_DISPEL_SCALE", tipKey = "SETTING_DISPEL_SCALE_TIP", fallback = "Dispel Alert scale",
+            onChange = function()
+                if FP.RefreshDispelAlert then FP:RefreshDispelAlert() end
+            end,
+        },
+        {
             kind = "slider", key = "trackerScale", default = 1.0, min = 0.50, max = 2.00, step = 0.05, fmt = "%.2fx",
             labelKey = "SETTING_TRACKER_SCALE", tipKey = "SETTING_TRACKER_SCALE_TIP", fallback = "Tracker scale",
             onChange = function()
