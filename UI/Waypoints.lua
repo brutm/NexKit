@@ -54,8 +54,13 @@ local function ShouldHideArrow()
     if IsPlayerInDungeon() then
         return true
     end
-    return GetNavSettings().arrowHideInCombat == true
-        and UnitAffectingCombat and UnitAffectingCombat("player") == true
+    if GetNavSettings().arrowHideInCombat ~= true then
+        return false
+    end
+    if InCombatLockdown and InCombatLockdown() then
+        return true
+    end
+    return UnitAffectingCombat and FP.SafeBoolean(FP.SafeCall(UnitAffectingCombat, "player"), false) or false
 end
 
 local function IsSafeNum(v)
@@ -593,7 +598,7 @@ local function CreateDirectionalArrowHUD(frameName, defX, defY, dbKey, isCustom)
     end)
 
     local glow = frame:CreateTexture(nil, "BORDER")
-    glow:SetTexture("Interface\\AddOns\\" .. (addonName or "NexKit") .. "\\Media\\ArrowGlow.tga")
+    glow:SetTexture("Interface\\AddOns\\" .. (addonName or "NexusKit") .. "\\Media\\ArrowGlow.tga")
     glow:SetBlendMode("ADD")
     glow:SetSize(86, 86)
     glow:SetPoint("CENTER", frame, "CENTER", 0, 0)
@@ -601,7 +606,7 @@ local function CreateDirectionalArrowHUD(frameName, defX, defY, dbKey, isCustom)
     frame.arrowGlow = glow
 
     local tex = frame:CreateTexture(nil, "ARTWORK")
-    tex:SetTexture("Interface\\AddOns\\" .. (addonName or "NexKit") .. "\\Media\\Arrow.tga")
+    tex:SetTexture("Interface\\AddOns\\" .. (addonName or "NexusKit") .. "\\Media\\Arrow.tga")
     tex:SetSize(74, 74)
     tex:SetPoint("CENTER", frame, "CENTER", 0, 0)
     frame.arrowTex = tex
@@ -3308,7 +3313,11 @@ local lastObservedMapID = nil
 local lastObservedSelQuest = nil
 local qSelAccum = 0
 questSelectionFrame:SetScript("OnUpdate", function(_, elapsed)
-    qSelAccum = qSelAccum + elapsed
+    local dt = elapsed or 0
+    if waypointQuestID and proxState.allow then
+        proxState.accum = proxState.accum + dt
+    end
+    qSelAccum = qSelAccum + dt
     if qSelAccum < 0.12 then return end
     qSelAccum = 0
     local wmShown = WorldMapFrame and not IsForbiddenObj(WorldMapFrame) and WorldMapFrame:IsShown() or false
@@ -3351,7 +3360,6 @@ questSelectionFrame:SetScript("OnUpdate", function(_, elapsed)
     end
 
     if not waypointQuestID or not proxState.allow then return end
-    proxState.accum = proxState.accum + elapsed
     if proxState.accum < 0.75 then return end
     proxState.accum = 0
     ReevaluateActiveQuestProximity(false)

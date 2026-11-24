@@ -4,6 +4,7 @@
 local addonName, FP = ...
 
 local ACCENT = { r = 0, g = 1, b = 0.59 }
+if FP.SyncAccentTable then FP:SyncAccentTable(ACCENT) end
 
 local function GetSettings()
     return (NexusKitDB and NexusKitDB.settings) or {}
@@ -11,6 +12,10 @@ end
 
 local function IsAlertEnabled()
     return GetSettings().enableQuestStarterAlert ~= false
+end
+
+local function IsSafeStr(v)
+    return FP.IsSafeStr and FP.IsSafeStr(v) or (type(v) == "string" and (not issecretvalue or not issecretvalue(v)) and v ~= "")
 end
 
 -- Scan Tooltip helper
@@ -32,8 +37,8 @@ local function IsItemQuestStarter(bag, slot, itemID)
         local ok, data = pcall(C_TooltipInfo.GetBagItem, bag, slot)
         if ok and data and data.lines then
             for _, line in ipairs(data.lines) do
-                local t = line.leftText
-                if t and ITEM_STARTS_QUEST and (t:find(ITEM_STARTS_QUEST, 1, true) or t == ITEM_STARTS_QUEST) then
+                local t = line and line.leftText
+                if IsSafeStr(t) and ITEM_STARTS_QUEST and (t:find(ITEM_STARTS_QUEST, 1, true) or t == ITEM_STARTS_QUEST) then
                     return true
                 end
             end
@@ -43,11 +48,7 @@ local function IsItemQuestStarter(bag, slot, itemID)
     -- Fallback: scan lines of hidden tooltip
     scanTip:ClearLines()
     local ok = pcall(function()
-        if C_Container and C_Container.GetContainerItemInfo then
-            scanTip:SetBagItem(bag, slot)
-        else
-            scanTip:SetBagItem(bag, slot)
-        end
+        scanTip:SetBagItem(bag, slot)
     end)
 
     if ok then
@@ -56,7 +57,7 @@ local function IsItemQuestStarter(bag, slot, itemID)
             local line = _G["NexusKitQuestStarterScanTipTextLeft" .. i]
             if line then
                 local text = line:GetText()
-                if text and ITEM_STARTS_QUEST and (text:find(ITEM_STARTS_QUEST, 1, true) or text == ITEM_STARTS_QUEST) then
+                if IsSafeStr(text) and ITEM_STARTS_QUEST and (text:find(ITEM_STARTS_QUEST, 1, true) or text == ITEM_STARTS_QUEST) then
                     return true
                 end
             end
@@ -262,8 +263,27 @@ end)
 -------------------------------------------------------------------------------
 -- Displaying Alerts
 -------------------------------------------------------------------------------
+function FP:RefreshQuestStarterAlert()
+    if FP.SyncAccentTable then FP:SyncAccentTable(ACCENT) end
+    local L = FP.L or {}
+    local hex = (FP.GetAccentColor and select(4, FP:GetAccentColor())) or "00ff96"
+    alertFrame:SetBackdropBorderColor(ACCENT.r, ACCENT.g, ACCENT.b, 0.90)
+    topAccent:SetColorTexture(ACCENT.r, ACCENT.g, ACCENT.b, 1)
+    iconFrame:SetBackdropBorderColor(ACCENT.r, ACCENT.g, ACCENT.b, 0.85)
+    startBtn:SetBackdropBorderColor(ACCENT.r, ACCENT.g, ACCENT.b, 0.85)
+    titleFs:SetText("|cff" .. hex .. "NexusKit|r — " .. (L["QUEST_STARTER_ALERT_TITLE"] or "New Quest Item"))
+    promptFs:SetText(L["QUEST_STARTER_ALERT_DESC"] or "You looted an item that begins a quest!\nDo you want to start this quest now?")
+    if startBtn and startBtn.textFs then
+        startBtn.textFs:SetText(L["QUEST_STARTER_ALERT_START"] or "Start Quest")
+    end
+    if laterBtn and laterBtn.textFs then
+        laterBtn.textFs:SetText(L["QUEST_STARTER_ALERT_LATER"] or "Later")
+    end
+end
+
 function FP:ShowQuestStarterAlert(data)
     if not data or not data.itemID then return end
+    self:RefreshQuestStarterAlert()
 
     alertFrame.currentItemID = data.itemID
     alertFrame.currentBag = data.bag
@@ -330,9 +350,15 @@ local function CheckAllBagsForQuestStarters(isInitial)
                 else
                     if IsItemQuestStarter(bag, slot, itemID) then
                         alertedSessionItems[itemID] = true
-                        local itemName = (GetItemInfo and select(1, GetItemInfo(itemID))) or "Oggetto Missione"
-                        icon = icon or (GetItemInfo and select(10, GetItemInfo(itemID)))
-                        itemLink = itemLink or (GetItemInfo and select(2, GetItemInfo(itemID)))
+                        local itemName, iLink, _, _, _, _, _, _, _, iTex
+                        if C_Item and C_Item.GetItemInfo then
+                            itemName, iLink, _, _, _, _, _, _, _, iTex = FP.SafeCall(C_Item.GetItemInfo, itemID)
+                        elseif GetItemInfo then
+                            itemName, iLink, _, _, _, _, _, _, _, iTex = FP.SafeCall(GetItemInfo, itemID)
+                        end
+                        itemName = IsSafeStr(itemName) and itemName or "Quest Item"
+                        icon = icon or iTex or (C_Item and C_Item.GetItemIconByID and FP.SafeCall(C_Item.GetItemIconByID, itemID))
+                        itemLink = itemLink or iLink
 
                         FP:QueueQuestStarterAlert({
                             bag      = bag,
@@ -361,7 +387,7 @@ SafeRegisterEvent(evFrame, "PLAYER_LOGIN")
 SafeRegisterEvent(evFrame, "BAG_UPDATE_DELAYED")
 SafeRegisterEvent(evFrame, "CHAT_MSG_LOOT")
 
-local bagUpdateTimer = nil
+local bagUpdatePending = false
 
 evFrame:SetScript("OnEvent", function(self, event, ...)
     if event == "PLAYER_LOGIN" then
@@ -371,9 +397,10 @@ evFrame:SetScript("OnEvent", function(self, event, ...)
         end)
     elseif event == "BAG_UPDATE_DELAYED" or event == "CHAT_MSG_LOOT" then
         if not initialScanDone then return end
-        if bagUpdateTimer then return end
-        bagUpdateTimer = C_Timer.After(0.4, function()
-            bagUpdateTimer = nil
+        if bagUpdatePending then return end
+        bagUpdatePending = true
+        C_Timer.After(0.4, function()
+            bagUpdatePending = false
             CheckAllBagsForQuestStarters(false)
         end)
     end

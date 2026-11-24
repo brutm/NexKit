@@ -231,18 +231,18 @@ end
 -- Euclidean distance helper (map-normalised coords: 0-100 range)
 ------------------------------------------------------------------------
 local function PlayerMapDistance(mapID, sx, sy)
-    if not mapID or not sx or not sy then return math.huge end
+    if not FP.IsSafeNum(mapID) or not FP.IsSafeNum(sx) or not FP.IsSafeNum(sy) then return math.huge end
     if not (C_Map and C_Map.GetBestMapForUnit and C_Map.GetPlayerMapPosition) then
         return math.huge
     end
-    local playerMapID = C_Map.GetBestMapForUnit("player")
+    local playerMapID = FP.SafeCall(C_Map.GetBestMapForUnit, "player")
     if playerMapID ~= mapID then
         return math.huge
     end
-    local pos = C_Map.GetPlayerMapPosition(mapID, "player")
-    if not pos then return math.huge end
-    local px, py = pos:GetXY()
-    if not px or (px == 0 and py == 0) then return math.huge end
+    local pos = FP.SafeCall(C_Map.GetPlayerMapPosition, mapID, "player")
+    if not pos or not pos.GetXY then return math.huge end
+    local px, py = FP.SafeCall(pos.GetXY, pos)
+    if not FP.IsSafeNum(px) or not FP.IsSafeNum(py) or (px == 0 and py == 0) then return math.huge end
     -- WoW map position is [0,1]; step coords are [0,100]
     local dx = (px * 100) - sx
     local dy = (py * 100) - sy
@@ -582,12 +582,12 @@ syncFrame:SetScript("OnEvent", function(_, event, ...)
             return
         end
     elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
-        local unit, _, spellID = ...
+        local unit, arg2, arg3, _, arg5 = ...
         if unit == "player" then
-            local spellName = spellID
-            if type(spellID) == "number" and GetSpellInfo then
-                spellName = GetSpellInfo(spellID)
-            end
+            local spellID = type(arg3) == "number" and arg3 or (type(arg5) == "number" and arg5 or nil)
+            local spellName = (type(arg2) == "string" and type(arg3) ~= "number") and arg2
+                or (spellID and FP.GetSpellName and FP.GetSpellName(spellID))
+                or spellID
             if spellID == 8690 or spellID == 556 or spellName == "Hearthstone" or spellName == "Pietra del Ritorno" then
                 local curStep = FP.activeRoute and FP.currentStepIndex and FP.activeRoute.steps and FP.activeRoute.steps[FP.currentStepIndex]
                 if curStep and curStep.action == "USE_HEARTH" then

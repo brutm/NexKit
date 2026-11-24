@@ -44,12 +44,52 @@ local function SafeNumber(val, fallback)
     if val == nil then return fallback end
     if (issecretvalue and issecretvalue(val)) or (issecret and issecret(val)) then return fallback end
     local ok, res = pcall(function()
-        if type(val) == "number" then return val else return fallback end
+        if type(val) == "number" and val == val then return val else return fallback end
     end)
     if ok then
         return res
     end
     return fallback
+end
+
+local function IsSafeStr(v)
+    return type(v) == "string" and not ((issecretvalue and issecretvalue(v)) or (issecret and issecret(v))) and v ~= ""
+end
+
+local function SafeCall(fn, ...)
+    if type(fn) ~= "function" then return nil end
+    local results = { pcall(fn, ...) }
+    if not results[1] then return nil end
+    for i = 2, #results do
+        if (issecretvalue and issecretvalue(results[i])) or (issecret and issecret(results[i])) then
+            results[i] = nil
+        end
+    end
+    return unpack(results, 2)
+end
+
+local function SafeUnitExists(unit)
+    return unit and UnitExists and SafeBoolean(SafeCall(UnitExists, unit), false) or false
+end
+
+local function SafeUnitIsPlayer(unit)
+    return unit and UnitIsPlayer and SafeBoolean(SafeCall(UnitIsPlayer, unit), false) or false
+end
+
+local function SafeUnitIsUnit(a, b)
+    return a and b and UnitIsUnit and SafeBoolean(SafeCall(UnitIsUnit, a, b), false) or false
+end
+
+local function SafeUnitName(unit)
+    if not unit or not UnitName then return nil end
+    local n = SafeCall(UnitName, unit)
+    return IsSafeStr(n) and n or nil
+end
+
+local function SafeUnitGUID(unit)
+    if not unit or not UnitGUID then return nil end
+    local g = SafeCall(UnitGUID, unit)
+    return IsSafeStr(g) and g or nil
 end
 
 local function GetSettings()
@@ -152,39 +192,51 @@ local lastInspectTime = 0
 local currentTooltipOwner = nil
 local currentTooltipUnit = nil
 
-local function GetUnitSpecInfo(unit)
-    if not unit or not UnitExists(unit) or not UnitIsPlayer(unit) then return nil, nil end
+local function ReadTalentTabCompat(tab, isInspect)
+    if FP.ReadTalentTabCompat then
+        return FP.ReadTalentTabCompat(tab, isInspect)
+    end
+    if type(GetTalentTabInfo) ~= "function" then return nil, 0 end
+    local a, b, c, _, e = SafeCall(GetTalentTabInfo, tab, isInspect)
+    if type(a) == "number" and IsSafeStr(b) then
+        return b, SafeNumber(e, 0)
+    elseif IsSafeStr(a) then
+        return a, SafeNumber(c, 0)
+    end
+    return nil, 0
+end
 
-    if UnitIsUnit(unit, "player") then
-        -- 1. Modern WoW Specialization API (Retail, The War Within 11.0+, etc.)
+local function GetUnitSpecInfo(unit)
+    if not SafeUnitExists(unit) or not SafeUnitIsPlayer(unit) then return nil, nil end
+
+    if SafeUnitIsUnit(unit, "player") then
+        -- 1. Modern WoW Specialization API (Retail, 1.60.1 / 11.0+, etc.)
         local getSpec = (C_SpecializationInfo and C_SpecializationInfo.GetSpecialization) or GetSpecialization
         local getSpecInfo = (C_SpecializationInfo and C_SpecializationInfo.GetSpecializationInfo) or GetSpecializationInfo
         if type(getSpec) == "function" and type(getSpecInfo) == "function" then
-            local ok, specIndex = pcall(getSpec)
-            if ok and specIndex and type(specIndex) == "number" and specIndex > 0 then
-                local okInfo, _, name = pcall(getSpecInfo, specIndex)
-                if okInfo and name and type(name) == "string" and name ~= "" then
+            local specIndex = SafeCall(getSpec)
+            if type(specIndex) == "number" and specIndex > 0 then
+                local _, name = SafeCall(getSpecInfo, specIndex)
+                if IsSafeStr(name) then
                     return name, nil
                 end
             end
         end
 
-        -- 2. Classic Talent Tabs API (Classic Era, TBC, WotLK)
+        -- 2. Classic Talent Tabs API (supports both 3-return and 5-return signatures)
         if type(GetTalentTabInfo) == "function" then
             local maxPoints = -1
             local topName = nil
             local p = {}
-            local rawNum = (type(GetNumTalentTabs) == "function") and GetNumTalentTabs() or 3
-            local numTabs = tonumber(rawNum) or 3
+            local numTabs = SafeNumber((type(GetNumTalentTabs) == "function") and SafeCall(GetNumTalentTabs) or 3, 3)
+            if numTabs < 1 or numTabs > 4 then numTabs = 3 end
             for tab = 1, numTabs do
-                local ok, _, name, _, _, points = pcall(GetTalentTabInfo, tab)
-                if ok then
-                    points = tonumber(points) or 0
-                    p[#p + 1] = points
-                    if points > maxPoints then
-                        maxPoints = points
-                        topName = name
-                    end
+                local name, points = ReadTalentTabCompat(tab)
+                points = points or 0
+                p[#p + 1] = points
+                if points > maxPoints then
+                    maxPoints = points
+                    topName = name
                 end
             end
             local pts = (#p > 0) and table.concat(p, "/") or nil
@@ -194,7 +246,7 @@ local function GetUnitSpecInfo(unit)
             return topName, pts
         end
     else
-        local guid = UnitGUID(unit)
+        local guid = SafeUnitGUID(unit)
         if guid and cachedPlayerSpecs[guid] then
             return cachedPlayerSpecs[guid].specName, cachedPlayerSpecs[guid].pts
         end
@@ -203,16 +255,16 @@ local function GetUnitSpecInfo(unit)
 end
 
 local function RequestInspectUnit(unit)
-    if not unit or not UnitExists(unit) or not UnitIsPlayer(unit) then return end
-    if UnitIsUnit(unit, "player") then return end
-    if not (CanInspect and CanInspect(unit)) then return end
+    if not SafeUnitExists(unit) or not SafeUnitIsPlayer(unit) then return end
+    if SafeUnitIsUnit(unit, "player") then return end
+    if not CanInspect or not SafeBoolean(SafeCall(CanInspect, unit), false) then return end
     if InCombatLockdown and InCombatLockdown() then return end
-    if CheckInteractDistance and not CheckInteractDistance(unit, 1) then return end
+    if CheckInteractDistance and not SafeBoolean(SafeCall(CheckInteractDistance, unit, 1), false) then return end
 
-    local now = (GetTime and GetTime()) or 0
+    local now = (GetTime and SafeCall(GetTime)) or 0
     if (now - lastInspectTime) < 1.0 then return end
 
-    local guid = UnitGUID(unit)
+    local guid = SafeUnitGUID(unit)
     if not guid then return end
     if cachedPlayerSpecs[guid] and ((now - (cachedPlayerSpecs[guid].time or 0)) < 300) then
         return
@@ -287,8 +339,8 @@ local function ShowPortraitTooltip(owner, unit)
 end
 
 local function HandleInspectReady(guid)
-    local actualGuid = guid or lastInspectTargetGUID
-    if not actualGuid then return end
+    local actualGuid = IsSafeStr(guid) and guid or lastInspectTargetGUID
+    if not IsSafeStr(actualGuid) then return end
     if lastInspectTargetGUID and actualGuid ~= lastInspectTargetGUID then return end
     lastInspectTargetGUID = nil
 
@@ -297,10 +349,10 @@ local function HandleInspectReady(guid)
 
     -- 1. Modern WoW Inspect Specialization (Retail, TWW 11.0+)
     if GetInspectSpecialization and GetSpecializationInfoByID then
-        local ok, specID = pcall(GetInspectSpecialization, currentTooltipUnit or "target")
-        if ok and specID and type(specID) == "number" and specID > 0 then
-            local okInfo, _, name = pcall(GetSpecializationInfoByID, specID)
-            if okInfo and name and type(name) == "string" and name ~= "" then
+        local specID = SafeCall(GetInspectSpecialization, currentTooltipUnit or "target")
+        if type(specID) == "number" and specID > 0 then
+            local _, name = SafeCall(GetSpecializationInfoByID, specID)
+            if IsSafeStr(name) then
                 topName = name
             end
         end
@@ -308,19 +360,17 @@ local function HandleInspectReady(guid)
 
     -- 2. Classic Talent Tabs Inspect (Classic Era, TBC, WotLK)
     if not topName and type(GetTalentTabInfo) == "function" then
-        local rawNum = (type(GetNumTalentTabs) == "function") and GetNumTalentTabs(true) or 3
-        local numTabs = tonumber(rawNum) or 3
+        local numTabs = SafeNumber((type(GetNumTalentTabs) == "function") and SafeCall(GetNumTalentTabs, true) or 3, 3)
+        if numTabs < 1 or numTabs > 4 then numTabs = 3 end
         local maxPoints = -1
         local p = {}
         for tab = 1, numTabs do
-            local ok, _, name, _, _, points = pcall(GetTalentTabInfo, tab, true)
-            if ok then
-                points = tonumber(points) or 0
-                p[#p + 1] = points
-                if points > maxPoints then
-                    maxPoints = points
-                    topName = name
-                end
+            local name, points = ReadTalentTabCompat(tab, true)
+            points = points or 0
+            p[#p + 1] = points
+            if points > maxPoints then
+                maxPoints = points
+                topName = name
             end
         end
         if #p > 0 then
@@ -333,16 +383,16 @@ local function HandleInspectReady(guid)
 
     cachedPlayerSpecs[actualGuid] = {
         specName = topName,
-        pts = pts,
-        time = (GetTime and GetTime()) or 0,
+        pts      = pts,
+        time     = (GetTime and SafeCall(GetTime)) or 0,
     }
 
     if ClearInspectPlayer then
         pcall(ClearInspectPlayer)
     end
 
-    if currentTooltipOwner and currentTooltipUnit and UnitExists(currentTooltipUnit) then
-        if UnitGUID(currentTooltipUnit) == actualGuid and GameTooltip:IsShown() then
+    if currentTooltipOwner and currentTooltipUnit and SafeUnitExists(currentTooltipUnit) then
+        if SafeUnitGUID(currentTooltipUnit) == actualGuid and GameTooltip:IsShown() then
             ShowPortraitTooltip(currentTooltipOwner, currentTooltipUnit)
         end
     end
@@ -1373,29 +1423,37 @@ for i = 1, 5 do
     gridMembers[i] = btn
 end
 
+local pendingCombatGridSync = false
+
 local function UpdateGridMember(btn)
     if not btn then return end
     local unit = btn.unit
-    local exists = false
-    if unit and UnitExists then
-        local okE, ex = pcall(UnitExists, unit)
-        if okE then exists = SafeBoolean(ex, false) end
-    end
+    local exists = SafeUnitExists(unit)
+    local inCombat = InCombatLockdown and InCombatLockdown()
     if not exists then
-        btn:Hide()
+        if not inCombat then
+            btn:Hide()
+        else
+            pendingCombatGridSync = true
+        end
         return
     end
 
-    btn:Show()
+    if not inCombat then
+        btn:Show()
+    elseif not btn:IsShown() then
+        pendingCombatGridSync = true
+        return
+    end
 
     local color, class = GetUnitClassColor(unit)
     color = color or { r = 0.6, g = 0.6, b = 0.6 }
 
-    local name = UnitName(unit) or unit
-    if #name > 11 then
+    local name = SafeUnitName(unit) or unit
+    if type(name) == "string" and #name > 11 then
         name = string.sub(name, 1, 9) .. ".."
     end
-    btn.nameText:SetText(name)
+    btn.nameText:SetText(tostring(name or unit))
 
     local hp = 0
     if UnitHealth then
@@ -1495,7 +1553,7 @@ local function UpdateGridMember(btn)
     local powerType = 0
     if UnitPowerType then
         local ok, pt = pcall(UnitPowerType, unit)
-        if ok and pt then powerType = pt end
+        if ok then powerType = SafeNumber(pt, 0) end
     end
     if powerType == 0 then
         btn.powerBar:SetStatusBarColor(0.18, 0.45, 0.95)
@@ -1599,31 +1657,39 @@ local function UpdateGridMember(btn)
 end
 
 local function UpdatePartyGrid()
+    local inCombat = InCombatLockdown and InCombatLockdown()
     if not IsGridPartyEnabled() then
-        if gridContainer:IsShown() then gridContainer:Hide() end
+        if gridContainer:IsShown() then
+            if not inCombat then gridContainer:Hide() else pendingCombatGridSync = true end
+        end
         return
     end
 
-    local inGrp = (IsInGroup and IsInGroup())
-        or (GetNumGroupMembers and GetNumGroupMembers() > 0)
-        or (GetNumPartyMembers and GetNumPartyMembers() > 0)
+    local inGrp = (IsInGroup and SafeBoolean(SafeCall(IsInGroup), false))
+        or (GetNumGroupMembers and SafeNumber(SafeCall(GetNumGroupMembers), 0) > 0)
+        or (GetNumPartyMembers and SafeNumber(SafeCall(GetNumPartyMembers), 0) > 0)
 
     local showSolo = GetSettings().gridPartyShowSolo == true
     if not inGrp and not showSolo then
-        if gridContainer:IsShown() then gridContainer:Hide() end
+        if gridContainer:IsShown() then
+            if not inCombat then gridContainer:Hide() else pendingCombatGridSync = true end
+        end
         return
     end
 
-    gridContainer:Show()
-
-    local scale = GetSettings().gridPartyScale or 1.0
-    gridContainer:SetScale(scale)
-
     local s = GetSettings()
-    if s.gridPartyPos and not gridContainer.posLoaded then
-        gridContainer.posLoaded = true
-        gridContainer:ClearAllPoints()
-        gridContainer:SetPoint(s.gridPartyPos.point, UIParent, s.gridPartyPos.relPoint, s.gridPartyPos.x, s.gridPartyPos.y)
+    if not inCombat then
+        gridContainer:Show()
+        local scale = s.gridPartyScale or 1.0
+        gridContainer:SetScale(scale)
+
+        if s.gridPartyPos and not gridContainer.posLoaded then
+            gridContainer.posLoaded = true
+            gridContainer:ClearAllPoints()
+            gridContainer:SetPoint(s.gridPartyPos.point, UIParent, s.gridPartyPos.relPoint, s.gridPartyPos.x, s.gridPartyPos.y)
+        end
+    elseif not gridContainer:IsShown() then
+        pendingCombatGridSync = true
     end
 
     if s.gridPartyLocked ~= false then
@@ -1638,40 +1704,44 @@ local function UpdatePartyGrid()
     for i = 1, 5 do
         local btn = gridMembers[i]
         local unit = btn.unit
-        local exists = false
-        if unit and UnitExists then
-            local okE, ex = pcall(UnitExists, unit)
-            if okE then exists = SafeBoolean(ex, false) end
-        end
+        local exists = SafeUnitExists(unit)
         if not inGrp and showSolo and i > 1 then
             exists = false
         end
         if exists then
             UpdateGridMember(btn)
             activeCount = activeCount + 1
-        else
+        elseif not inCombat then
             btn:Hide()
+        else
+            pendingCombatGridSync = true
         end
     end
 
-    gridContainer:SetHeight(math.max(44, activeCount * 47))
-
-    if not (InCombatLockdown and InCombatLockdown()) then
+    if not inCombat then
+        gridContainer:SetHeight(math.max(44, activeCount * 47))
         for i = 1, 4 do
             local f = _G["PartyMemberFrame" .. i]
             if f and f:IsShown() then
                 f:Hide()
             end
         end
+    else
+        pendingCombatGridSync = true
     end
 end
 
 local function UpdateAllPartyMembers()
+    local inCombat = InCombatLockdown and InCombatLockdown()
     if IsGridPartyEnabled() then
         UpdatePartyGrid()
     else
         if gridContainer and gridContainer:IsShown() then
-            gridContainer:Hide()
+            if not inCombat then
+                gridContainer:Hide()
+            else
+                pendingCombatGridSync = true
+            end
         end
         for i = 1, 4 do
             local frame = _G["PartyMemberFrame" .. i]
@@ -1779,7 +1849,7 @@ local function UpdateNameplateUnit(unit)
     local host = (plate.UnitFrame and not IsForbiddenObj(plate.UnitFrame) and plate.UnitFrame) or plate
     if IsForbiddenObj(host) then return end
 
-    if not IsClassFeaturesEnabled() or not UnitIsPlayer(unit) then
+    if not IsClassFeaturesEnabled() or not SafeUnitIsPlayer(unit) then
         if host.nkClassBadge then host.nkClassBadge:Hide() end
         activePlayerPlates[plate] = nil
         return
@@ -1823,9 +1893,22 @@ local function UpdateNameplateUnit(unit)
         badge:SetFrameLevel(baseLevel + 25)
 
         badge:ClearAllPoints()
-        local anchor = (healthBar and healthBar:IsShown() and healthBar)
-            or (nameFs and nameFs:IsShown() and nameFs)
-            or host
+        local nameShown = nameFs and nameFs.IsShown and nameFs:IsShown()
+        local barShown = healthBar and healthBar.IsShown and healthBar:IsShown()
+        local anchor = host
+        if nameShown and barShown then
+            local okT, nTop = pcall(nameFs.GetTop, nameFs)
+            local okB, bTop = pcall(healthBar.GetTop, healthBar)
+            if okT and okB and type(nTop) == "number" and type(bTop) == "number" then
+                anchor = (nTop >= bTop) and nameFs or healthBar
+            else
+                anchor = nameFs
+            end
+        elseif nameShown then
+            anchor = nameFs
+        elseif barShown then
+            anchor = healthBar
+        end
         badge:SetPoint("BOTTOM", anchor, "TOP", 0, 4)
 
         ApplyClassTextureToIcon(badge.icon, class)
@@ -1855,11 +1938,11 @@ local function EnhanceUnitTooltip(tooltip, unitOverride)
     if not tooltip or not IsClassFeaturesEnabled() then return end
     local _, unit = tooltip:GetUnit()
     unit = unit or unitOverride
-    if not unit or not UnitExists(unit) then return end
+    if not SafeUnitExists(unit) then return end
 
-    if not UnitIsPlayer(unit) then
+    if not SafeUnitIsPlayer(unit) then
         -- For NPC / creature units, show tracked reagent drops in tooltip if any
-        local uName = UnitName(unit)
+        local uName = SafeUnitName(unit)
         if uName and FP.GetUnitTrackedReagent then
             local rInfo = FP:GetUnitTrackedReagent(unit, string.lower(uName))
             if rInfo then
@@ -1869,7 +1952,8 @@ local function EnhanceUnitTooltip(tooltip, unitOverride)
                 if tName then
                     for i = 1, n do
                         local line = _G[tName .. "TextLeft" .. i]
-                        if line and line:GetText() and line:GetText():find("Reagente", 1, true) then
+                        local txt = line and line.GetText and line:GetText()
+                        if IsSafeStr(txt) and txt:find("Reagente", 1, true) then
                             alreadyHas = true
                             break
                         end
@@ -1897,7 +1981,7 @@ local function EnhanceUnitTooltip(tooltip, unitOverride)
             local line = _G[name .. "TextLeft" .. i]
             if line then
                 local text = line:GetText()
-                if text and (text:find("Spec:", 1, true) or text:find("Specializzazione:", 1, true)) then
+                if IsSafeStr(text) and (text:find("Spec:", 1, true) or text:find("Specializzazione:", 1, true)) then
                     return
                 end
             end
@@ -1911,7 +1995,7 @@ local function EnhanceUnitTooltip(tooltip, unitOverride)
         tooltip:AddLine(specLine, 1, 1, 1)
         tooltip:Show()
     else
-        if not UnitIsUnit(unit, "player") then
+        if not SafeUnitIsUnit(unit, "player") then
             RequestInspectUnit(unit)
         end
     end
@@ -2089,6 +2173,7 @@ SafeRegisterEvent(evFrame, "UNIT_THREAT_SITUATION_UPDATE")
 SafeRegisterEvent(evFrame, "INSPECT_READY")
 SafeRegisterEvent(evFrame, "PLAYER_TALENT_UPDATE")
 SafeRegisterEvent(evFrame, "CHARACTER_POINTS_CHANGED")
+SafeRegisterEvent(evFrame, "PLAYER_REGEN_ENABLED")
 
 evFrame:SetScript("OnEvent", function(self, event, arg1, ...)
     pcall(function()
@@ -2096,6 +2181,11 @@ evFrame:SetScript("OnEvent", function(self, event, arg1, ...)
             HookBlizzardUnitFrames()
             UpdateAllPartyMembers()
             UpdateTargetFrame()
+        elseif event == "PLAYER_REGEN_ENABLED" then
+            if pendingCombatGridSync then
+                pendingCombatGridSync = false
+                UpdateAllPartyMembers()
+            end
         elseif event == "PLAYER_ENTERING_WORLD" or event == "GROUP_ROSTER_UPDATE" or event == "PARTY_MEMBERS_CHANGED"
             or event == "PARTY_LEADER_CHANGED" or event == "PARTY_MEMBER_ENABLE" or event == "PARTY_MEMBER_DISABLE"
             or event == "RAID_ROSTER_UPDATE" or event == "UNIT_CONNECTION" or event == "ZONE_CHANGED_NEW_AREA" then
@@ -2224,6 +2314,10 @@ end
 
 function FP:SetPartyGridScale(scale)
     if gridContainer and scale then
+        if InCombatLockdown and InCombatLockdown() then
+            pendingCombatGridSync = true
+            return
+        end
         gridContainer:SetScale(scale)
     end
 end
@@ -2231,8 +2325,11 @@ end
 function FP:DumpPartyStatus()
     local enabled = IsClassFeaturesEnabled()
     local gridEnabled = IsGridPartyEnabled()
-    local inGrp = (IsInGroup and IsInGroup()) or (GetNumGroupMembers and GetNumGroupMembers() > 0) or (GetNumPartyMembers and GetNumPartyMembers() > 0) or false
-    local nMembers = (GetNumGroupMembers and GetNumGroupMembers()) or (GetNumPartyMembers and GetNumPartyMembers()) or 0
+    local inGrp = (IsInGroup and SafeBoolean(SafeCall(IsInGroup), false))
+        or (GetNumGroupMembers and SafeNumber(SafeCall(GetNumGroupMembers), 0) > 0)
+        or (GetNumPartyMembers and SafeNumber(SafeCall(GetNumPartyMembers), 0) > 0) or false
+    local nMembers = (GetNumGroupMembers and SafeNumber(SafeCall(GetNumGroupMembers), 0))
+        or (GetNumPartyMembers and SafeNumber(SafeCall(GetNumPartyMembers), 0)) or 0
     FP:Print(string.format("ClassFrames: %s | Style: %s | InGroup: %s | Members: %d",
         enabled and "|cff00ff00ON|r" or "|cffff0000OFF|r",
         gridEnabled and "|cff00ff96GRIGLIA|r" or "|cffffaa00CLASSICO|r",
@@ -2241,9 +2338,9 @@ function FP:DumpPartyStatus()
         local f = _G["PartyMemberFrame" .. i]
         if f then
             local u = f.unit or ("party" .. i)
-            local exists = UnitExists(u)
-            local name = UnitName(u) or "n/a"
-            local _, engClass = UnitClass(u)
+            local exists = SafeUnitExists(u)
+            local name = SafeUnitName(u) or "n/a"
+            local _, engClass = SafeCall(UnitClass, u)
             local aurasShown = (f.nkPermanentAuras and f.nkPermanentAuras:IsShown()) and true or false
             FP:Print(string.format("  Party%d: shown=%s unit=%s exists=%s name=%s class=%s auras=%s",
                 i, tostring(f:IsShown()), u, tostring(exists), name, tostring(engClass), tostring(aurasShown)))

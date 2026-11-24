@@ -26,7 +26,321 @@ local function GetAddonVersion()
 end
 
 FP.VERSION      = GetAddonVersion()
-FP.LOGO_TEXTURE = "Interface\\AddOns\\" .. (addonName or "NexKit") .. "\\Media\\Logo.tga"
+FP.LOGO_TEXTURE = "Interface\\AddOns\\" .. (addonName or "NexusKit") .. "\\Media\\Logo.tga"
+
+------------------------------------------------------------------------
+-- Shared Safe WoW API & Secret-Value Compatibility Layer (Classic / 16001 / Retail)
+------------------------------------------------------------------------
+local function IsSecret(v)
+    return (issecretvalue and issecretvalue(v)) or (issecret and issecret(v)) or false
+end
+
+local function IsAccessible(v)
+    return v ~= nil and not IsSecret(v)
+end
+
+local function IsSafeNum(v)
+    return type(v) == "number" and not IsSecret(v) and v == v and v > -1e12 and v < 1e12
+end
+
+local function IsSafeStr(v)
+    return type(v) == "string" and not IsSecret(v) and v ~= ""
+end
+
+local function SafeCall(fn, ...)
+    if type(fn) ~= "function" then return nil end
+    local results = { pcall(fn, ...) }
+    if not results[1] then return nil end
+    for i = 2, #results do
+        if IsSecret(results[i]) then
+            results[i] = nil
+        end
+    end
+    return unpack(results, 2)
+end
+
+local function SafeBoolean(val, fallback)
+    if val == nil or IsSecret(val) then return fallback end
+    local ok, res = pcall(function()
+        if val then return true else return false end
+    end)
+    if ok then return res end
+    return fallback
+end
+
+local function SafeNumber(val, fallback)
+    if val == nil or IsSecret(val) then return fallback end
+    local ok, res = pcall(function()
+        if type(val) == "number" and val == val then return val end
+        return fallback
+    end)
+    if ok then return res end
+    return fallback
+end
+
+local function SafeRegisterEvent(f, eventName)
+    if f and f.RegisterEvent then
+        pcall(f.RegisterEvent, f, eventName)
+    end
+end
+
+local function SafeRegisterUnitEvent(f, eventName, unit)
+    if f and f.RegisterUnitEvent then
+        local ok = pcall(f.RegisterUnitEvent, f, eventName, unit)
+        if ok then return end
+    end
+    SafeRegisterEvent(f, eventName)
+end
+
+local function GetSpellNameCompat(spellID)
+    if not spellID then return nil end
+    if C_Spell and C_Spell.GetSpellName then
+        local name = SafeCall(C_Spell.GetSpellName, spellID)
+        if IsSafeStr(name) then return name end
+    end
+    if C_Spell and C_Spell.GetSpellInfo then
+        local info = SafeCall(C_Spell.GetSpellInfo, spellID)
+        if type(info) == "table" and IsSafeStr(info.name) then return info.name end
+    end
+    if GetSpellInfo then
+        local name = SafeCall(GetSpellInfo, spellID)
+        if IsSafeStr(name) then return name end
+    end
+    return nil
+end
+
+local function GetSpellTextureCompat(spellID)
+    if not spellID then return nil end
+    if C_Spell and C_Spell.GetSpellTexture then
+        local tex = SafeCall(C_Spell.GetSpellTexture, spellID)
+        if IsAccessible(tex) then return tex end
+    end
+    if C_Spell and C_Spell.GetSpellInfo then
+        local info = SafeCall(C_Spell.GetSpellInfo, spellID)
+        if type(info) == "table" and IsAccessible(info.iconID) and info.iconID then
+            return info.iconID
+        end
+    end
+    if GetSpellTexture then
+        local tex = SafeCall(GetSpellTexture, spellID)
+        if IsAccessible(tex) then return tex end
+    end
+    if GetSpellInfo then
+        local _, _, tex = SafeCall(GetSpellInfo, spellID)
+        if IsAccessible(tex) then return tex end
+    end
+    return nil
+end
+
+local function IsSpellKnownCompat(spellID)
+    if not spellID then return false end
+    if C_SpellBook and C_SpellBook.IsSpellKnown then
+        local known = SafeCall(C_SpellBook.IsSpellKnown, spellID)
+        if IsAccessible(known) and known then return true end
+        if Enum and Enum.SpellBookSpellBank and Enum.SpellBookSpellBank.Player then
+            known = SafeCall(C_SpellBook.IsSpellKnown, spellID, Enum.SpellBookSpellBank.Player)
+            if IsAccessible(known) and known then return true end
+        end
+    end
+    if IsPlayerSpell then
+        local known = SafeCall(IsPlayerSpell, spellID)
+        if IsAccessible(known) and known then return true end
+    end
+    if IsSpellKnown then
+        local known = SafeCall(IsSpellKnown, spellID)
+        if IsAccessible(known) and known then return true end
+    end
+    return false
+end
+
+local function IsSpellPassiveCompat(spellID)
+    if not spellID then return false end
+    if C_Spell and C_Spell.IsSpellPassive then
+        local p = SafeCall(C_Spell.IsSpellPassive, spellID)
+        if IsAccessible(p) then return p == true end
+    end
+    if IsPassiveSpell then
+        local p = SafeCall(IsPassiveSpell, spellID)
+        if IsAccessible(p) then return p == true end
+    end
+    return false
+end
+
+local function IsSpellUsableCompat(spellID)
+    if not spellID then return true, false end
+    if C_Spell and C_Spell.IsSpellUsable then
+        local usable, noMana = SafeCall(C_Spell.IsSpellUsable, spellID)
+        if IsAccessible(usable) then
+            return (usable == true), (IsAccessible(noMana) and noMana == true)
+        end
+    elseif IsUsableSpell then
+        local usable, noMana = SafeCall(IsUsableSpell, spellID)
+        if IsAccessible(usable) then
+            return (usable == true), (IsAccessible(noMana) and noMana == true)
+        end
+    end
+    return true, false
+end
+
+local function GetSpellCooldownCompat(spellID)
+    if not spellID then return 0, 0, true end
+    local start, dur = 0, 0
+    if C_Spell and C_Spell.GetSpellCooldown then
+        local cd = SafeCall(C_Spell.GetSpellCooldown, spellID)
+        if type(cd) == "table" and IsSafeNum(cd.startTime) and IsSafeNum(cd.duration) then
+            start = cd.startTime or 0
+            dur = cd.duration or 0
+        end
+    elseif GetSpellCooldown then
+        local s, d = SafeCall(GetSpellCooldown, spellID)
+        if IsSafeNum(s) and IsSafeNum(d) then
+            start = s or 0
+            dur = d or 0
+        end
+    end
+    local now = (GetTime and SafeCall(GetTime)) or 0
+    local remaining = 0
+    if dur > 1.5 and IsSafeNum(now) then
+        remaining = math.max(0, (start + dur) - now)
+    end
+    return remaining, dur, (remaining <= 0.2)
+end
+
+local function ReadTalentTabCompat(tabIdx, isInspect)
+    if type(GetTalentTabInfo) ~= "function" then return nil, 0 end
+    local a, b, c, _, e = SafeCall(GetTalentTabInfo, tabIdx, isInspect)
+    -- Cata/Modern 5-arg: (id, name, desc, icon, pointsSpent) vs Classic 3-arg: (name, icon, pointsSpent)
+    if IsSafeNum(a) and IsSafeStr(b) then
+        return b, SafeNumber(e, 0)
+    elseif IsSafeStr(a) then
+        return a, SafeNumber(c, 0)
+    end
+    return nil, 0
+end
+
+local function IsPlayerShieldEquipped()
+    local offhandID = GetInventoryItemID and SafeCall(GetInventoryItemID, "player", 17)
+    if not IsSafeNum(offhandID) then return false end
+    if C_Item and C_Item.GetItemInfoInstant then
+        local _, _, _, itemEquipLoc, _, classID, subclassID = SafeCall(C_Item.GetItemInfoInstant, offhandID)
+        if itemEquipLoc == "INVTYPE_SHIELD" or (classID == 4 and subclassID == 6) then
+            return true
+        end
+    elseif GetItemInfoInstant then
+        local _, _, _, itemEquipLoc, _, classID, subclassID = SafeCall(GetItemInfoInstant, offhandID)
+        if itemEquipLoc == "INVTYPE_SHIELD" or (classID == 4 and subclassID == 6) then
+            return true
+        end
+    end
+    if C_Item and C_Item.GetItemInventoryTypeByID then
+        local invType = SafeCall(C_Item.GetItemInventoryTypeByID, offhandID)
+        if invType == 14 or (Enum and Enum.InventoryType and invType == Enum.InventoryType.IndexShieldType) then
+            return true
+        end
+    end
+    if GetInventoryItemLink then
+        local link = SafeCall(GetInventoryItemLink, "player", 17)
+        if IsSafeStr(link) and (link:find("INVTYPE_SHIELD") or link:find("Shield") or link:find("Scudo")) then
+            return true
+        end
+    end
+    return false
+end
+
+function FP:GetPlayerSpecInfo()
+    local classTag = (UnitClass and select(2, SafeCall(UnitClass, "player"))) or "WARRIOR"
+    local tabIdx = nil
+    local tabPts = 0
+    local specID = nil
+    local specName = nil
+    local role = "DAMAGER"
+    local ptsStr = nil
+
+    local getSpec = (C_SpecializationInfo and C_SpecializationInfo.GetSpecialization) or GetSpecialization
+    local getSpecInfo = (C_SpecializationInfo and C_SpecializationInfo.GetSpecializationInfo) or GetSpecializationInfo
+    if type(getSpec) == "function" and type(getSpecInfo) == "function" then
+        local idx = SafeCall(getSpec)
+        if IsSafeNum(idx) and idx > 0 and idx < 6 then
+            tabIdx = idx
+            local sID, sName, _, _, sRole = SafeCall(getSpecInfo, idx)
+            if IsSafeNum(sID) then specID = sID end
+            if IsSafeStr(sName) then specName = sName end
+            if IsSafeStr(sRole) and (sRole == "TANK" or sRole == "HEALER" or sRole == "DAMAGER") then
+                role = sRole
+            end
+        end
+    end
+
+    if not tabIdx and type(GetTalentTabInfo) == "function" then
+        local rawNumTabs = (type(GetNumTalentTabs) == "function") and SafeCall(GetNumTalentTabs) or 3
+        local numTabs = SafeNumber(rawNumTabs, 3)
+        if numTabs < 1 or numTabs > 4 then numTabs = 3 end
+        local p = {}
+        local bestPts = -1
+        for t = 1, numTabs do
+            local name, points = ReadTalentTabCompat(t)
+            points = points or 0
+            p[#p + 1] = points
+            if points > bestPts then
+                bestPts = points
+                tabIdx = t
+                if name then specName = name end
+            end
+        end
+        if #p > 0 then ptsStr = table.concat(p, "/") end
+        tabPts = math.max(0, bestPts)
+        if tabPts <= 0 then
+            specName = nil
+        else
+            if (classTag == "WARRIOR" and tabIdx == 3) or (classTag == "PALADIN" and tabIdx == 2) then
+                role = "TANK"
+            elseif (classTag == "PRIEST" and (tabIdx == 1 or tabIdx == 2))
+                or (classTag == "PALADIN" and tabIdx == 1)
+                or (classTag == "SHAMAN" and tabIdx == 3)
+                or (classTag == "DRUID" and tabIdx == 3)
+            then
+                role = "HEALER"
+            end
+        end
+    end
+
+    local isShieldEquipped = IsPlayerShieldEquipped()
+    if UnitGroupRolesAssigned then
+        local grpRole = SafeCall(UnitGroupRolesAssigned, "player")
+        if grpRole == "TANK" or grpRole == "HEALER" then
+            role = grpRole
+        end
+    end
+
+    return {
+        classTag         = classTag,
+        tabIdx           = tabIdx or 1,
+        tabPts           = tabPts,
+        specID           = specID,
+        specName         = specName,
+        role             = role,
+        ptsStr           = ptsStr,
+        isShieldEquipped = isShieldEquipped,
+    }
+end
+
+FP.IsSecret              = IsSecret
+FP.IsAccessible          = IsAccessible
+FP.IsSafeNum             = IsSafeNum
+FP.IsSafeStr             = IsSafeStr
+FP.SafeCall              = SafeCall
+FP.SafeBoolean           = SafeBoolean
+FP.SafeNumber            = SafeNumber
+FP.SafeRegisterEvent     = SafeRegisterEvent
+FP.SafeRegisterUnitEvent = SafeRegisterUnitEvent
+FP.GetSpellName          = GetSpellNameCompat
+FP.GetSpellTexture       = GetSpellTextureCompat
+FP.IsSpellKnown          = IsSpellKnownCompat
+FP.IsSpellPassive        = IsSpellPassiveCompat
+FP.IsSpellUsable         = IsSpellUsableCompat
+FP.GetSpellCooldown      = GetSpellCooldownCompat
+FP.ReadTalentTabCompat   = ReadTalentTabCompat
+FP.IsPlayerShieldEquipped = IsPlayerShieldEquipped
 
 -- Export global addon table for macros, WeakAuras, and external scripts
 _G.NexKit      = FP
@@ -342,25 +656,28 @@ end
 -- Player-info helpers
 ------------------------------------------------------------------------
 function FP:GetPlayerFaction()
-    return UnitFactionGroup("player")
+    return UnitFactionGroup and SafeCall(UnitFactionGroup, "player") or nil
 end
 
 function FP:GetPlayerClass()
-    return select(2, UnitClass("player"))
+    if not UnitClass then return "WARRIOR" end
+    return select(2, SafeCall(UnitClass, "player")) or "WARRIOR"
 end
 
 function FP:GetPlayerRace()
-    return select(2, UnitRace("player"))
+    if not UnitRace then return nil end
+    return select(2, SafeCall(UnitRace, "player"))
 end
 
 function FP:GetPlayerLevel()
-    return UnitLevel("player") or 1
+    return SafeNumber(UnitLevel and SafeCall(UnitLevel, "player"), 1)
 end
 
 function FP:GetPlayerXPPercent()
-    local maxXP = UnitXPMax("player")
-    if not maxXP or maxXP == 0 then return 0 end
-    return (UnitXP("player") or 0) / maxXP
+    local maxXP = SafeNumber(UnitXPMax and SafeCall(UnitXPMax, "player"), 0)
+    if maxXP <= 0 then return 0 end
+    local curXP = SafeNumber(UnitXP and SafeCall(UnitXP, "player"), 0)
+    return curXP / maxXP
 end
 
 ------------------------------------------------------------------------
@@ -390,6 +707,11 @@ function FP:RefreshAllUI()
     if self.RefreshBuffAdvisor then self:RefreshBuffAdvisor() end
     if self.RefreshDungeonGuide then self:RefreshDungeonGuide() end
     if self.RefreshQuestRewardHighlights then self:RefreshQuestRewardHighlights() end
+    if self.RefreshClassFrames then self:RefreshClassFrames() end
+    if self.RefreshRotationAdvisor then self:RefreshRotationAdvisor() end
+    if self.RefreshTodoHUD then self:RefreshTodoHUD() end
+    if self.RefreshTodoListUI then self:RefreshTodoListUI() end
+    if self.RefreshQuestStarterAlert then self:RefreshQuestStarterAlert() end
     if self.RefreshImporterUI then self:RefreshImporterUI() end
     if self.RefreshSettingsUI then self:RefreshSettingsUI() end
     if self.RefreshWelcomeUI then self:RefreshWelcomeUI() end
@@ -660,7 +982,8 @@ local function HandleSlashCommand(input)
             FP:Print("Modulo ClassFrames non disponibile.")
         end
     elseif cmd == "rot" or cmd == "rota" or cmd == "rotation" then
-        local sub = args[1] and args[1]:lower()
+        local sub = rest and rest:match("^(%S+)")
+        sub = sub and sub:lower() or ""
         if sub == "lock" or sub == "unlock" then
             local isLocked = (sub == "lock")
             if sub == "lock" and NexusKitDB and NexusKitDB.settings and NexusKitDB.settings.rotationLocked == true then
@@ -673,11 +996,23 @@ local function HandleSlashCommand(input)
             if FP.ResetRotationAdvisorPos then
                 FP:ResetRotationAdvisorPos()
             end
+        elseif sub == "always" or sub == "combat" or sub == "target" then
+            if NexusKitDB and NexusKitDB.settings then
+                NexusKitDB.settings.rotationMode = sub
+                if FP.RefreshRotationAdvisor then FP:RefreshRotationAdvisor() end
+                if FP.RefreshSettingsUI then FP:RefreshSettingsUI() end
+                FP:Print("Rotation Advisor mode: " .. sub)
+            end
         else
             if FP.ToggleRotationAdvisor then
                 FP:ToggleRotationAdvisor()
             end
         end
+    elseif cmd == "taintlog" then
+        local cur = (GetCVar and GetCVar("taintLog")) or "0"
+        local nextVal = (cur == "0") and "2" or "0"
+        pcall(SetCVar, "taintLog", nextVal)
+        FP:Print("taintLog CVar: " .. nextVal)
     elseif cmd == "questalert" or cmd == "starteralert" then
         if NexusKitDB and NexusKitDB.settings then
             NexusKitDB.settings.enableQuestStarterAlert = not (NexusKitDB.settings.enableQuestStarterAlert ~= false)
@@ -799,8 +1134,11 @@ frame:SetScript("OnEvent", function(self, event, arg1, arg2)
 
     elseif event == "PLAYER_LOGIN" then
         local L = FP.L
-        -- Enable CVar taint logging to Logs\taint.log for deep Blizzard UI diagnostics
-        pcall(SetCVar, "taintLog", "2")
+        -- Turn off heavy diagnostic taintLog if previously enabled by old versions
+        if NexusKitDB and NexusKitDB.settings and not NexusKitDB.settings._migratedTaintLogOff then
+            NexusKitDB.settings._migratedTaintLogOff = true
+            pcall(SetCVar, "taintLog", "0")
+        end
         local lastId = NexusKitCharDB.activeRouteId
 
         -- Auto-select faction default route on first run (when activeRouteId == nil)
@@ -864,12 +1202,14 @@ frame:SetScript("OnEvent", function(self, event, arg1, arg2)
 
     elseif event == "ADDON_ACTION_FORBIDDEN" or event == "ADDON_ACTION_BLOCKED" then
         local blockedAddon = tostring(arg1 or "nil")
-        local blockedFunc = tostring(arg2 or "nil")
-        local stack = (debugstack and debugstack(2, 6, 6)) or ""
-        if DEFAULT_CHAT_FRAME then
-            DEFAULT_CHAT_FRAME:AddMessage(string.format("|cffff2040[NexusKit Diagnostica]|r %s intercettato! Addon: %s | Azione bloccata: %s", event, blockedAddon, blockedFunc))
-            if stack ~= "" then
-                DEFAULT_CHAT_FRAME:AddMessage("|cffffa040[Stack]:|r " .. stack:gsub("\n", " -> "))
+        if blockedAddon == addonName or blockedAddon == "NexusKit" or blockedAddon == "NexKit" then
+            local blockedFunc = tostring(arg2 or "nil")
+            local stack = (debugstack and debugstack(2, 6, 6)) or ""
+            if DEFAULT_CHAT_FRAME then
+                DEFAULT_CHAT_FRAME:AddMessage(string.format("|cffff2040[NexusKit Diagnostica]|r %s! Addon: %s | Action: %s", event, blockedAddon, blockedFunc))
+                if stack ~= "" then
+                    DEFAULT_CHAT_FRAME:AddMessage("|cffffa040[Stack]:|r " .. stack:gsub("\n", " -> "))
+                end
             end
         end
     end

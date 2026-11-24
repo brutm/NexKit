@@ -2166,7 +2166,13 @@ evFrame:SetScript("OnEvent", function(self, event, ...)
         UpdateCurrentInstanceState(false)
     elseif event == "PLAYER_ENTERING_WORLD" or event == "ZONE_CHANGED_NEW_AREA" then
         UpdateCurrentInstanceState(true)
-    elseif event == "UNIT_HEALTH" or event == "LOOT_OPENED" then
+    elseif event == "UNIT_HEALTH" then
+        local unit = select(1, ...)
+        if (currentInstanceRunKey or frame:IsShown()) and type(unit) == "string"
+            and (unit == "target" or unit == "mouseover" or unit == "focus" or unit:find("^boss") or unit:find("target$")) then
+            ScanUnitsForDeadBosses()
+        end
+    elseif event == "LOOT_OPENED" then
         if currentInstanceRunKey or frame:IsShown() then
             ScanUnitsForDeadBosses()
         end

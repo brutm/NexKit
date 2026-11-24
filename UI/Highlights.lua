@@ -1284,10 +1284,11 @@ eventFrame:SetScript("OnEvent", function(_, event, unit)
         pcall(UpdateTargetBadge)
         pcall(InspectInteractiveUnit, "target")
         pcall(UpdateAllNameplates)
-    elseif event == "UNIT_HEALTH" and unit == "target" then
-        if SafeCall(UnitIsDead, "target") then
+    elseif event == "UNIT_HEALTH" then
+        if unit == "target" and SafeCall(UnitIsDead, "target") then
             pcall(UpdateTargetBadge)
         end
+        return
     elseif event == "BAG_UPDATE_DELAYED" or event == "BAG_UPDATE" or event == "QUEST_WATCH_UPDATE"
         or event == "CHAT_MSG_LOOT" or event == "UNIT_INVENTORY_CHANGED"
     then
@@ -1342,7 +1343,7 @@ SlashCmdList["NKMARK"] = function(msg)
         end
     end
     if targetExists then
-        local name = UnitName("target")
+        local name = SafeCall(UnitName, "target") or "?"
         local role, questTitle = ClassifyUnit("target")
         local canAttack = UnitCanAttack and SafeCall(UnitCanAttack, "player", "target")
         local plate = C_NamePlate and C_NamePlate.GetNamePlateForUnit and SafeCall(C_NamePlate.GetNamePlateForUnit, "target")

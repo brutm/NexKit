@@ -320,6 +320,7 @@ local function ScanPlayerAurasAndForms()
     local now = (GetTime and SafeCall(GetTime)) or 0
     local totalSlots = 0
     local readableSlots = 0
+    local hadAuraError = false
 
     local function RecordAura(spellId, name, duration, expirationTime)
         local remaining = nil
@@ -346,20 +347,34 @@ local function ScanPlayerAurasAndForms()
 
     if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
         for i = 1, 80 do
-            local aura = SafeCall(C_UnitAuras.GetAuraDataByIndex, "player", i, "HELPFUL")
+            local ok, aura = pcall(C_UnitAuras.GetAuraDataByIndex, "player", i, "HELPFUL")
+            if not ok then
+                hadAuraError = true
+                break
+            end
             if not aura then break end
             totalSlots = totalSlots + 1
             if type(aura) == "table" then
-                local hasReadable = IsAccessible(aura.spellId) or IsAccessible(aura.name)
-                if hasReadable then
+                local okRead, hasReadable, sId, aName, aDur, aExp = pcall(function()
+                    local hr = IsAccessible(aura.spellId) or IsAccessible(aura.name)
+                    return hr, aura.spellId, aura.name, aura.duration, aura.expirationTime
+                end)
+                if not okRead then
+                    hadAuraError = true
+                    break
+                elseif hasReadable then
                     readableSlots = readableSlots + 1
-                    RecordAura(aura.spellId, aura.name, aura.duration, aura.expirationTime)
+                    RecordAura(sId, aName, aDur, aExp)
                 end
             end
         end
     elseif UnitBuff then
         for i = 1, 80 do
-            local name, _, _, _, duration, expirationTime, _, _, _, spellId = SafeCall(UnitBuff, "player", i)
+            local ok, name, _, _, _, duration, expirationTime, _, _, _, spellId = pcall(UnitBuff, "player", i)
+            if not ok then
+                hadAuraError = true
+                break
+            end
             if not IsAccessible(name) and not IsAccessible(spellId) then
                 if name == nil and spellId == nil then break end
                 totalSlots = totalSlots + 1
@@ -372,7 +387,7 @@ local function ScanPlayerAurasAndForms()
     end
 
     local globalSecret = (C_Secrets and C_Secrets.ShouldAurasBeSecret and SafeCall(C_Secrets.ShouldAurasBeSecret)) == true
-    if globalSecret then
+    if globalSecret or hadAuraError then
         state.restricted = true
     elseif totalSlots > 0 and readableSlots == 0 and InCombatLockdown and InCombatLockdown() then
         state.restricted = true
@@ -665,83 +680,15 @@ end
 -- Player Spec / Role & Equipment Helpers
 -------------------------------------------------------------------------------
 local function DetectRoleAndSpec()
-    local classTag = select(2, UnitClass("player")) or "WARRIOR"
+    local specInfo = FP.GetPlayerSpecInfo and FP:GetPlayerSpecInfo() or nil
+    local classTag = (specInfo and specInfo.classTag) or select(2, UnitClass("player")) or "WARRIOR"
     local raceTag = select(2, UnitRace("player")) or ""
     local rawLvl = SafeCall(UnitLevel, "player")
     local level = (IsAccessible(rawLvl) and type(rawLvl) == "number" and rawLvl) or 1
-    local role = "DAMAGER"
-    local tabIdx = nil
-    local tabPts = 0
-
-    local getSpec = (C_SpecializationInfo and C_SpecializationInfo.GetSpecialization) or GetSpecialization
-    local getSpecInfo = (C_SpecializationInfo and C_SpecializationInfo.GetSpecializationInfo) or GetSpecializationInfo
-    if type(getSpec) == "function" and type(getSpecInfo) == "function" then
-        local idx = SafeCall(getSpec)
-        if IsAccessible(idx) and idx then
-            tabIdx = idx
-            local _, _, _, _, specRole = SafeCall(getSpecInfo, idx)
-            if IsAccessible(specRole) and (specRole == "TANK" or specRole == "HEALER" or specRole == "DAMAGER") then
-                role = specRole
-            end
-        end
-    elseif type(GetNumTalentTabs) == "function" and type(GetTalentTabInfo) == "function" then
-        local rawNumTabs = SafeCall(GetNumTalentTabs)
-        local numTabs = (IsAccessible(rawNumTabs) and tonumber(rawNumTabs)) or 0
-        for t = 1, numTabs do
-            local _, _, pointsSpent = SafeCall(GetTalentTabInfo, t)
-            if IsAccessible(pointsSpent) and type(pointsSpent) == "number" and pointsSpent > tabPts then
-                tabPts = pointsSpent
-                tabIdx = t
-            end
-        end
-        if tabPts >= 1 then
-            if (classTag == "WARRIOR" and tabIdx == 3) or (classTag == "PALADIN" and tabIdx == 2) then
-                role = "TANK"
-            elseif (classTag == "PRIEST" and (tabIdx == 1 or tabIdx == 2))
-                or (classTag == "PALADIN" and tabIdx == 1)
-                or (classTag == "SHAMAN" and tabIdx == 3)
-                or (classTag == "DRUID" and tabIdx == 3)
-            then
-                role = "HEALER"
-            end
-        end
-    end
-
-    local isShieldEquipped = false
-    local offhandID = GetInventoryItemID and SafeCall(GetInventoryItemID, "player", 17)
-    if offhandID then
-        if GetItemInfoInstant then
-            local _, _, _, itemEquipLoc, _, classID, subclassID = SafeCall(GetItemInfoInstant, offhandID)
-            if itemEquipLoc == "INVTYPE_SHIELD" or (classID == 4 and subclassID == 6) then
-                isShieldEquipped = true
-            end
-        end
-        if not isShieldEquipped and C_Item and C_Item.GetItemInventoryTypeByID then
-            local invType = SafeCall(C_Item.GetItemInventoryTypeByID, offhandID)
-            if invType == 14 or (Enum and Enum.InventoryType and invType == Enum.InventoryType.IndexShieldType) then
-                isShieldEquipped = true
-            end
-        end
-        if not isShieldEquipped and GetItemInfo then
-            local _, _, _, _, _, _, _, _, itemEquipLoc = SafeCall(GetItemInfo, offhandID)
-            if itemEquipLoc == "INVTYPE_SHIELD" then
-                isShieldEquipped = true
-            end
-        end
-        if not isShieldEquipped and GetInventoryItemLink then
-            local link = SafeCall(GetInventoryItemLink, "player", 17)
-            if link and (link:find("INVTYPE_SHIELD") or link:find("Shield") or link:find("Scudo")) then
-                isShieldEquipped = true
-            end
-        end
-    end
-
-    if UnitGroupRolesAssigned then
-        local grpRole = SafeCall(UnitGroupRolesAssigned, "player")
-        if grpRole == "TANK" then
-            role = "TANK"
-        end
-    end
+    local role = (specInfo and specInfo.role) or "DAMAGER"
+    local tabIdx = (specInfo and specInfo.tabIdx) or 1
+    local tabPts = (specInfo and specInfo.tabPts) or 0
+    local isShieldEquipped = (specInfo and specInfo.isShieldEquipped) or false
 
     local s = GetBuffSettings()
     local userSpec = s and (s.rewardSpec or (s.rewardSpecByClass and s.rewardSpecByClass[classTag]))
@@ -767,6 +714,8 @@ local function DetectRoleAndSpec()
         role     = role,
         tabIdx   = tabIdx,
         tabPts   = tabPts,
+        specID   = specInfo and specInfo.specID or nil,
+        specName = specInfo and specInfo.specName or nil,
         isShieldEquipped = isShieldEquipped,
         manaMax  = manaMax,
         manaPct  = manaPct,
@@ -876,8 +825,8 @@ local CLASS_SPELLS = {
     SEAL_COMMAND       = { 20375, 20915, 20918, 20919, 20920, 27170 },
     SEAL_CRUSADER      = { 20305, 20306, 20307, 20308, 20162, 20309, 27158 },
     SEAL_WISDOM        = { 20165, 20356, 20357, 27166 },
-    SEAL_LIGHT         = { 20164, 20332, 20333, 20334, 27160 },
-    SEAL_JUSTICE       = { 20166 },
+    SEAL_LIGHT         = { 20166, 20332, 20333, 20334, 27160 },
+    SEAL_JUSTICE       = { 20164, 10324, 10325, 10326 },
 
     -- Warrior
     BATTLE_SHOUT     = { 6673, 5242, 6192, 11549, 11550, 11551, 25289, 2048, 47436 },
@@ -1363,16 +1312,16 @@ local function EvaluateRecommendations()
             satisfiedBy = allBlessings, minDur = 120,
         })
 
-        -- Righteous Fury (Furia Virtuosa): recommended for Protection paladins, tanks, or when a shield is equipped
-        local rfID, rfName = FindKnownSpell(CLASS_SPELLS.RIGHTEOUS_FURY, { "Righteous Fury", "Furia Virtuosa" })
+        -- Righteous Fury (Furia Virtuosa / Furia Retta): recommended for Protection paladins, tanks, or when a shield is equipped
+        local rfID, rfName = FindKnownSpell(CLASS_SPELLS.RIGHTEOUS_FURY, { "Righteous Fury", "Furia Virtuosa", "Furia Retta" })
         if not rfID then
             local sByName = spellbookByName or {}
-            rfID = sByName["righteous fury"] or sByName["furia virtuosa"]
+            rfID = sByName["righteous fury"] or sByName["furia virtuosa"] or sByName["furia retta"]
             rfName = rfID and (GetSpellNameCompat(rfID) or "Righteous Fury")
         end
 
         local isRFActive = (auras.activeIDs and auras.activeIDs[25780])
-            or (auras.activeNames and (auras.activeNames["righteous fury"] or auras.activeNames["furia virtuosa"]))
+            or (auras.activeNames and (auras.activeNames["righteous fury"] or auras.activeNames["furia virtuosa"] or auras.activeNames["furia retta"]))
             or (rfID and auras.activeIDs and auras.activeIDs[rfID])
 
         if rfID and isProt and not isRFActive and not auras.restricted then
@@ -1391,7 +1340,7 @@ local function EvaluateRecommendations()
                 noResource = noResource,
                 badge      = L["BUFF_BADGE_STANCE"] or "TANK",
                 kind       = "buff",
-                reason     = "Righteous Fury mancante: genera minaccia sacra extra da tank.",
+                reason     = L["BUFF_REASON_RIGHTEOUS_FURY"] or "Righteous Fury is inactive: activates extra Holy threat for tanking.",
             })
         elseif isRFActive then
             snoozedKeys["PALADIN_RF"] = nil
@@ -1467,11 +1416,13 @@ local function EvaluateRecommendations()
                 if petDead then
                     local revID, revName = FindKnownSpell(CLASS_SPELLS.REVIVE_PET)
                     if revID then
+                        local revUsable, revNoRes = IsSpellUsableCompat(revID)
                         PushSuggestion({
                             key = "HUNTER_PET", priority = 16, actionType = "spell",
                             spellID = revID, castSpell = revID, name = revName or "Revive Pet",
                             icon = GetSpellTextureCompat(revID) or "Interface\\Icons\\Ability_Hunter_BeastSoothe",
-                            usable = IsSpellUsableCompat(revID), badge = L["BUFF_BADGE_PET"] or "PET", kind = "pet",
+                            usable = revUsable, noResource = revNoRes,
+                            badge = L["BUFF_BADGE_PET"] or "PET", kind = "pet",
                             reason = L["BUFF_REASON_PET_DEAD"] or "Your pet is dead: revive it",
                         })
                     end

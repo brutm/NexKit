@@ -1839,8 +1839,19 @@ local SETTINGS_CONTROLS = {
             end,
         },
         {
+            kind = "rotationMode", key = "rotationMode", default = "always",
+            labelKey = "SETTING_ROTATION_MODE", tipKey = "SETTING_ROTATION_MODE_TIP", fallback = "Rotation visibility",
+        },
+        {
             kind = "slider", key = "rotationScale", default = 1.0, min = 0.60, max = 1.60, step = 0.05, fmt = "%.2fx",
             labelKey = "SETTING_ROTATION_SCALE", tipKey = "SETTING_ROTATION_SCALE_TIP", fallback = "Spell Rotation scale",
+            onChange = function()
+                if FP.RefreshRotationAdvisor then FP:RefreshRotationAdvisor() end
+            end,
+        },
+        {
+            kind = "slider", key = "rotationAlpha", default = 1.0, min = 0.30, max = 1.00, step = 0.05, fmt = "%.2f",
+            labelKey = "SETTING_ROTATION_ALPHA", tipKey = "SETTING_ROTATION_ALPHA_TIP", fallback = "Spell Rotation opacity",
             onChange = function()
                 if FP.RefreshRotationAdvisor then FP:RefreshRotationAdvisor() end
             end,
@@ -1965,6 +1976,12 @@ local function GetThemeDisplayName(entry)
     return (entry.labelKey and L[entry.labelKey]) or entry.fallback or entry.id
 end
 
+local ROTATION_MODE_OPTIONS = {
+    { key = "always", labelKey = "ROTATION_MODE_ALWAYS", fallback = "Always" },
+    { key = "combat", labelKey = "ROTATION_MODE_COMBAT", fallback = "In Combat Only" },
+    { key = "target", labelKey = "ROTATION_MODE_TARGET", fallback = "Target Selected" },
+}
+
 local function BuildDropdownItems(kind)
     if kind == "theme" then
         local current = (NexusKitDB and NexusKitDB.settings and NexusKitDB.settings.uiTheme) or "blizzard"
@@ -1993,6 +2010,23 @@ local function BuildDropdownItems(kind)
                     if FP.SetRewardTargetSpec then
                         FP:SetRewardTargetSpec(opt.key)
                     end
+                end,
+            })
+        end
+        return items
+    elseif kind == "rotationMode" then
+        local current = (NexusKitDB and NexusKitDB.settings and NexusKitDB.settings.rotationMode) or "always"
+        local items = {}
+        for _, opt in ipairs(ROTATION_MODE_OPTIONS) do
+            table.insert(items, {
+                text    = L[opt.labelKey] or opt.fallback,
+                checked = (current == opt.key),
+                func    = function()
+                    if NexusKitDB and NexusKitDB.settings then
+                        NexusKitDB.settings.rotationMode = opt.key
+                    end
+                    if FP.RefreshRotationAdvisor then FP:RefreshRotationAdvisor() end
+                    if FP.RefreshSettingsUI then FP:RefreshSettingsUI() end
                 end,
             })
         end
@@ -2090,7 +2124,7 @@ local function PopulateTabControls(panel, tabId, widgetStore)
             local widget = CreateSettingSlider(panel, def, y)
             widgetStore[#widgetStore + 1] = { def = def, widget = widget }
             y = y - 30
-        elseif def.kind == "locale" or def.kind == "theme" or def.kind == "rewardSpec" then
+        elseif def.kind == "locale" or def.kind == "theme" or def.kind == "rewardSpec" or def.kind == "rotationMode" then
             y = y - 4
             local widget = CreateDropdownRow(panel, def, y)
             widgetStore[#widgetStore + 1] = { def = def, widget = widget }
@@ -2449,6 +2483,20 @@ function FP:RefreshSettingsUI()
             if FP.GetRewardSpecSelection then
                 local _, label = FP:GetRewardSpecSelection()
                 displayText = label or ""
+            end
+            w.dropdown:SetSelectedText(displayText)
+            if w.dropdown.arrow then
+                w.dropdown.arrow:SetTextColor(ACCENT.r, ACCENT.g, ACCENT.b, 1)
+            end
+        elseif def.kind == "rotationMode" then
+            w.label:SetText((L[def.labelKey] or def.fallback) .. ":")
+            local currentMode = settings.rotationMode or "always"
+            local displayText = currentMode
+            for _, opt in ipairs(ROTATION_MODE_OPTIONS) do
+                if opt.key == currentMode then
+                    displayText = L[opt.labelKey] or opt.fallback
+                    break
+                end
             end
             w.dropdown:SetSelectedText(displayText)
             if w.dropdown.arrow then

@@ -43,9 +43,13 @@ end
 -------------------------------------------------------------------------------
 -- Safe WoW API & Secret Value Compatibility Guards
 -------------------------------------------------------------------------------
+local function IsSecret(v)
+    return (issecretvalue and issecretvalue(v)) or (issecret and issecret(v)) or false
+end
+
 local function IsAccessible(v)
     if v == nil then return false end
-    if issecretvalue and issecretvalue(v) then return false end
+    if IsSecret(v) then return false end
     return true
 end
 
@@ -54,7 +58,7 @@ local function SafeCall(fn, ...)
     local results = { pcall(fn, ...) }
     if not results[1] then return nil end
     for i = 2, #results do
-        if issecretvalue and issecretvalue(results[i]) then
+        if IsSecret(results[i]) then
             results[i] = nil
         end
     end
@@ -62,8 +66,7 @@ local function SafeCall(fn, ...)
 end
 
 local function SafeBoolean(val, fallback)
-    if val == nil then return fallback end
-    if issecretvalue and issecretvalue(val) then return fallback end
+    if val == nil or IsSecret(val) then return fallback end
     local ok, res = pcall(function()
         if val then return true else return false end
     end)
@@ -129,10 +132,20 @@ local function IsSpellKnownCompat(spellID)
 end
 
 local spellbookByName = {}
+local resolvedSpellCache = {}
 local spellbookLoaded = false
 
+local function InvalidateRotationCaches()
+    spellbookLoaded = false
+    for k in pairs(resolvedSpellCache) do
+        resolvedSpellCache[k] = nil
+    end
+end
+
 local function RebuildSpellbookCache()
-    spellbookByName = {}
+    for k in pairs(spellbookByName) do
+        spellbookByName[k] = nil
+    end
     if C_SpellBook and C_SpellBook.GetNumSpellBookSkillLines and C_SpellBook.GetSpellBookSkillLineInfo and C_SpellBook.GetSpellBookItemInfo then
         local bank = (Enum and Enum.SpellBookSpellBank and Enum.SpellBookSpellBank.Player) or 0
         local spellType = (Enum and Enum.SpellBookItemType and Enum.SpellBookItemType.Spell) or 1
@@ -253,9 +266,13 @@ local function UnitHasAuraNamed(unit, spellNames)
         end
         if not name and C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
             local ok, a = pcall(C_UnitAuras.GetAuraDataByIndex, unit, i, "HELPFUL")
-            if ok and type(a) == "table" then
-                if IsAccessible(a.name) then name = a.name end
-                if IsAccessible(a.spellId) then spellId = a.spellId end
+            if not ok then break end
+            if type(a) == "table" then
+                local okF = pcall(function()
+                    if IsAccessible(a.name) then name = a.name end
+                    if IsAccessible(a.spellId) then spellId = a.spellId end
+                end)
+                if not okF then break end
             end
         end
         if name then
@@ -290,9 +307,13 @@ local function UnitHasDebuffNamed(unit, spellNames)
         end
         if not name and C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
             local ok, a = pcall(C_UnitAuras.GetAuraDataByIndex, unit, i, "HARMFUL")
-            if ok and type(a) == "table" then
-                if IsAccessible(a.name) then name = a.name end
-                if IsAccessible(a.spellId) then spellId = a.spellId end
+            if not ok then break end
+            if type(a) == "table" then
+                local okF = pcall(function()
+                    if IsAccessible(a.name) then name = a.name end
+                    if IsAccessible(a.spellId) then spellId = a.spellId end
+                end)
+                if not okF then break end
             end
         end
         if name then
@@ -317,13 +338,28 @@ end
 -------------------------------------------------------------------------------
 -- Action Bar Keybind Finder Helper
 -------------------------------------------------------------------------------
+local keybindCache = {}
+
+local function InvalidateKeybindCache()
+    for k in pairs(keybindCache) do
+        keybindCache[k] = nil
+    end
+end
+
 local function GetKeybindForSpell(spellID)
     if not spellID then return nil end
+    if keybindCache[spellID] ~= nil then
+        return (keybindCache[spellID] ~= false) and keybindCache[spellID] or nil
+    end
+
     local spellName = GetSpellNameCompat(spellID)
-    if not spellName or spellName == "" then return nil end
+    if not spellName or spellName == "" then
+        keybindCache[spellID] = false
+        return nil
+    end
 
     for slot = 1, 120 do
-        local actionType, id, subType = GetActionInfo(slot)
+        local actionType, id = SafeCall(GetActionInfo, slot)
         local match = false
         if actionType == "spell" then
             if id == spellID then
@@ -333,7 +369,7 @@ local function GetKeybindForSpell(spellID)
                 if name and name == spellName then match = true end
             end
         elseif actionType == "macro" and id then
-            local mSpell = GetMacroSpell and GetMacroSpell(id)
+            local mSpell = GetMacroSpell and SafeCall(GetMacroSpell, id)
             if mSpell and (mSpell == spellID or GetSpellNameCompat(mSpell) == spellName) then
                 match = true
             end
@@ -353,17 +389,22 @@ local function GetKeybindForSpell(spellID)
                 actionName = "MULTIACTIONBAR2BUTTON" .. (slot - 48) -- Bottom Right Action Bar
             elseif slot >= 61 and slot <= 72 then
                 actionName = "MULTIACTIONBAR1BUTTON" .. (slot - 60) -- Bottom Left Action Bar
+            elseif slot >= 73 and slot <= 120 then
+                actionName = "ACTIONBUTTON" .. (((slot - 1) % 12) + 1) -- Stance / Stealth / Shapeshift bars
             end
 
-            if actionName then
-                local key = GetBindingKey(actionName)
-                if key and key ~= "" then
+            if actionName and GetBindingKey then
+                local key = SafeCall(GetBindingKey, actionName)
+                if type(key) == "string" and key ~= "" then
                     key = key:gsub("CTRL%-", "C-"):gsub("ALT%-", "A-"):gsub("SHIFT%-", "S-"):gsub("BUTTON", "M")
+                    keybindCache[spellID] = key
                     return key
                 end
             end
         end
     end
+
+    keybindCache[spellID] = false
     return nil
 end
 
@@ -371,17 +412,19 @@ end
 -- Rotation Engine: Spec & Context Detectors
 -------------------------------------------------------------------------------
 local function GetPlayerCombatContext()
-    local classTag = select(2, UnitClass("player")) or "WARRIOR"
+    local specInfo = FP.GetPlayerSpecInfo and FP:GetPlayerSpecInfo() or nil
+    local classTag = (specInfo and specInfo.classTag) or select(2, SafeCall(UnitClass, "player")) or "WARRIOR"
     local rawLvl = SafeCall(UnitLevel, "player")
     local level = (IsAccessible(rawLvl) and type(rawLvl) == "number" and rawLvl) or 1
-    local tabIdx = 1
-    local tabPts = 0
+    local tabIdx = (specInfo and specInfo.tabIdx) or 1
+    local tabPts = (specInfo and specInfo.tabPts) or 0
+    local isShieldEquipped = (specInfo and specInfo.isShieldEquipped) or false
 
-    if type(GetNumTalentTabs) == "function" and type(GetTalentTabInfo) == "function" then
+    if not specInfo and type(GetNumTalentTabs) == "function" and type(GetTalentTabInfo) == "function" then
         local rawNumTabs = SafeCall(GetNumTalentTabs)
         local numTabs = (IsAccessible(rawNumTabs) and tonumber(rawNumTabs)) or 0
         for t = 1, numTabs do
-            local _, _, pointsSpent = SafeCall(GetTalentTabInfo, t)
+            local _, pointsSpent = FP.ReadTalentTabCompat and FP.ReadTalentTabCompat(t)
             if IsAccessible(pointsSpent) and type(pointsSpent) == "number" and pointsSpent > tabPts then
                 tabPts = pointsSpent
                 tabIdx = t
@@ -389,39 +432,10 @@ local function GetPlayerCombatContext()
         end
     end
 
-    local isShieldEquipped = false
-    local offhandID = GetInventoryItemID and SafeCall(GetInventoryItemID, "player", 17)
-    if offhandID then
-        if GetItemInfoInstant then
-            local _, _, _, itemEquipLoc, _, classID, subclassID = SafeCall(GetItemInfoInstant, offhandID)
-            if itemEquipLoc == "INVTYPE_SHIELD" or (classID == 4 and subclassID == 6) then
-                isShieldEquipped = true
-            end
-        end
-        if not isShieldEquipped and C_Item and C_Item.GetItemInventoryTypeByID then
-            local invType = SafeCall(C_Item.GetItemInventoryTypeByID, offhandID)
-            if invType == 14 or (Enum and Enum.InventoryType and invType == Enum.InventoryType.IndexShieldType) then
-                isShieldEquipped = true
-            end
-        end
-        if not isShieldEquipped and GetItemInfo then
-            local _, _, _, _, _, _, _, _, itemEquipLoc = SafeCall(GetItemInfo, offhandID)
-            if itemEquipLoc == "INVTYPE_SHIELD" then
-                isShieldEquipped = true
-            end
-        end
-        if not isShieldEquipped and GetInventoryItemLink then
-            local link = SafeCall(GetInventoryItemLink, "player", 17)
-            if link and (link:find("INVTYPE_SHIELD") or link:find("Shield") or link:find("Scudo")) then
-                isShieldEquipped = true
-            end
-        end
-    end
-
     local inCombat = SafeBoolean(InCombatLockdown and InCombatLockdown(), false)
-    local hasTarget = SafeBoolean(UnitExists("target"), false)
-    local targetHostile = hasTarget and SafeBoolean(UnitCanAttack("player", "target"), false)
-    local targetDead = hasTarget and (SafeBoolean(UnitIsDead("target"), false) or SafeBoolean(UnitIsGhost("target"), false))
+    local hasTarget = SafeBoolean(UnitExists and SafeCall(UnitExists, "target"), false)
+    local targetHostile = hasTarget and SafeBoolean(UnitCanAttack and SafeCall(UnitCanAttack, "player", "target"), false)
+    local targetDead = hasTarget and (SafeBoolean(UnitIsDead and SafeCall(UnitIsDead, "target"), false) or SafeBoolean(UnitIsGhost and SafeCall(UnitIsGhost, "target"), false))
 
     local targetHp = 100
     if hasTarget and not targetDead and UnitHealth and UnitHealthMax then
@@ -432,16 +446,24 @@ local function GetPlayerCombatContext()
         end
     end
 
-    local powerType = UnitPowerType("player") or 0
+    local rawPt = UnitPowerType and SafeCall(UnitPowerType, "player")
+    local powerType = (IsAccessible(rawPt) and type(rawPt) == "number" and rawPt) or 0
     local rawPower = SafeCall(UnitPower, "player") or 0
     local power = (IsAccessible(rawPower) and type(rawPower) == "number" and rawPower) or 0
-    local comboPoints = (GetComboPoints and SafeCall(GetComboPoints, "player", "target")) or 0
+
+    local comboPoints = (GetComboPoints and SafeCall(GetComboPoints, "player", "target"))
+        or (UnitPower and SafeCall(UnitPower, "player", (Enum and Enum.PowerType and Enum.PowerType.ComboPoints) or 4))
+        or 0
+    if not IsAccessible(comboPoints) or type(comboPoints) ~= "number" then
+        comboPoints = 0
+    end
 
     return {
         classTag = classTag,
         level = level,
         tabIdx = tabIdx,
         tabPts = tabPts,
+        role = specInfo and specInfo.role or "DAMAGER",
         isShieldEquipped = isShieldEquipped,
         inCombat = inCombat,
         hasTarget = hasTarget,
@@ -461,12 +483,18 @@ local function FindBestSpellInRanks(rankList, aliases)
     if not spellbookLoaded then
         RebuildSpellbookCache()
     end
-    if type(rankList) ~= "table" then rankList = {} end
+    if type(rankList) ~= "table" or #rankList == 0 then return nil end
+
+    local cacheKey = rankList[1]
+    if cacheKey and resolvedSpellCache[cacheKey] ~= nil then
+        return (resolvedSpellCache[cacheKey] ~= false) and resolvedSpellCache[cacheKey] or nil
+    end
 
     -- 1. Try direct rank spell IDs
     for i = #rankList, 1, -1 do
         local sid = rankList[i]
         if IsSpellKnownCompat(sid) then
+            if cacheKey then resolvedSpellCache[cacheKey] = sid end
             return sid
         end
     end
@@ -478,6 +506,7 @@ local function FindBestSpellInRanks(rankList, aliases)
             local found = spellbookByName[string.lower(baseName)]
             if found then
                 local castID = (type(found) == "number") and found or rankList[i]
+                if cacheKey then resolvedSpellCache[cacheKey] = castID end
                 return castID
             end
         end
@@ -489,11 +518,13 @@ local function FindBestSpellInRanks(rankList, aliases)
             local found = spellbookByName[string.lower(alias)]
             if found then
                 local castID = (type(found) == "number") and found or rankList[1]
+                if cacheKey then resolvedSpellCache[cacheKey] = castID end
                 return castID
             end
         end
     end
 
+    if cacheKey then resolvedSpellCache[cacheKey] = false end
     return nil
 end
 
@@ -621,13 +652,15 @@ local function BuildRotation(ctx)
         }
     end
 
+    local canAttack = ctx.hasTarget and ctx.targetHostile and not ctx.targetDead
+
     ---------------------------------------------------------------------------
     -- 1. PALADIN ROTATION
     ---------------------------------------------------------------------------
     if cls == "PALADIN" then
-        local isProt = (ctx.tabIdx == 2) or (ctx.isShieldEquipped == true)
-        local isRet  = (ctx.tabIdx == 3)
-        local isHoly = (ctx.tabIdx == 1 and not isProt)
+        local isProt = (ctx.role == "TANK") or (ctx.tabIdx == 2) or (ctx.isShieldEquipped == true)
+        local isRet  = (ctx.tabIdx == 3) and not isProt
+        local isHoly = (ctx.tabIdx == 1) and not isProt
 
         -- Seal spell candidates
         local sealRighteous = FindBestSpellInRanks({ 21084, 20287, 20288, 20289, 20290, 20291, 20292, 20293, 27155 }, { "Seal of Righteousness", "Sigillo dell'Integrità", "Sigillo di Rettitudine" })
@@ -660,11 +693,11 @@ local function BuildRotation(ctx)
                 AddCandidate(holyShield, "DIFESA", "Holy Shield: Mantieni attivo il 30% di parata & danno sacro")
             end
             -- 2. Avenger's Shield (pull / ranged silence / burst)
-            if avengersShield and ctx.hasTarget and ctx.targetHostile and not ctx.targetDead then
+            if avengersShield and canAttack then
                 AddCandidate(avengersShield, "PULL/BURST", "Scudo del Vendicatore: Danno sacro a rimbalzo")
             end
             -- 3. Hammer of Wrath (Execute < 20% HP)
-            if hammerOfWrath and ctx.targetHp <= 20 and ctx.hasTarget and not ctx.targetDead then
+            if hammerOfWrath and canAttack and ctx.targetHp <= 20 then
                 AddCandidate(hammerOfWrath, "ESECUZIONE", "Hammer of Wrath: Bersaglio < 20% salute")
             end
             -- 4. Judgement (if active seal - shown live with countdown timer even if waiting)
@@ -672,21 +705,21 @@ local function BuildRotation(ctx)
                 AddCandidate(judgement, "GIUDIZIO", "Judgement: Scarica il sigillo sul bersaglio")
             end
             -- 5. Consecration (AoE / Tank Threat)
-            if consecrate and ctx.power >= 135 and (ctx.inCombat or (ctx.hasTarget and ctx.targetHostile and not ctx.targetDead)) then
+            if consecrate and (ctx.inCombat or canAttack) then
                 AddCandidate(consecrate, "MINACCIA", "Consacrazione: Minaccia ad area sul terreno")
             end
             -- 6. Hammer of Justice (Stun / Control)
-            if hammerOfJustice and ctx.hasTarget and ctx.targetHostile and not ctx.targetDead then
+            if hammerOfJustice and canAttack then
                 AddCandidate(hammerOfJustice, "STUN", "Martello della Giustizia: Stordisce il bersaglio")
             end
             -- 7. Exorcism if Demon/Undead
-            local cType = UnitCreatureType("target")
-            if exorcism and (cType == "Undead" or cType == "Non Morto" or cType == "Demon" or cType == "Demone") then
+            local cType = canAttack and UnitCreatureType and SafeCall(UnitCreatureType, "target") or nil
+            if exorcism and IsAccessible(cType) and (cType == "Undead" or cType == "Non Morto" or cType == "Demon" or cType == "Demone") then
                 AddCandidate(exorcism, "BURST", "Esorcismo: Danno sacro istantaneo contro Non Morti e Demoni")
             end
         elseif isRet then
             -- Retribution Paladin Priority:
-            if hammerOfWrath and ctx.targetHp <= 20 and ctx.hasTarget and not ctx.targetDead then
+            if hammerOfWrath and canAttack and ctx.targetHp <= 20 then
                 AddCandidate(hammerOfWrath, "ESECUZIONE", "Hammer of Wrath: Esecuzione < 20%")
             end
             local bestSeal = sealCommand or sealRighteous
@@ -696,10 +729,10 @@ local function BuildRotation(ctx)
             if judgement and activeSeal then
                 AddCandidate(judgement, "GIUDIZIO", "Giudizio sul bersaglio")
             end
-            if consecrate and ctx.power >= 250 and (ctx.inCombat or (ctx.hasTarget and ctx.targetHostile and not ctx.targetDead)) then
+            if consecrate and (ctx.inCombat or canAttack) then
                 AddCandidate(consecrate, "AOE", "Consacrazione")
             end
-            if hammerOfJustice and ctx.hasTarget and ctx.targetHostile and not ctx.targetDead then
+            if hammerOfJustice and canAttack then
                 AddCandidate(hammerOfJustice, "STUN", "Martello della Giustizia")
             end
         else
@@ -716,7 +749,7 @@ local function BuildRotation(ctx)
     -- 2. WARRIOR ROTATION
     ---------------------------------------------------------------------------
     elseif cls == "WARRIOR" then
-        local isProt = (ctx.tabIdx == 3) or ctx.isShieldEquipped
+        local isProt = (ctx.role == "TANK") or (ctx.tabIdx == 3) or ctx.isShieldEquipped
         local execute = FindBestSpellInRanks({ 5308, 20658, 20660, 20661, 20662, 25236 })
         local shieldSlam = FindBestSpellInRanks({ 23922, 23923, 23924, 23925, 25258 })
         local revenge = FindBestSpellInRanks({ 6572, 6574, 7379, 11600, 11601, 25288 })
@@ -724,40 +757,39 @@ local function BuildRotation(ctx)
         local sunder = FindBestSpellInRanks({ 7386, 7405, 8380, 11596, 11597, 25225 })
         local mortalStrike = FindBestSpellInRanks({ 12294, 21551, 21552, 21553, 25248 })
         local bloodthirst = FindBestSpellInRanks({ 23881, 23892, 23893, 23894, 25251 })
-        local overpower = FindBestSpellInRanks({ 7384, 7887, 11584, 11585 })
         local rend = FindBestSpellInRanks({ 772, 6546, 6547, 6548, 11572, 11573, 11574, 25208 })
         local heroicStrike = FindBestSpellInRanks({ 78, 284, 285, 1608, 11564, 11565, 11566, 11567, 25286 })
 
-        if ctx.targetHp <= 20 and execute and ctx.power >= 15 then
+        if canAttack and ctx.targetHp <= 20 and execute and ctx.power >= 15 then
             AddCandidate(execute, "EXECUTE", "Execute: Bersaglio sotto al 20% salute!")
         end
 
         if isProt then
-            if shieldBlock and ctx.power >= 10 and not UnitHasAuraNamed("player", { "Shield Block", "Blocco con lo Scudo" }) then
+            if shieldBlock and ctx.inCombat and ctx.isShieldEquipped and not UnitHasAuraNamed("player", { "Shield Block", "Blocco con lo Scudo" }) then
                 AddCandidate(shieldBlock, "MITIGATION", "Shield Block: Attiva il blocco garantito")
             end
-            if shieldSlam and ctx.power >= 20 and ctx.isShieldEquipped then
+            if canAttack and shieldSlam and ctx.isShieldEquipped then
                 AddCandidate(shieldSlam, "THREAT", "Shield Slam: Massima generazione di minaccia")
             end
-            if revenge and ctx.power >= 5 then
+            if canAttack and revenge then
                 AddCandidate(revenge, "PROC", "Revenge: Danno economico e stun/minaccia")
             end
-            if sunder and ctx.power >= 12 then
+            if canAttack and sunder then
                 AddCandidate(sunder, "DEBUFF", "Sunder Armor: Riduci l'armatura e accumula minaccia")
             end
-        else
-            if mortalStrike and ctx.power >= 30 then
+        elseif canAttack then
+            if mortalStrike then
                 AddCandidate(mortalStrike, "BURST", "Mortal Strike su ricarica")
             end
-            if bloodthirst and ctx.power >= 30 then
+            if bloodthirst then
                 AddCandidate(bloodthirst, "BURST", "Bloodthirst su ricarica")
             end
-            if rend and ctx.power >= 10 and not UnitHasDebuffNamed("target", { "Rend", "Lacerazione" }) then
+            if rend and not UnitHasDebuffNamed("target", { "Rend", "Lacerazione" }) then
                 AddCandidate(rend, "DOT", "Rend: Applica sanguinamento")
             end
         end
 
-        if ctx.power >= 45 and heroicStrike then
+        if canAttack and ctx.power >= 45 and heroicStrike then
             AddCandidate(heroicStrike, "DUMP", "Heroic Strike: Scarica l'eccesso di rabbia")
         end
 
@@ -768,18 +800,21 @@ local function BuildRotation(ctx)
         local frostbolt = FindBestSpellInRanks({ 116, 205, 837, 7322, 8406, 8407, 8408, 10179, 10180, 10181, 25304 })
         local fireball  = FindBestSpellInRanks({ 133, 143, 145, 3140, 8400, 8401, 8402, 10148, 10149, 10150, 10151, 25306 })
         local fireBlast = FindBestSpellInRanks({ 2136, 2137, 2138, 8412, 8413, 10197, 10199, 10200 })
-        local coneOfCold = FindBestSpellInRanks({ 120, 8492, 10159, 10160, 10161, 25311 })
 
-        if ctx.targetHp <= 15 and fireBlast then
-            AddCandidate(fireBlast, "FINISHER", "Fire Blast: Colpo istantaneo di grazia")
-        end
-        if ctx.tabIdx == 2 and fireball then
-            AddCandidate(fireball, "NUKE", "Fireball: Danno elevato")
-        elseif frostbolt then
-            AddCandidate(frostbolt, "NUKE", "Frostbolt: Rallenta e infligge danno")
-        end
-        if fireBlast then
-            AddCandidate(fireBlast, "INSTANT", "Fire Blast istantaneo")
+        if canAttack then
+            if ctx.targetHp <= 15 and fireBlast then
+                AddCandidate(fireBlast, "FINISHER", "Fire Blast: Colpo istantaneo di grazia")
+            end
+            if ctx.tabIdx == 2 and fireball then
+                AddCandidate(fireball, "NUKE", "Fireball: Danno elevato")
+            elseif frostbolt then
+                AddCandidate(frostbolt, "NUKE", "Frostbolt: Rallenta e infligge danno")
+            elseif fireball then
+                AddCandidate(fireball, "NUKE", "Fireball")
+            end
+            if fireBlast then
+                AddCandidate(fireBlast, "INSTANT", "Fire Blast istantaneo")
+            end
         end
 
     ---------------------------------------------------------------------------
@@ -791,19 +826,20 @@ local function BuildRotation(ctx)
         local sinister     = FindBestSpellInRanks({ 1752, 1757, 1758, 1759, 1760, 8621, 11293, 11294, 26861 })
         local riposte      = FindBestSpellInRanks({ 14251 })
 
-        local hasSnD = UnitHasAuraNamed("player", { "Slice and Dice", "Affettamento" })
-
-        if riposte and ctx.power >= 10 then
-            AddCandidate(riposte, "PROC", "Riposte: Disarma il nemico")
-        end
-        if ctx.comboPoints >= 1 and not hasSnD and sliceAndDice and ctx.power >= 25 then
-            AddCandidate(sliceAndDice, "BUFF", "Slice and Dice: +30% velocità d'attacco")
-        end
-        if (ctx.comboPoints >= 4 or (ctx.targetHp <= 20 and ctx.comboPoints >= 2)) and eviscerate and ctx.power >= 35 then
-            AddCandidate(eviscerate, "FINISHER", "Eviscerate: Consuma i punti combo")
-        end
-        if sinister and ctx.power >= 40 then
-            AddCandidate(sinister, "BUILDER", "Sinister Strike: Genera punti combo")
+        if canAttack then
+            local hasSnD = UnitHasAuraNamed("player", { "Slice and Dice", "Affettamento" })
+            if riposte then
+                AddCandidate(riposte, "PROC", "Riposte: Disarma il nemico")
+            end
+            if ctx.comboPoints >= 1 and not hasSnD and sliceAndDice then
+                AddCandidate(sliceAndDice, "BUFF", "Slice and Dice: +30% velocità d'attacco")
+            end
+            if (ctx.comboPoints >= 4 or (ctx.targetHp <= 20 and ctx.comboPoints >= 2)) and eviscerate then
+                AddCandidate(eviscerate, "FINISHER", "Eviscerate: Consuma i punti combo")
+            end
+            if sinister then
+                AddCandidate(sinister, "BUILDER", "Sinister Strike: Genera punti combo")
+            end
         end
 
     ---------------------------------------------------------------------------
@@ -816,20 +852,22 @@ local function BuildRotation(ctx)
         local shadowbolt = FindBestSpellInRanks({ 686, 695, 705, 1088, 1106, 7641, 11659, 11660, 11661, 25307 })
         local drainSoul  = FindBestSpellInRanks({ 1120, 8288, 8289, 11675 })
 
-        if ctx.targetHp <= 20 and drainSoul then
-            AddCandidate(drainSoul, "SHARD", "Drain Soul: Frammento d'anima sotto il 20%")
-        end
-        if agony and not UnitHasDebuffNamed("target", { "Curse of Agony", "Maledizione dell'Agonia" }) then
-            AddCandidate(agony, "DOT", "Curse of Agony: Danno prolungato")
-        end
-        if corruption and not UnitHasDebuffNamed("target", { "Corruption", "Corruzione" }) then
-            AddCandidate(corruption, "DOT", "Corruption: Danno continuo d'Ombra")
-        end
-        if immolate and not UnitHasDebuffNamed("target", { "Immolate", "Immolazione" }) then
-            AddCandidate(immolate, "DOT", "Immolate: Danno da fuoco")
-        end
-        if shadowbolt then
-            AddCandidate(shadowbolt, "NUKE", "Shadow Bolt: Danno d'ombra principale")
+        if canAttack then
+            if ctx.targetHp <= 20 and drainSoul then
+                AddCandidate(drainSoul, "SHARD", "Drain Soul: Frammento d'anima sotto il 20%")
+            end
+            if agony and not UnitHasDebuffNamed("target", { "Curse of Agony", "Maledizione dell'Agonia" }) then
+                AddCandidate(agony, "DOT", "Curse of Agony: Danno prolungato")
+            end
+            if corruption and not UnitHasDebuffNamed("target", { "Corruption", "Corruzione" }) then
+                AddCandidate(corruption, "DOT", "Corruption: Danno continuo d'Ombra")
+            end
+            if immolate and not UnitHasDebuffNamed("target", { "Immolate", "Immolazione" }) then
+                AddCandidate(immolate, "DOT", "Immolate: Danno da fuoco")
+            end
+            if shadowbolt then
+                AddCandidate(shadowbolt, "NUKE", "Shadow Bolt: Danno d'ombra principale")
+            end
         end
 
     ---------------------------------------------------------------------------
@@ -841,11 +879,13 @@ local function BuildRotation(ctx)
         local mindFlay  = FindBestSpellInRanks({ 15407, 17311, 17312, 17313, 17314, 18807 })
         local smite     = FindBestSpellInRanks({ 585, 591, 598, 984, 1004, 6060, 10933, 10934 })
 
-        if swp and not UnitHasDebuffNamed("target", { "Shadow Word: Pain", "Parola d'Ombra: Dolore" }) then
-            AddCandidate(swp, "DOT", "Shadow Word: Pain")
+        if canAttack then
+            if swp and not UnitHasDebuffNamed("target", { "Shadow Word: Pain", "Parola d'Ombra: Dolore" }) then
+                AddCandidate(swp, "DOT", "Shadow Word: Pain")
+            end
+            if mindBlast then AddCandidate(mindBlast, "BURST", "Mind Blast") end
+            if mindFlay then AddCandidate(mindFlay, "CHANNEL", "Mind Flay") elseif smite then AddCandidate(smite, "NUKE", "Smite") end
         end
-        if mindBlast then AddCandidate(mindBlast, "BURST", "Mind Blast") end
-        if mindFlay then AddCandidate(mindFlay, "CHANNEL", "Mind Flay") elseif smite then AddCandidate(smite, "NUKE", "Smite") end
 
     ---------------------------------------------------------------------------
     -- 7. HUNTER ROTATION
@@ -857,15 +897,17 @@ local function BuildRotation(ctx)
         local aimed  = FindBestSpellInRanks({ 19434, 20900, 20901, 20902, 20903, 20904, 27065 })
         local multi  = FindBestSpellInRanks({ 2643, 14288, 14289, 14290, 25294 })
 
-        if mark and not UnitHasDebuffNamed("target", { "Hunter's Mark", "Marchio del Cacciatore" }) then
-            AddCandidate(mark, "MARK", "Hunter's Mark: +Ranged Attack Power")
+        if canAttack then
+            if mark and not UnitHasDebuffNamed("target", { "Hunter's Mark", "Marchio del Cacciatore" }) then
+                AddCandidate(mark, "MARK", "Hunter's Mark: +Ranged Attack Power")
+            end
+            if sting and not UnitHasDebuffNamed("target", { "Serpent Sting", "Morso del Serpente" }) then
+                AddCandidate(sting, "DOT", "Serpent Sting: Veleno continuativo")
+            end
+            if aimed then AddCandidate(aimed, "BURST", "Aimed Shot") end
+            if multi then AddCandidate(multi, "BURST", "Multi-Shot") end
+            if arcane then AddCandidate(arcane, "INSTANT", "Arcane Shot") end
         end
-        if sting and not UnitHasDebuffNamed("target", { "Serpent Sting", "Morso del Serpente" }) then
-            AddCandidate(sting, "DOT", "Serpent Sting: Veleno continuativo")
-        end
-        if aimed then AddCandidate(aimed, "BURST", "Aimed Shot") end
-        if multi then AddCandidate(multi, "BURST", "Multi-Shot") end
-        if arcane then AddCandidate(arcane, "INSTANT", "Arcane Shot") end
 
     ---------------------------------------------------------------------------
     -- 8. DRUID ROTATION
@@ -878,22 +920,24 @@ local function BuildRotation(ctx)
         local claw       = FindBestSpellInRanks({ 1082, 3029, 5201, 9849, 9850 })
         local rip        = FindBestSpellInRanks({ 1079, 9492, 9493, 9752, 9894, 9896 })
 
-        if faerieFire and not UnitHasDebuffNamed("target", { "Faerie Fire", "Fuoco Fatato" }) then
-            AddCandidate(faerieFire, "DEBUFF", "Faerie Fire: Riduci armatura")
-        end
-        if ctx.powerType == 1 and maul and ctx.power >= 15 then -- Bear
-            AddCandidate(maul, "THREAT", "Maul: Attacco del Custode")
-        elseif ctx.powerType == 3 then -- Cat
-            if ctx.comboPoints >= 4 and rip and ctx.power >= 30 then
-                AddCandidate(rip, "FINISHER", "Rip: Sanguinamento potente")
-            elseif claw and ctx.power >= 40 then
-                AddCandidate(claw, "BUILDER", "Claw: Accumula combo")
+        if canAttack then
+            if faerieFire and not UnitHasDebuffNamed("target", { "Faerie Fire", "Fuoco Fatato" }) then
+                AddCandidate(faerieFire, "DEBUFF", "Faerie Fire: Riduci armatura")
             end
-        else
-            if moonfire and not UnitHasDebuffNamed("target", { "Moonfire", "Fuoco Lunare" }) then
-                AddCandidate(moonfire, "DOT", "Moonfire")
+            if ctx.powerType == 1 and maul then -- Bear
+                AddCandidate(maul, "THREAT", "Maul: Attacco del Custode")
+            elseif ctx.powerType == 3 then -- Cat
+                if ctx.comboPoints >= 4 and rip then
+                    AddCandidate(rip, "FINISHER", "Rip: Sanguinamento potente")
+                elseif claw then
+                    AddCandidate(claw, "BUILDER", "Claw: Accumula combo")
+                end
+            else
+                if moonfire and not UnitHasDebuffNamed("target", { "Moonfire", "Fuoco Lunare" }) then
+                    AddCandidate(moonfire, "DOT", "Moonfire")
+                end
+                if wrath then AddCandidate(wrath, "NUKE", "Wrath") end
             end
-            if wrath then AddCandidate(wrath, "NUKE", "Wrath") end
         end
 
     ---------------------------------------------------------------------------
@@ -905,12 +949,51 @@ local function BuildRotation(ctx)
         local lightning  = FindBestSpellInRanks({ 403, 529, 548, 915, 943, 6041, 10391, 10392 })
         local stormstrike = FindBestSpellInRanks({ 17364 })
 
-        if stormstrike then AddCandidate(stormstrike, "BURST", "Stormstrike: Danno doppio con armi") end
-        if flameShock and not UnitHasDebuffNamed("target", { "Flame Shock", "Folgore del Fuoco" }) then
-            AddCandidate(flameShock, "DOT", "Flame Shock")
+        if canAttack then
+            if stormstrike then AddCandidate(stormstrike, "BURST", "Stormstrike: Danno doppio con armi") end
+            if flameShock and not UnitHasDebuffNamed("target", { "Flame Shock", "Folgore del Fuoco" }) then
+                AddCandidate(flameShock, "DOT", "Flame Shock")
+            end
+            if earthShock then AddCandidate(earthShock, "INTERRUPT", "Earth Shock") end
+            if lightning then AddCandidate(lightning, "NUKE", "Lightning Bolt") end
         end
-        if earthShock then AddCandidate(earthShock, "INTERRUPT", "Earth Shock") end
-        if lightning then AddCandidate(lightning, "NUKE", "Lightning Bolt") end
+
+    ---------------------------------------------------------------------------
+    -- 10. DEATH KNIGHT ROTATION
+    ---------------------------------------------------------------------------
+    elseif cls == "DEATHKNIGHT" then
+        local icyTouch     = FindBestSpellInRanks({ 45477, 49896, 49903, 49904, 49909 }, { "Icy Touch", "Tocco Ghiacciato" })
+        local plagueStrike = FindBestSpellInRanks({ 45462, 49917, 49918, 49919, 49920, 49921 }, { "Plague Strike", "Assalto della Piaga" })
+        local deathStrike  = FindBestSpellInRanks({ 49998, 49999, 45463, 49923, 49924 }, { "Death Strike", "Assalto della Morte" })
+        local heartStrike  = FindBestSpellInRanks({ 55050, 55258, 55259, 55260, 55261, 55262 }, { "Heart Strike", "Assalto al Cuore" })
+        local bloodStrike  = FindBestSpellInRanks({ 45902, 49926, 49927, 49928, 49929, 49930 }, { "Blood Strike", "Assalto del Sangue" })
+        local obliterate   = FindBestSpellInRanks({ 49020, 51423, 51424, 51425 }, { "Obliterate", "Disintegrazione" })
+        local frostStrike  = FindBestSpellInRanks({ 49143, 51416, 51417, 51418, 51419, 55268 }, { "Frost Strike", "Assalto del Gelo" })
+        local deathCoil    = FindBestSpellInRanks({ 47541, 49892, 49893, 49894, 49895 }, { "Death Coil", "Spira Mortale" })
+
+        if canAttack then
+            if icyTouch and not UnitHasDebuffNamed("target", { "Frost Fever", "Febbre del Gelo" }) then
+                AddCandidate(icyTouch, "DISEASE", "Icy Touch: Applica Febbre del Gelo")
+            end
+            if plagueStrike and not UnitHasDebuffNamed("target", { "Blood Plague", "Piaga del Sangue" }) then
+                AddCandidate(plagueStrike, "DISEASE", "Plague Strike: Applica Piaga del Sangue")
+            end
+            if ctx.role == "TANK" and deathStrike then
+                AddCandidate(deathStrike, "SURVIVE", "Death Strike: Cura & Runic")
+            end
+            if obliterate then
+                AddCandidate(obliterate, "BURST", "Obliterate")
+            elseif heartStrike then
+                AddCandidate(heartStrike, "CLEAVE", "Heart Strike")
+            elseif bloodStrike then
+                AddCandidate(bloodStrike, "RUNE", "Blood Strike")
+            end
+            if frostStrike then
+                AddCandidate(frostStrike, "DUMP", "Frost Strike")
+            elseif deathCoil then
+                AddCandidate(deathCoil, "DUMP", "Death Coil")
+            end
+        end
     end
 
     -- Sort candidates:
@@ -1055,6 +1138,8 @@ queueSlot.keybind = queueKeybind
 -------------------------------------------------------------------------------
 -- Update Loop
 -------------------------------------------------------------------------------
+local lastUiScale, lastUiAlpha, lastUiLocked, lastUiQueueMode = nil, nil, nil, nil
+
 local function UpdateRotationUI()
     if not IsRotationEnabled() then
         if rootFrame:IsShown() then rootFrame:Hide() end
@@ -1069,21 +1154,31 @@ local function UpdateRotationUI()
     end
 
     local isLocked = IsRotationLocked()
-    if isLocked then
-        dragTitle:Hide()
-        rootFrame:EnableMouse(false)
-        rootFrame:SetBackdropColor(0, 0, 0, 0)
-        rootFrame:SetBackdropBorderColor(0, 0, 0, 0)
-    else
-        dragTitle:Show()
-        rootFrame:EnableMouse(true)
-        rootFrame:SetBackdropColor(0.08, 0.08, 0.12, 0.75)
-        rootFrame:SetBackdropBorderColor(1.0, 0.82, 0.0, 0.9)
+    if isLocked ~= lastUiLocked then
+        lastUiLocked = isLocked
+        if isLocked then
+            dragTitle:Hide()
+            rootFrame:EnableMouse(false)
+            rootFrame:SetBackdropColor(0, 0, 0, 0)
+            rootFrame:SetBackdropBorderColor(0, 0, 0, 0)
+        else
+            dragTitle:Show()
+            rootFrame:EnableMouse(true)
+            rootFrame:SetBackdropColor(0.08, 0.08, 0.12, 0.75)
+            rootFrame:SetBackdropBorderColor(1.0, 0.82, 0.0, 0.9)
+        end
     end
 
     local scale = GetRotationScale()
-    rootFrame:SetScale(scale)
-    rootFrame:SetAlpha(GetRotationAlpha())
+    if scale ~= lastUiScale then
+        lastUiScale = scale
+        rootFrame:SetScale(scale)
+    end
+    local alpha = GetRotationAlpha()
+    if alpha ~= lastUiAlpha then
+        lastUiAlpha = alpha
+        rootFrame:SetAlpha(alpha)
+    end
 
     local ctx = GetPlayerCombatContext()
     local mode = GetRotationMode()
@@ -1104,7 +1199,9 @@ local function UpdateRotationUI()
         return
     end
 
-    rootFrame:Show()
+    if not rootFrame:IsShown() then
+        rootFrame:Show()
+    end
 
     local candidates = BuildRotation(ctx)
     local first = candidates[1]
@@ -1152,8 +1249,8 @@ local function UpdateRotationUI()
             mainCooldown:Clear()
             mainTimerText:SetText("")
             mainTimerText:Hide()
-            -- Out of range check
-            if first.inRange == 0 then
+            -- Out of range check (handles both Retail boolean false and Classic numeric 0)
+            if first.inRange == 0 or first.inRange == false then
                 mainIcon:SetVertexColor(1.0, 0.4, 0.4) -- Red tint if out of range
                 mainSlot:SetBackdropBorderColor(1.0, 0.25, 0.25, 1.0)
             elseif first.noMana then
@@ -1178,9 +1275,15 @@ local function UpdateRotationUI()
     end
 
     -- Queue slot (2nd upcoming spell)
-    if IsQueueVisible() and second then
-        mainSlot:ClearAllPoints()
-        mainSlot:SetPoint("LEFT", rootFrame, "LEFT", 4, 4)
+    local showQueueNow = IsQueueVisible() and second ~= nil
+    if showQueueNow then
+        if lastUiQueueMode ~= true then
+            lastUiQueueMode = true
+            mainSlot:ClearAllPoints()
+            mainSlot:SetPoint("LEFT", rootFrame, "LEFT", 4, 4)
+            queueSlot:Show()
+            rootFrame:SetWidth(96)
+        end
         queueIcon:SetTexture(second.icon or "Interface\\Icons\\INV_Misc_QuestionMark")
         if second.keybind and second.keybind ~= "" then
             queueKeybind:SetText(second.keybind)
@@ -1188,13 +1291,14 @@ local function UpdateRotationUI()
         else
             queueKeybind:Hide()
         end
-        queueSlot:Show()
-        rootFrame:SetWidth(96)
     else
-        mainSlot:ClearAllPoints()
-        mainSlot:SetPoint("CENTER", rootFrame, "CENTER", 0, 4)
-        queueSlot:Hide()
-        rootFrame:SetWidth(56)
+        if lastUiQueueMode ~= false then
+            lastUiQueueMode = false
+            mainSlot:ClearAllPoints()
+            mainSlot:SetPoint("CENTER", rootFrame, "CENTER", 0, 4)
+            queueSlot:Hide()
+            rootFrame:SetWidth(56)
+        end
     end
 end
 
@@ -1273,8 +1377,13 @@ evFrame:SetScript("OnEvent", function(self, event, arg1, arg2, arg3, arg4, arg5)
         end
     end
 
-    if event == "SPELLS_CHANGED" or event == "LEARNED_SPELL_IN_TAB" or event == "PLAYER_TALENT_UPDATE" or event == "PLAYER_LOGIN" then
-        spellbookLoaded = false
+    if event == "ACTIONBAR_SLOT_CHANGED" or event == "UPDATE_BINDINGS" then
+        InvalidateKeybindCache()
+    end
+
+    if event == "SPELLS_CHANGED" or event == "LEARNED_SPELL_IN_TAB" or event == "PLAYER_TALENT_UPDATE" or event == "PLAYER_LOGIN" or event == "PLAYER_ENTERING_WORLD" then
+        InvalidateRotationCaches()
+        InvalidateKeybindCache()
     end
     pcall(UpdateRotationUI)
 end)

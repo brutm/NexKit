@@ -3,7 +3,7 @@
 ## Notes: Smart leveling routes (1-60 Horde & Alliance), 3D waypoint navigation, dungeon boss tactics, profession advisor, reagent tracker, player to-do list, class frames & talent spec inspector.
 ## Author: NexKit Team
 ## Version: 0.3.5
-## IconTexture: Interface\AddOns\NexKit\Media\Logo.tga
+## IconTexture: Interface\AddOns\NexusKit\Media\Logo.tga
 ## Category: Quests & Leveling
 ## SavedVariables: NexKitDB, NexusKitDB
 ## SavedVariablesPerCharacter: NexKitCharDB, NexusKitCharDB
