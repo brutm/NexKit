@@ -271,6 +271,7 @@ function FP:GetPlayerSpecInfo()
         end
     end
 
+    local tabs = nil
     if not tabIdx and type(GetTalentTabInfo) == "function" then
         local rawNumTabs = (type(GetNumTalentTabs) == "function") and SafeCall(GetNumTalentTabs) or 3
         local numTabs = SafeNumber(rawNumTabs, 3)
@@ -287,6 +288,7 @@ function FP:GetPlayerSpecInfo()
                 if name then specName = name end
             end
         end
+        tabs = p
         if #p > 0 then ptsStr = table.concat(p, "/") end
         tabPts = math.max(0, bestPts)
         if tabPts <= 0 then
@@ -316,6 +318,7 @@ function FP:GetPlayerSpecInfo()
         classTag         = classTag,
         tabIdx           = tabIdx or 1,
         tabPts           = tabPts,
+        tabs             = tabs,
         specID           = specID,
         specName         = specName,
         role             = role,
@@ -336,11 +339,15 @@ local DISPEL_COLORS = {
 }
 
 local keybindCache = {}
+local actionSlotCache = {}
 local dispelCache = nil
 
 function FP:InvalidateSpellKeybindCache()
     for k in pairs(keybindCache) do
         keybindCache[k] = nil
+    end
+    for k in pairs(actionSlotCache) do
+        actionSlotCache[k] = nil
     end
 end
 
@@ -348,23 +355,22 @@ function FP:InvalidateDispelCache()
     dispelCache = nil
 end
 
-function FP:GetSpellKeybind(spellID)
-    if not spellID then return nil end
+local function ScanActionBarForSpell(spellID)
+    if not spellID then return nil, nil end
     if keybindCache[spellID] ~= nil then
-        return (keybindCache[spellID] ~= false) and keybindCache[spellID] or nil
+        local kb = (keybindCache[spellID] ~= false) and keybindCache[spellID] or nil
+        local sl = (actionSlotCache[spellID] ~= false) and actionSlotCache[spellID] or nil
+        return kb, sl
     end
 
     local spellName = GetSpellNameCompat(spellID)
-    if not IsSafeStr(spellName) then
+    if not IsSafeStr(spellName) or not GetActionInfo then
         keybindCache[spellID] = false
-        return nil
+        actionSlotCache[spellID] = false
+        return nil, nil
     end
 
-    if not GetActionInfo then
-        keybindCache[spellID] = false
-        return nil
-    end
-
+    local firstMatchedSlot = nil
     for slot = 1, 120 do
         local actionType, id = SafeCall(GetActionInfo, slot)
         local matched = false
@@ -385,6 +391,7 @@ function FP:GetSpellKeybind(spellID)
         end
 
         if matched then
+            if not firstMatchedSlot then firstMatchedSlot = slot end
             local actionName = nil
             if slot <= 12 then
                 actionName = "ACTIONBUTTON" .. slot
@@ -407,14 +414,109 @@ function FP:GetSpellKeybind(spellID)
                 if IsSafeStr(key) then
                     key = key:gsub("CTRL%-", "C-"):gsub("ALT%-", "A-"):gsub("SHIFT%-", "S-"):gsub("BUTTON", "M")
                     keybindCache[spellID] = key
-                    return key
+                    actionSlotCache[spellID] = slot
+                    return key, slot
                 end
             end
         end
     end
 
     keybindCache[spellID] = false
-    return nil
+    actionSlotCache[spellID] = firstMatchedSlot or false
+    return nil, firstMatchedSlot
+end
+
+function FP:GetSpellKeybind(spellID)
+    local key = ScanActionBarForSpell(spellID)
+    return key
+end
+
+function FP:GetSpellActionSlot(spellID)
+    local _, slot = ScanActionBarForSpell(spellID)
+    return slot
+end
+
+local function ReadCooldownForID(queryID, now)
+    if not queryID then return 0, 0 end
+    if C_Spell and C_Spell.GetSpellCooldown then
+        local cd = SafeCall(C_Spell.GetSpellCooldown, queryID)
+        if type(cd) == "table" and IsSafeNum(cd.startTime) and IsSafeNum(cd.duration) then
+            local s = cd.startTime or 0
+            local d = cd.duration or 0
+            local isReal = (cd.isOnGCD == false and d > 0) or (cd.isOnGCD == nil and d > 1.5)
+            if isReal and s > 0 then
+                return math.max(0, (s + d) - now), d
+            end
+        end
+    elseif GetSpellCooldown then
+        local s, d = SafeCall(GetSpellCooldown, queryID)
+        if IsSafeNum(s) and IsSafeNum(d) and d > 1.5 and s > 0 then
+            return math.max(0, (s + d) - now), d
+        end
+    end
+    return 0, 0
+end
+
+local function GetAccurateSpellCooldown(spellID, extraArg)
+    if type(spellID) == "table" then spellID = extraArg end
+    if not spellID then return 0, 0, true end
+
+    local now = (GetTime and SafeCall(GetTime)) or 0
+    if not IsSafeNum(now) then now = 0 end
+
+    local queryID = spellID
+    if C_Spell and C_Spell.GetOverrideSpell then
+        local ov = SafeCall(C_Spell.GetOverrideSpell, spellID)
+        if IsSafeNum(ov) and ov > 0 then queryID = ov end
+    elseif FindSpellOverrideByID then
+        local ov = SafeCall(FindSpellOverrideByID, spellID)
+        if IsSafeNum(ov) and ov > 0 then queryID = ov end
+    end
+
+    local remaining, dur = ReadCooldownForID(queryID, now)
+    if remaining <= 0 and queryID ~= spellID then
+        remaining, dur = ReadCooldownForID(spellID, now)
+    end
+
+    -- Fallback by spell name (handles custom/rank spellID differences)
+    if remaining <= 0 and GetSpellCooldown then
+        local spellName = GetSpellNameCompat(spellID)
+        if IsSafeStr(spellName) then
+            local s, d = SafeCall(GetSpellCooldown, spellName)
+            if IsSafeNum(s) and IsSafeNum(d) and d > 1.5 and s > 0 then
+                remaining = math.max(0, (s + d) - now)
+                dur = d
+            end
+        end
+    end
+
+    -- Charge-based abilities: if 0 charges remain, expose recharge timer
+    if C_Spell and C_Spell.GetSpellCharges then
+        local ch = SafeCall(C_Spell.GetSpellCharges, queryID)
+        if type(ch) == "table" and IsSafeNum(ch.currentCharges) and IsSafeNum(ch.maxCharges) and ch.maxCharges > 1 then
+            if ch.currentCharges == 0 and IsSafeNum(ch.cooldownStartTime) and IsSafeNum(ch.cooldownDuration) and ch.cooldownDuration > 0 then
+                local chRem = math.max(0, (ch.cooldownStartTime + ch.cooldownDuration) - now)
+                if chRem > remaining then
+                    remaining = chRem
+                    dur = ch.cooldownDuration
+                end
+            end
+        end
+    end
+
+    -- Action bar fallback (reads exact bar button cooldown if spell query yielded 0)
+    if remaining <= 0 and GetActionCooldown then
+        local slot = FP:GetSpellActionSlot(spellID)
+        if slot then
+            local s, d = SafeCall(GetActionCooldown, slot)
+            if IsSafeNum(s) and IsSafeNum(d) and d > 1.5 and s > 0 then
+                remaining = math.max(0, (s + d) - now)
+                dur = d
+            end
+        end
+    end
+
+    return remaining, dur, (remaining <= 0.15)
 end
 
 local function IsSpellHelpfulCompat(spellID)
@@ -686,7 +788,7 @@ FP.GetSpellTexture       = GetSpellTextureCompat
 FP.IsSpellKnown          = IsSpellKnownCompat
 FP.IsSpellPassive        = IsSpellPassiveCompat
 FP.IsSpellUsable         = IsSpellUsableCompat
-FP.GetSpellCooldown      = GetSpellCooldownCompat
+FP.GetSpellCooldown      = GetAccurateSpellCooldown
 FP.ReadTalentTabCompat   = ReadTalentTabCompat
 FP.IsPlayerShieldEquipped = IsPlayerShieldEquipped
 
