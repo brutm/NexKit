@@ -504,17 +504,25 @@ local lastCastName = nil
 local lastSentSpellID = nil
 local lastSentName = nil
 local lastSentTime = 0
+local lastCastStartTime = 0
 local lastActionPressSpellID = nil
 local lastActionPressName = nil
 local lastActionPressTime = 0
 local activeSealGraceUntil = 0
 local combatTrackedSealUntil = 0
 local lastConfirmedSealUntil = 0
+local observedSealDuration = 30.0
+local lastKnownSealMatchedAt = 0
+local hadLiveSealBeforeJudgement = false
 local sealConsumedByJudgement = nil
 local pendingJudgementVerifyAt = 0
+local lastRecommendedSealTime = 0
+local lastRecommendedSealID = nil
+local trackedPaladinCDs = {}
+local lastPaladinCDCount = 0
 
 local PALADIN_SEAL_SPELLS = {
-    [20154] = true, [21082] = true, [21084] = true, [20287] = true, [20288] = true, [20289] = true, [20290] = true,
+    [864] = true, [20154] = true, [21082] = true, [21084] = true, [20287] = true, [20288] = true, [20289] = true, [20290] = true,
     [20291] = true, [20292] = true, [20293] = true, [27155] = true, -- Seal of Righteousness
     [20375] = true, [20915] = true, [20918] = true, [20919] = true, [20920] = true, [27170] = true, -- Seal of Command
     [20165] = true, [20356] = true, [20357] = true, [27166] = true, -- Seal of Wisdom
@@ -569,7 +577,7 @@ local function IsPaladinSealSpellOrBuff(name, sid, extraIDs, extraNames, icon, e
 end
 
 local function IsJudgementSpell(name, sid)
-    if sid == 20271 or sid == 53408 or sid == 53407 or sid == 20473 then
+    if sid == 20271 or sid == 53408 or sid == 53407 or sid == 440677 or sid == 20473 then
         if sid == 20473 then return false end
         return true
     end
@@ -610,6 +618,7 @@ local function IsPaladinSealActive(knownSeals)
 
     local matchedLive = false
     local matchedExp = 0
+    local matchedDur = 0
     local totalSlots = 0
     local readableSlots = 0
     local hadAuraError = false
@@ -628,11 +637,14 @@ local function IsPaladinSealActive(knownSeals)
                 local aura = SafeCall(C_UnitAuras.GetPlayerAuraBySpellID, sid)
                 if type(aura) == "table" then
                     matchedLive = true
-                    local okExp, expT = pcall(function()
-                        return IsAccessible(aura.expirationTime) and tonumber(aura.expirationTime) or 0
+                    local okExp, expT, durT = pcall(function()
+                        local ex = IsAccessible(aura.expirationTime) and tonumber(aura.expirationTime) or 0
+                        local du = IsAccessible(aura.duration) and tonumber(aura.duration) or 0
+                        return ex, du
                     end)
-                    if okExp and type(expT) == "number" and expT > 0 then
-                        matchedExp = expT
+                    if okExp then
+                        if type(expT) == "number" and expT > 0 then matchedExp = expT end
+                        if type(durT) == "number" and durT > 0 then matchedDur = durT end
                     end
                     break
                 end
@@ -652,12 +664,13 @@ local function IsPaladinSealActive(knownSeals)
                 if not aura then break end
                 totalSlots = totalSlots + 1
                 if type(aura) == "table" then
-                    local okRead, aName, aSid, aIcon, aExp = pcall(function()
+                    local okRead, aName, aSid, aIcon, aExp, aDur = pcall(function()
                         local n = IsAccessible(aura.name) and aura.name or nil
                         local s = IsAccessible(aura.spellId) and aura.spellId or nil
                         local ic = IsAccessible(aura.icon) and aura.icon or nil
                         local ex = IsAccessible(aura.expirationTime) and tonumber(aura.expirationTime) or 0
-                        return n, s, ic, ex
+                        local du = IsAccessible(aura.duration) and tonumber(aura.duration) or 0
+                        return n, s, ic, ex, du
                     end)
                     if not okRead then
                         hadAuraError = true
@@ -668,6 +681,7 @@ local function IsPaladinSealActive(knownSeals)
                         if IsPaladinSealSpellOrBuff(aName, aSid, extraIDs, extraNames, aIcon, extraIcons) then
                             matchedLive = true
                             matchedExp = (type(aExp) == "number" and aExp > 0) and aExp or 0
+                            matchedDur = (type(aDur) == "number" and aDur > 0) and aDur or 0
                             break
                         end
                     end
@@ -675,7 +689,7 @@ local function IsPaladinSealActive(knownSeals)
             end
         elseif UnitBuff then
             for i = 1, 40 do
-                local ok, bName, _, bIcon, _, _, bExp, _, _, _, bSid = pcall(UnitBuff, "player", i)
+                local ok, bName, _, bIcon, _, bDur, bExp, _, _, _, bSid = pcall(UnitBuff, "player", i)
                 if not ok then
                     hadAuraError = true
                     break
@@ -688,11 +702,13 @@ local function IsPaladinSealActive(knownSeals)
                 local s = IsAccessible(bSid) and bSid or nil
                 local ic = IsAccessible(bIcon) and bIcon or nil
                 local ex = (IsAccessible(bExp) and tonumber(bExp)) or 0
+                local du = (IsAccessible(bDur) and tonumber(bDur)) or 0
                 if n or s or ic then
                     readableSlots = readableSlots + 1
                     if IsPaladinSealSpellOrBuff(n, s, extraIDs, extraNames, ic, extraIcons) then
                         matchedLive = true
                         matchedExp = (ex > 0) and ex or 0
+                        matchedDur = (du > 0) and du or 0
                         break
                     end
                 end
@@ -710,11 +726,20 @@ local function IsPaladinSealActive(knownSeals)
     lastSealDebug.matchedLive = matchedLive
 
     if matchedLive then
-        lastConfirmedSealUntil = (matchedExp > now) and matchedExp or (now + 30.0)
+        lastKnownSealMatchedAt = now
+        if matchedDur >= 60 then
+            observedSealDuration = matchedDur
+        elseif matchedDur == 0 and matchedExp == 0 then
+            observedSealDuration = math.max(observedSealDuration, 1800.0)
+        elseif matchedDur > 15 then
+            observedSealDuration = matchedDur
+        end
+        lastConfirmedSealUntil = (matchedExp > now) and matchedExp or (now + observedSealDuration)
         combatTrackedSealUntil = math.max(combatTrackedSealUntil, lastConfirmedSealUntil)
         if pendingJudgementVerifyAt > 0 and now >= pendingJudgementVerifyAt then
             sealConsumedByJudgement = false
             pendingJudgementVerifyAt = 0
+            hadLiveSealBeforeJudgement = false
         end
         return true
     end
@@ -725,8 +750,11 @@ local function IsPaladinSealActive(knownSeals)
 
     -- Auras are readable and no Seal buff was found:
     if pendingJudgementVerifyAt > 0 and now >= pendingJudgementVerifyAt then
-        sealConsumedByJudgement = true
+        if hadLiveSealBeforeJudgement and sealConsumedByJudgement ~= false then
+            sealConsumedByJudgement = true
+        end
         pendingJudgementVerifyAt = 0
+        hadLiveSealBeforeJudgement = false
     end
     return (activeSealGraceUntil > now)
 end
@@ -792,7 +820,7 @@ local function BuildRotation(ctx)
         local isRet  = (ctx.tabIdx == 3) and not isProt
         local isHoly = (ctx.tabIdx == 1) and not isProt
 
-        local sealRighteous = FindBestSpellInRanks({ 20154, 21084, 20287, 20288, 20289, 20290, 20291, 20292, 20293, 27155 }, { "Seal of Righteousness", "Sigillo dell'Integrità", "Sigillo della Rettitudine", "Sigillo di Rettitudine" })
+        local sealRighteous = FindBestSpellInRanks({ 864, 20154, 21084, 20287, 20288, 20289, 20290, 20291, 20292, 20293, 27155 }, { "Seal of Righteousness", "Sigillo dell'Integrità", "Sigillo della Rettitudine", "Sigillo di Rettitudine" })
         local sealFury      = FindBestSpellInRanks({}, { "Seal of Fury", "Sigillo della Furia", "Sigillo di Furia" })
         local sealCommand   = FindBestSpellInRanks({ 20375, 20915, 20918, 20919, 20920, 27170 }, { "Seal of Command", "Sigillo del Comando" })
         local sealVengeance = FindBestSpellInRanks({ 31801, 53736, 348704, 31892, 53720 }, { "Seal of Vengeance", "Seal of Truth", "Seal of Corruption", "Seal of Blood", "Seal of the Martyr" })
@@ -808,11 +836,16 @@ local function BuildRotation(ctx)
         local avengersShield   = FindBestSpellInRanks({ 31935, 31589, 32699, 32700, 48827 }, { "Avenger's Shield", "Scudo del Vendicatore" })
         local crusaderStrike   = FindBestSpellInRanks({ 35395 }, { "Crusader Strike", "Assalto del Crociato" })
         local divineStorm      = FindBestSpellInRanks({ 53385 }, { "Divine Storm", "Tempesta Divina" })
-        local judgement        = FindBestSpellInRanks({ 20271, 53408, 53407 }, { "Judgement", "Judgement of Light", "Judgement of Wisdom", "Giudizio", "Giudizio della Luce", "Giudizio della Saggezza" })
+        local judgement        = FindBestSpellInRanks({ 20271, 53408, 53407, 440677 }, { "Judgement", "Judgement of Light", "Judgement of Wisdom", "Giudizio", "Giudizio della Luce", "Giudizio della Saggezza" })
         local consecrate       = FindBestSpellInRanks({ 26573, 20116, 20922, 20923, 20924, 27173, 48819 }, { "Consecration", "Consacrazione" })
         local hammerOfWrath    = FindBestSpellInRanks({ 24275, 24274, 24239, 27180, 48806 }, { "Hammer of Wrath", "Martello dell'Ira" })
         local exorcism         = FindBestSpellInRanks({ 879, 5614, 5615, 10312, 10313, 10314, 27138, 48801 }, { "Exorcism", "Esorcismo" })
         local hammerOfJustice  = FindBestSpellInRanks({ 853, 5588, 5589, 10308 }, { "Hammer of Justice", "Martello della Giustizia" })
+
+        trackedPaladinCDs = {
+            holyStrike, holyShield, shieldRighteous, hammerRighteous, avengersShield,
+            crusaderStrike, divineStorm, judgement, consecrate, hammerOfWrath, exorcism, hammerOfJustice,
+        }
 
         -- Seal preference: Group Tank -> Seal of Fury / Righteousness; Retri/Prot hybrid or fast weapon -> Seal of Righteousness; Slow 2H Ret -> Command; Holy low mana -> Wisdom
         local preferredSeal = nil
@@ -1716,6 +1749,24 @@ local function UpdateRotationUI()
     local first = candidates[1]
     local second = candidates[2]
 
+    local uiNow = (GetTime and SafeCall(GetTime)) or 0
+    if type(uiNow) == "number" then
+        if first and first.badge == "SIGILLO" then
+            lastRecommendedSealTime = uiNow
+            lastRecommendedSealID = first.spellID
+        end
+        local cdCnt = 0
+        for _, sid in pairs(trackedPaladinCDs) do
+            if type(sid) == "number" then
+                local _, _, rdy = GetSpellCooldownCompat(sid)
+                if rdy == false then
+                    cdCnt = cdCnt + 1
+                end
+            end
+        end
+        lastPaladinCDCount = cdCnt
+    end
+
     if first then
         if not rootFrame:IsShown() then
             rootFrame:Show()
@@ -1870,26 +1921,37 @@ evFrame:SetScript("OnEvent", function(self, event, arg1, arg2, arg3, arg4, arg5)
     local now = (GetTime and SafeCall(GetTime)) or 0
     if type(now) ~= "number" then now = 0 end
 
-    if (event == "UNIT_SPELLCAST_SENT" or event == "UNIT_SPELLCAST_START") and IsAccessible(arg1) and arg1 == "player" then
+    if event == "UNIT_SPELLCAST_SENT" and IsAccessible(arg1) and arg1 == "player" then
+        -- Blizzard signature: UNIT_SPELLCAST_SENT(unit, target, castGUID, spellID) - never read arg2 target as spell name
         local sentID = (IsAccessible(arg4) and type(arg4) == "number" and arg4)
             or (IsAccessible(arg3) and type(arg3) == "number" and arg3)
             or nil
-        local sentName = (IsAccessible(arg2) and type(arg2) == "string" and (event == "UNIT_SPELLCAST_SENT" or arg2 ~= "")) and arg2 or nil
-        if sentID and not sentName then
-            sentName = GetSpellNameCompat(sentID)
-        end
-        if not sentID and not sentName and (now - lastActionPressTime) < 1.5 then
+        local sentName = sentID and GetSpellNameCompat(sentID) or nil
+        if not sentID and (now - lastActionPressTime) < 1.8 then
             sentID = lastActionPressSpellID
             sentName = lastActionPressName
         end
-        if sentID or sentName then
+        if sentID or (sentName and sentName ~= "") then
             lastSentSpellID = sentID
             lastSentName = sentName
             lastSentTime = now
             if IsPaladinSealSpellOrBuff(sentName, sentID) then
-                activeSealGraceUntil = math.max(activeSealGraceUntil, now + 2.0)
-                combatTrackedSealUntil = math.max(combatTrackedSealUntil, now + 30.0)
+                activeSealGraceUntil = math.max(activeSealGraceUntil, now + 3.0)
+                combatTrackedSealUntil = math.max(combatTrackedSealUntil, now + observedSealDuration)
             end
+        end
+    elseif event == "UNIT_SPELLCAST_START" and IsAccessible(arg1) and arg1 == "player" then
+        lastCastStartTime = now
+        local stID = (IsAccessible(arg3) and type(arg3) == "number" and arg3)
+            or (IsAccessible(arg5) and type(arg5) == "number" and arg5)
+            or nil
+        local stName = stID and GetSpellNameCompat(stID)
+            or (IsAccessible(arg2) and type(arg2) == "string" and not arg2:match("^Cast%-") and arg2 ~= "" and arg2)
+            or nil
+        if stID or stName then
+            lastSentSpellID = stID
+            lastSentName = stName
+            lastSentTime = now
         end
     elseif event == "UNIT_SPELLCAST_SUCCEEDED" and IsAccessible(arg1) and arg1 == "player" then
         local spellName, spellID = nil, nil
@@ -1897,7 +1959,7 @@ evFrame:SetScript("OnEvent", function(self, event, arg1, arg2, arg3, arg4, arg5)
             -- Modern Retail / 1.60.1 signature: arg1="player", arg2=castGUID, arg3=spellID
             spellID = arg3
             spellName = GetSpellNameCompat(spellID)
-        elseif IsAccessible(arg2) and type(arg2) == "string" and (type(arg3) ~= "number") then
+        elseif IsAccessible(arg2) and type(arg2) == "string" and not arg2:match("^Cast%-") and arg2 ~= "" and (type(arg3) ~= "number") then
             -- Legacy 3.3.5 / Classic signature: arg1="player", arg2=spellName, arg3=spellRank, arg4=lineID, arg5=spellID
             spellName = arg2
             if IsAccessible(arg5) and type(arg5) == "number" then
@@ -1910,37 +1972,54 @@ evFrame:SetScript("OnEvent", function(self, event, arg1, arg2, arg3, arg4, arg5)
             spellName = GetSpellNameCompat(spellID)
         end
 
-        if not spellID and lastSentSpellID and (now - lastSentTime) < 1.5 then
+        if not spellID and lastSentSpellID and (now - lastSentTime) < 2.0 then
             spellID = lastSentSpellID
         end
-        if not spellName and lastSentName and (now - lastSentTime) < 1.5 then
+        if (not spellName or spellName == "") and lastSentName and lastSentName ~= "" and (now - lastSentTime) < 2.0 then
             spellName = lastSentName
         end
-        if not spellID and not spellName and (now - lastActionPressTime) < 1.5 then
+        if not spellID and (not spellName or spellName == "") and (now - lastActionPressTime) < 2.0 then
             spellID = lastActionPressSpellID
             spellName = lastActionPressName
         end
-        if not spellName and spellID then
+        if (not spellName or spellName == "") and spellID then
             spellName = GetSpellNameCompat(spellID)
         end
 
-        lastCastSpellID = spellID
+        -- Secret-combat fallback: if Blizzard masked spellID in UNIT_SPELLCAST_* on an instant GCD cast
+        -- right after recommending SIGILLO and no cooldown spell just triggered, treat it as the Seal
+        if not spellID and (not spellName or spellName == "") and (now - lastCastStartTime) > 0.35 and (now - lastRecommendedSealTime) < 2.5 then
+            local cdCntNow = 0
+            for _, sid in pairs(trackedPaladinCDs) do
+                if type(sid) == "number" then
+                    local _, _, rdy = GetSpellCooldownCompat(sid)
+                    if rdy == false then cdCntNow = cdCntNow + 1 end
+                end
+            end
+            if cdCntNow <= lastPaladinCDCount then
+                spellID = lastRecommendedSealID
+                spellName = spellID and GetSpellNameCompat(spellID) or "Seal"
+            end
+        end
+
+        if spellID then lastCastSpellID = spellID end
         lastCastTime = now
-        if spellName then lastCastName = spellName end
-        if (spellID or spellName) and FP.RecordSpellCastCooldown then
+        if spellName and spellName ~= "" then lastCastName = spellName end
+        if (spellID or (spellName and spellName ~= "")) and FP.RecordSpellCastCooldown then
             FP.RecordSpellCastCooldown(spellID, spellName)
         end
 
         if IsJudgementSpell(spellName, spellID) then
             activeSealGraceUntil = 0
-            pendingJudgementVerifyAt = now + 0.45
+            hadLiveSealBeforeJudgement = (lastKnownSealMatchedAt > 0 and (now - lastKnownSealMatchedAt) < 1.5)
+            pendingJudgementVerifyAt = hadLiveSealBeforeJudgement and (now + 0.45) or 0
             if sealConsumedByJudgement == true then
                 combatTrackedSealUntil = 0
                 lastConfirmedSealUntil = 0
             end
         elseif IsPaladinSealSpellOrBuff(spellName, spellID) then
             activeSealGraceUntil = now + 3.0
-            combatTrackedSealUntil = now + 30.0
+            combatTrackedSealUntil = now + observedSealDuration
         end
     end
 
@@ -2018,10 +2097,11 @@ function FP:DumpRotationDebug()
     local now = (GetTime and SafeCall(GetTime)) or 0
     FP:Print(string.format("|cffffd100[Rotation Debug]|r class=%s tab=%s role=%s shield=%s combat=%s speed=%.2f",
         tostring(ctx.classTag), tostring(ctx.tabIdx), tostring(ctx.role), tostring(ctx.isShieldEquipped), tostring(ctx.inCombat), ctx.mainSpeed or 0))
-    FP:Print(string.format("  sealRestricted=%s anySec=%s slots=%s/%s live=%s combatTrack=%.1fs grace=%.1fs consumed=%s",
+    FP:Print(string.format("  sealRestricted=%s anySec=%s slots=%s/%s live=%s combatTrack=%.1fs obsDur=%.0fs grace=%.1fs consumed=%s",
         tostring(lastSealDebug.aurasRestricted), tostring(lastSealDebug.anySealSecret), tostring(lastSealDebug.readableSlots), tostring(lastSealDebug.totalSlots),
-        tostring(lastSealDebug.matchedLive), math.max(0, combatTrackedSealUntil - now), math.max(0, activeSealGraceUntil - now), tostring(sealConsumedByJudgement)))
-    FP:Print(string.format("  lastAction=%s(%s) spellbook: hs=%s sr=%s sf=%s",
+        tostring(lastSealDebug.matchedLive), math.max(0, combatTrackedSealUntil - now), observedSealDuration, math.max(0, activeSealGraceUntil - now), tostring(sealConsumedByJudgement)))
+    FP:Print(string.format("  lastCast=%s(%s) lastAction=%s(%s) spellbook: hs=%s sr=%s sf=%s",
+        tostring(lastCastName), tostring(lastCastSpellID),
         tostring(lastActionPressName), tostring(lastActionPressSpellID),
         tostring(spellbookByName["holy strike"] or spellbookByName["colpo sacro"]),
         tostring(spellbookByName["seal of righteousness"] or spellbookByName["sigillo della rettitudine"] or spellbookByName["sigillo dell'integrità"]),
