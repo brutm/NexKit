@@ -1712,15 +1712,14 @@ local function UpdateRotationUI()
         return
     end
 
-    if not rootFrame:IsShown() then
-        rootFrame:Show()
-    end
-
     local candidates = BuildRotation(ctx)
     local first = candidates[1]
     local second = candidates[2]
 
     if first then
+        if not rootFrame:IsShown() then
+            rootFrame:Show()
+        end
         local tex = first.icon
         if not tex or tex == "" or tex == 0 then
             tex = "Interface\\Icons\\INV_Misc_QuestionMark"
@@ -1739,16 +1738,29 @@ local function UpdateRotationUI()
         -- Cooldown / Waiting Timer indicator (always show timer if waiting on cooldown!)
         ApplyCooldownOrStateVisual(mainIcon, mainCooldown, mainTimerText, mainSlot, first, false)
         mainSlot:Show()
-    else
-        mainIcon:SetTexture("Interface\\Icons\\INV_Misc_QuestionMark")
-        mainIcon:SetVertexColor(0.8, 0.8, 0.8)
-        mainSlot:SetBackdropBorderColor(0.45, 0.45, 0.45, 0.8)
-        mainBadge:SetText("ATTESA")
+    elseif not isLocked then
+        if not rootFrame:IsShown() then
+            rootFrame:Show()
+        end
+        mainIcon:SetTexture("Interface\\Icons\\INV_Sword_04")
+        mainIcon:SetVertexColor(0.9, 0.9, 0.9)
+        mainSlot:SetBackdropBorderColor(1.0, 0.82, 0.0, 0.9)
+        mainBadge:SetText("SPOSTA")
         mainKeybind:Hide()
         mainCooldown:Clear()
         mainTimerText:SetText("")
         mainTimerText:Hide()
         mainSlot:Show()
+    else
+        mainCooldown:Clear()
+        mainTimerText:SetText("")
+        mainTimerText:Hide()
+        mainSlot:Hide()
+        queueSlot:Hide()
+        if rootFrame:IsShown() then
+            rootFrame:Hide()
+        end
+        return
     end
 
     -- Queue slot (2nd upcoming spell)
