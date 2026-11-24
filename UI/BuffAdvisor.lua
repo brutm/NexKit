@@ -679,6 +679,25 @@ end
 -------------------------------------------------------------------------------
 -- Player Spec / Role & Equipment Helpers
 -------------------------------------------------------------------------------
+local function HasContextTalent(ctx, ...)
+    if FP.HasPlayerTalent then
+        return FP:HasPlayerTalent(...) ~= false
+    end
+    local t = ctx and ctx.talents
+    if type(t) ~= "table" then return false end
+    for i = 1, select("#", ...) do
+        local name = select(i, ...)
+        if type(name) == "string" and name ~= "" then
+            local low = string.lower(name)
+            if t[low] and t[low] > 0 then return true end
+            for k, r in pairs(t) do
+                if r > 0 and k:find(low, 1, true) then return true end
+            end
+        end
+    end
+    return false
+end
+
 local function DetectRoleAndSpec()
     local specInfo = FP.GetPlayerSpecInfo and FP:GetPlayerSpecInfo() or nil
     local classTag = (specInfo and specInfo.classTag) or select(2, UnitClass("player")) or "WARRIOR"
@@ -688,6 +707,8 @@ local function DetectRoleAndSpec()
     local role = (specInfo and specInfo.role) or "DAMAGER"
     local tabIdx = (specInfo and specInfo.tabIdx) or 1
     local tabPts = (specInfo and specInfo.tabPts) or 0
+    local tabs = specInfo and specInfo.tabs or nil
+    local talents = (specInfo and specInfo.talents) or (FP.GetPlayerTalents and FP:GetPlayerTalents()) or {}
     local isShieldEquipped = (specInfo and specInfo.isShieldEquipped) or false
 
     local s = GetBuffSettings()
@@ -696,9 +717,20 @@ local function DetectRoleAndSpec()
         role = "TANK"
     end
 
-    if (classTag == "PALADIN" and (tabIdx == 2 or isShieldEquipped or role == "TANK"))
-        or (classTag == "WARRIOR" and (tabIdx == 3 or isShieldEquipped or role == "TANK")) then
-        role = "TANK"
+    if classTag == "PALADIN" then
+        local protPts = (tabs and tabs[2]) or 0
+        local retPts = (tabs and tabs[3]) or 0
+        local hasProtTalent = FP.HasPlayerTalent and (FP:HasPlayerTalent("holy shield", "ardent defender", "improved righteous fury", "avenger's shield", "avengers shield", "blessing of sanctuary") ~= false)
+        if role == "TANK" or tabIdx == 2 or hasProtTalent or (isShieldEquipped and protPts >= retPts) then
+            role = "TANK"
+        end
+    elseif classTag == "WARRIOR" then
+        local protPts = (tabs and tabs[3]) or 0
+        local armsPts = (tabs and tabs[1]) or 0
+        local hasProtTalent = FP.HasPlayerTalent and (FP:HasPlayerTalent("shield slam", "devastate", "shockwave", "vigilance") ~= false)
+        if role == "TANK" or tabIdx == 3 or hasProtTalent or (isShieldEquipped and protPts >= armsPts) then
+            role = "TANK"
+        end
     end
 
     local rawManaMax = SafeCall(UnitPowerMax, "player", 0)
@@ -714,6 +746,9 @@ local function DetectRoleAndSpec()
         role     = role,
         tabIdx   = tabIdx,
         tabPts   = tabPts,
+        tabs     = tabs,
+        ptsStr   = specInfo and specInfo.ptsStr or nil,
+        talents  = talents,
         specID   = specInfo and specInfo.specID or nil,
         specName = specInfo and specInfo.specName or nil,
         isShieldEquipped = isShieldEquipped,
@@ -1152,9 +1187,13 @@ local function EvaluateRecommendations()
         })
         if not auras.restricted and (not hasArmor or ShouldRecommendExpiring(armorInfo, 120)) then
             local armorRanks = CLASS_SPELLS.ICE_ARMOR
-            if ctx.tabIdx == 2 and ctx.tabPts >= 10 and FindKnownSpell(CLASS_SPELLS.MOLTEN_ARMOR) then
+            if ((ctx.tabIdx == 2 and ctx.tabPts >= 10) or HasContextTalent(ctx, "molten armor", "pyroblast", "ignite"))
+                and FindKnownSpell(CLASS_SPELLS.MOLTEN_ARMOR)
+            then
                 armorRanks = CLASS_SPELLS.MOLTEN_ARMOR
-            elseif ctx.manaPct < 0.45 and FindKnownSpell(CLASS_SPELLS.MAGE_ARMOR) then
+            elseif (ctx.manaPct < 0.45 or (HasContextTalent(ctx, "arcane meditation") and ctx.manaPct < 0.70))
+                and FindKnownSpell(CLASS_SPELLS.MAGE_ARMOR)
+            then
                 armorRanks = CLASS_SPELLS.MAGE_ARMOR
             elseif not FindKnownSpell(CLASS_SPELLS.ICE_ARMOR) then
                 if FindKnownSpell(CLASS_SPELLS.FROST_ARMOR) then
@@ -1224,8 +1263,12 @@ local function EvaluateRecommendations()
 
         local function FindAnyNonCrusaderAura()
             local preferredRanks = CLASS_SPELLS.DEVOTION_AURA
-            if ctx.role ~= "TANK" and FindKnownSpell(CLASS_SPELLS.RETRIBUTION_AURA) then
-                preferredRanks = CLASS_SPELLS.RETRIBUTION_AURA
+            if ctx.role ~= "TANK" then
+                if (ctx.tabIdx == 3 or HasContextTalent(ctx, "sanctity aura", "aura di santità")) and FindKnownSpell(CLASS_SPELLS.SANCTITY_AURA) then
+                    preferredRanks = CLASS_SPELLS.SANCTITY_AURA
+                elseif FindKnownSpell(CLASS_SPELLS.RETRIBUTION_AURA) then
+                    preferredRanks = CLASS_SPELLS.RETRIBUTION_AURA
+                end
             end
             local sid, sName = FindKnownSpell(preferredRanks)
             if not sid then
@@ -1301,7 +1344,8 @@ local function EvaluateRecommendations()
             end
         end
 
-        local isProt = (ctx.role == "TANK") or (ctx.tabIdx == 2) or (ctx.isShieldEquipped == true)
+        local isProt = (ctx.role == "TANK") or (ctx.tabIdx == 2)
+            or HasContextTalent(ctx, "holy shield", "ardent defender", "improved righteous fury", "blessing of sanctuary", "avenger's shield")
             or (FindKnownSpell(CLASS_SPELLS.BLESSING_SANC) ~= nil)
             or (FindKnownSpell(CLASS_SPELLS.HOLY_SHIELD) ~= nil)
 
@@ -1312,9 +1356,9 @@ local function EvaluateRecommendations()
         local blessRanks = CLASS_SPELLS.BLESSING_MIGHT
         if (ctx.role == "HEALER" or (ctx.manaPct < 0.45 and not isProt)) and FindKnownSpell(CLASS_SPELLS.BLESSING_WISDOM) then
             blessRanks = CLASS_SPELLS.BLESSING_WISDOM
-        elseif isProt and FindKnownSpell(CLASS_SPELLS.BLESSING_SANC) then
+        elseif isProt and (FindKnownSpell(CLASS_SPELLS.BLESSING_SANC) or HasContextTalent(ctx, "blessing of sanctuary")) then
             blessRanks = CLASS_SPELLS.BLESSING_SANC
-        elseif FindKnownSpell(CLASS_SPELLS.BLESSING_KINGS) and (isProt or ctx.level >= 40) then
+        elseif FindKnownSpell(CLASS_SPELLS.BLESSING_KINGS) and (isProt or ctx.level >= 40 or HasContextTalent(ctx, "blessing of kings")) then
             blessRanks = CLASS_SPELLS.BLESSING_KINGS
         elseif not FindKnownSpell(CLASS_SPELLS.BLESSING_MIGHT) and FindKnownSpell(CLASS_SPELLS.BLESSING_WISDOM) then
             blessRanks = CLASS_SPELLS.BLESSING_WISDOM
@@ -1324,7 +1368,7 @@ local function EvaluateRecommendations()
             satisfiedBy = allBlessings, minDur = 120,
         })
 
-        -- Righteous Fury (Furia Virtuosa / Furia Retta): recommended for Protection paladins, tanks, or when a shield is equipped
+        -- Righteous Fury (Furia Virtuosa / Furia Retta): recommended for Protection / Tank paladins (skip pure Ret soloers briefly wearing a shield)
         local rfID, rfName = FindKnownSpell(CLASS_SPELLS.RIGHTEOUS_FURY, { "Righteous Fury", "Furia Virtuosa", "Furia Retta" })
         if not rfID then
             local sByName = spellbookByName or {}
@@ -1420,7 +1464,8 @@ local function EvaluateRecommendations()
             end
         end
 
-        local hasLoneWolf = (auras.activeNames and (auras.activeNames["lone wolf"] or auras.activeNames["lupo solitario"]))
+        local hasLoneWolf = HasContextTalent(ctx, "lone wolf", "lupo solitario")
+            or (auras.activeNames and (auras.activeNames["lone wolf"] or auras.activeNames["lupo solitario"]))
             or (auras.activeIDs and auras.activeIDs[155228])
             or IsSpellKnownCompat(155228)
         if not ctx.isMounted and not ctx.isFlying and not hasLoneWolf then
@@ -1478,8 +1523,18 @@ local function EvaluateRecommendations()
             local petExists = UnitExists and SafeCall(UnitExists, "pet")
             local petDead = petExists and UnitIsDead and SafeCall(UnitIsDead, "pet")
             if not petExists or petDead then
-                local petRanks = FindKnownSpell(CLASS_SPELLS.SUMMON_FELGUARD) and CLASS_SPELLS.SUMMON_FELGUARD
-                    or (FindKnownSpell(CLASS_SPELLS.SUMMON_VOID) and CLASS_SPELLS.SUMMON_VOID or CLASS_SPELLS.SUMMON_IMP)
+                local petRanks = nil
+                if FindKnownSpell(CLASS_SPELLS.SUMMON_FELGUARD) or HasContextTalent(ctx, "summon felguard") then
+                    petRanks = CLASS_SPELLS.SUMMON_FELGUARD
+                elseif (ctx.inInstance or HasContextTalent(ctx, "ruin", "emberstorm", "improved imp", "dark pact"))
+                    and FindKnownSpell(CLASS_SPELLS.SUMMON_IMP)
+                then
+                    petRanks = CLASS_SPELLS.SUMMON_IMP
+                elseif FindKnownSpell(CLASS_SPELLS.SUMMON_VOID) then
+                    petRanks = CLASS_SPELLS.SUMMON_VOID
+                else
+                    petRanks = CLASS_SPELLS.SUMMON_IMP
+                end
                 local pid, pName = FindKnownSpell(petRanks)
                 if pid then
                     local usable, noRes = IsSpellUsableCompat(pid)
@@ -1511,8 +1566,9 @@ local function EvaluateRecommendations()
         })
 
         -- Weapon imbue (MH, plus OH when dual-wielding an OH weapon)
+        local isEnhTalent = (ctx.tabIdx == 2) or HasContextTalent(ctx, "windfury", "elemental weapons", "flurry", "dual wield", "stormstrike", "maelstrom weapon")
         local pickImbueRanks = CLASS_SPELLS.ROCKBITER_WEAP
-        if ctx.role == "DAMAGER" and ctx.tabIdx ~= 1 and FindKnownSpell(CLASS_SPELLS.WINDFURY_WEAP) then
+        if ctx.role == "DAMAGER" and (isEnhTalent or ctx.tabIdx ~= 1) and FindKnownSpell(CLASS_SPELLS.WINDFURY_WEAP) then
             pickImbueRanks = CLASS_SPELLS.WINDFURY_WEAP
         elseif FindKnownSpell(CLASS_SPELLS.FLAMETONGUE_WEAP) and (ctx.tabIdx == 1 or ctx.role == "HEALER" or not FindKnownSpell(CLASS_SPELLS.WINDFURY_WEAP)) then
             pickImbueRanks = CLASS_SPELLS.FLAMETONGUE_WEAP

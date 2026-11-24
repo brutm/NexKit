@@ -209,13 +209,101 @@ end
 local function ReadTalentTabCompat(tabIdx, isInspect)
     if type(GetTalentTabInfo) ~= "function" then return nil, 0 end
     local a, b, c, _, e = SafeCall(GetTalentTabInfo, tabIdx, isInspect)
-    -- Cata/Modern 5-arg: (id, name, desc, icon, pointsSpent) vs Classic 3-arg: (name, icon, pointsSpent)
-    if IsSafeNum(a) and IsSafeStr(b) then
+    if type(a) == "table" then
+        local tName = IsSafeStr(a.name) and a.name or nil
+        local tPts = SafeNumber(a.pointsSpent or a.numPointsSpent, 0)
+        return tName, tPts
+    elseif IsSafeNum(a) and IsSafeStr(b) then
         return b, SafeNumber(e, 0)
     elseif IsSafeStr(a) then
         return a, SafeNumber(c, 0)
     end
     return nil, 0
+end
+
+local cachedTalents = nil
+
+function FP:InvalidateTalentCache()
+    cachedTalents = nil
+end
+
+function FP:GetPlayerTalents()
+    if cachedTalents then
+        return cachedTalents
+    end
+    local map = {}
+
+    if type(GetNumTalentTabs) == "function" and type(GetNumTalents) == "function" and type(GetTalentInfo) == "function" then
+        local numTabs = SafeNumber(SafeCall(GetNumTalentTabs), 3)
+        if numTabs < 1 or numTabs > 4 then numTabs = 3 end
+        for t = 1, numTabs do
+            local numTalents = SafeNumber(SafeCall(GetNumTalents, t), 0)
+            for i = 1, math.min(numTalents, 60) do
+                local r1, _, _, _, r5 = SafeCall(GetTalentInfo, t, i)
+                if type(r1) == "table" then
+                    local tName = r1.name
+                    local tRank = SafeNumber(r1.currentRank or r1.rank or r1.activeRank, 0)
+                    if IsSafeStr(tName) and tRank > 0 then
+                        map[string.lower(tName)] = tRank
+                    end
+                elseif IsSafeStr(r1) then
+                    local tRank = SafeNumber(r5, 0)
+                    if tRank > 0 then
+                        map[string.lower(r1)] = tRank
+                    end
+                end
+            end
+        end
+    end
+
+    if next(map) == nil and C_ClassTalents and C_ClassTalents.GetActiveConfigID and C_Traits and C_Traits.GetConfigInfo then
+        local cfgID = SafeCall(C_ClassTalents.GetActiveConfigID)
+        local cfgInfo = IsSafeNum(cfgID) and SafeCall(C_Traits.GetConfigInfo, cfgID) or nil
+        if type(cfgInfo) == "table" and type(cfgInfo.treeIDs) == "table" and C_Traits.GetTreeNodes and C_Traits.GetNodeInfo then
+            for _, treeID in ipairs(cfgInfo.treeIDs) do
+                local nodes = SafeCall(C_Traits.GetTreeNodes, treeID)
+                if type(nodes) == "table" then
+                    for _, nodeID in ipairs(nodes) do
+                        local node = SafeCall(C_Traits.GetNodeInfo, cfgID, nodeID)
+                        if type(node) == "table" and IsSafeNum(node.activeRank) and node.activeRank > 0 and node.activeEntry and IsSafeNum(node.activeEntry.entryID) then
+                            local entry = C_Traits.GetEntryInfo and SafeCall(C_Traits.GetEntryInfo, cfgID, node.activeEntry.entryID)
+                            local defID = type(entry) == "table" and entry.definitionID
+                            if IsSafeNum(defID) and C_Traits.GetDefinitionInfo then
+                                local def = SafeCall(C_Traits.GetDefinitionInfo, defID)
+                                local dName = type(def) == "table" and def.overrideName or (C_Spell and C_Spell.GetSpellName and IsSafeNum(type(def) == "table" and def.spellID) and SafeCall(C_Spell.GetSpellName, def.spellID))
+                                if IsSafeStr(dName) then
+                                    map[string.lower(dName)] = node.activeRank
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    cachedTalents = map
+    return cachedTalents
+end
+
+function FP:HasPlayerTalent(...)
+    local map = self:GetPlayerTalents()
+    local n = select("#", ...)
+    for i = 1, n do
+        local name = select(i, ...)
+        if type(name) == "string" and name ~= "" then
+            local low = string.lower(name)
+            if map[low] and map[low] > 0 then
+                return map[low]
+            end
+            for k, r in pairs(map) do
+                if r > 0 and k:find(low, 1, true) then
+                    return r
+                end
+            end
+        end
+    end
+    return false
 end
 
 local function IsPlayerShieldEquipped()
@@ -251,28 +339,15 @@ function FP:GetPlayerSpecInfo()
     local classTag = (UnitClass and select(2, SafeCall(UnitClass, "player"))) or "WARRIOR"
     local tabIdx = nil
     local tabPts = 0
+    local totalPts = 0
     local specID = nil
     local specName = nil
     local role = "DAMAGER"
     local ptsStr = nil
-
-    local getSpec = (C_SpecializationInfo and C_SpecializationInfo.GetSpecialization) or GetSpecialization
-    local getSpecInfo = (C_SpecializationInfo and C_SpecializationInfo.GetSpecializationInfo) or GetSpecializationInfo
-    if type(getSpec) == "function" and type(getSpecInfo) == "function" then
-        local idx = SafeCall(getSpec)
-        if IsSafeNum(idx) and idx > 0 and idx < 6 then
-            tabIdx = idx
-            local sID, sName, _, _, sRole = SafeCall(getSpecInfo, idx)
-            if IsSafeNum(sID) then specID = sID end
-            if IsSafeStr(sName) then specName = sName end
-            if IsSafeStr(sRole) and (sRole == "TANK" or sRole == "HEALER" or sRole == "DAMAGER") then
-                role = sRole
-            end
-        end
-    end
-
     local tabs = nil
-    if not tabIdx and type(GetTalentTabInfo) == "function" then
+
+    -- 1. Check Classic/Forever 3-tree talent distribution FIRST so hybrid/1.60.1 builds are never shadowed by GetSpecialization stubs
+    if type(GetTalentTabInfo) == "function" then
         local rawNumTabs = (type(GetNumTalentTabs) == "function") and SafeCall(GetNumTalentTabs) or 3
         local numTabs = SafeNumber(rawNumTabs, 3)
         if numTabs < 1 or numTabs > 4 then numTabs = 3 end
@@ -282,6 +357,7 @@ function FP:GetPlayerSpecInfo()
             local name, points = ReadTalentTabCompat(t)
             points = points or 0
             p[#p + 1] = points
+            totalPts = totalPts + points
             if points > bestPts then
                 bestPts = points
                 tabIdx = t
@@ -291,7 +367,8 @@ function FP:GetPlayerSpecInfo()
         tabs = p
         if #p > 0 then ptsStr = table.concat(p, "/") end
         tabPts = math.max(0, bestPts)
-        if tabPts <= 0 then
+        if totalPts <= 0 then
+            tabIdx = nil
             specName = nil
         else
             if (classTag == "WARRIOR" and tabIdx == 3) or (classTag == "PALADIN" and tabIdx == 2) then
@@ -306,6 +383,24 @@ function FP:GetPlayerSpecInfo()
         end
     end
 
+    -- 2. Modern Retail specialization API fallback (when Classic tabs have 0 points or don't exist)
+    if not tabIdx or totalPts <= 0 then
+        local getSpec = (C_SpecializationInfo and C_SpecializationInfo.GetSpecialization) or GetSpecialization
+        local getSpecInfo = (C_SpecializationInfo and C_SpecializationInfo.GetSpecializationInfo) or GetSpecializationInfo
+        if type(getSpec) == "function" and type(getSpecInfo) == "function" then
+            local idx = SafeCall(getSpec)
+            if IsSafeNum(idx) and idx >= 1 and idx <= 4 then
+                tabIdx = idx
+                local sID, sName, _, _, sRole = SafeCall(getSpecInfo, idx)
+                if IsSafeNum(sID) then specID = sID end
+                if IsSafeStr(sName) then specName = sName end
+                if IsSafeStr(sRole) and (sRole == "TANK" or sRole == "HEALER" or sRole == "DAMAGER") then
+                    role = sRole
+                end
+            end
+        end
+    end
+
     local isShieldEquipped = IsPlayerShieldEquipped()
     if UnitGroupRolesAssigned then
         local grpRole = SafeCall(UnitGroupRolesAssigned, "player")
@@ -314,11 +409,15 @@ function FP:GetPlayerSpecInfo()
         end
     end
 
+    local talents = self:GetPlayerTalents()
+
     return {
         classTag         = classTag,
         tabIdx           = tabIdx or 1,
         tabPts           = tabPts,
+        totalPts         = totalPts,
         tabs             = tabs,
+        talents          = talents,
         specID           = specID,
         specName         = specName,
         role             = role,
@@ -910,9 +1009,12 @@ end
 local sharedCacheFrame = CreateFrame("Frame")
 SafeRegisterEvent(sharedCacheFrame, "PLAYER_ENTERING_WORLD")
 SafeRegisterEvent(sharedCacheFrame, "SPELLS_CHANGED")
+SafeRegisterEvent(sharedCacheFrame, "LEARNED_SPELL_IN_TAB")
 SafeRegisterEvent(sharedCacheFrame, "PLAYER_TALENT_UPDATE")
 SafeRegisterEvent(sharedCacheFrame, "CHARACTER_POINTS_CHANGED")
+SafeRegisterEvent(sharedCacheFrame, "ACTIVE_TALENT_GROUP_CHANGED")
 SafeRegisterEvent(sharedCacheFrame, "PLAYER_SPECIALIZATION_CHANGED")
+SafeRegisterEvent(sharedCacheFrame, "TRAIT_CONFIG_UPDATED")
 SafeRegisterEvent(sharedCacheFrame, "ACTIONBAR_SLOT_CHANGED")
 SafeRegisterEvent(sharedCacheFrame, "UPDATE_BINDINGS")
 SafeRegisterUnitEvent(sharedCacheFrame, "UNIT_PET", "player")
@@ -922,8 +1024,10 @@ sharedCacheFrame:SetScript("OnEvent", function(_, event)
     elseif event == "PLAYER_ENTERING_WORLD" then
         FP:InvalidateSpellKeybindCache()
         FP:InvalidateDispelCache()
+        FP:InvalidateTalentCache()
     else
         FP:InvalidateDispelCache()
+        FP:InvalidateTalentCache()
     end
 end)
 
