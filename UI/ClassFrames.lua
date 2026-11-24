@@ -626,80 +626,94 @@ local function GetPartyUnitDebuffs(unit)
     return debuffs
 end
 
+local function SafeReadBuffAura(aura)
+    local okN, rawName = pcall(function() return aura.name end)
+    if not okN then rawName = nil end
+    local okIc, rawIcon = pcall(function() return aura.icon end)
+    if not okIc then rawIcon = nil end
+    local okC, rawApps = pcall(function() return aura.applications end)
+    if not okC then rawApps = nil end
+    local okDu, rawDur = pcall(function() return aura.duration end)
+    if not okDu then rawDur = nil end
+    local okEx, rawExp = pcall(function() return aura.expirationTime end)
+    if not okEx then rawExp = nil end
+    local okSr, rawSrc = pcall(function() return aura.sourceUnit end)
+    if not okSr then rawSrc = nil end
+    local okS, rawSpell = pcall(function() return aura.spellId end)
+    if not okS then rawSpell = nil end
+    local okPlr, isPlrAura = pcall(function() return aura.isFromPlayerOrPlayerPet end)
+    if not okPlr then isPlrAura = nil end
+
+    local safeName = IsSafeStr(rawName) and rawName or nil
+    local safeSrc = IsSafeStr(rawSrc) and rawSrc or nil
+    local isPlayerBuff = false
+    if IsAccessibleVal(isPlrAura) and isPlrAura == true then
+        isPlayerBuff = true
+    elseif safeSrc == "player" or (safeSrc == nil and safeName and PLAYER_BUFF_SPELLS and PLAYER_BUFF_SPELLS[safeName]) then
+        isPlayerBuff = true
+    end
+
+    return {
+        safeName       = safeName or "Buff",
+        rawIcon        = rawIcon,
+        icon           = IsAccessibleVal(rawIcon) and rawIcon or nil,
+        count          = SafeNumber(rawApps, 0),
+        duration       = SafeNumber(rawDur, 0),
+        expirationTime = SafeNumber(rawExp, 0),
+        source         = safeSrc,
+        isPlayerBuff   = isPlayerBuff,
+        spellId        = SafeNumber(rawSpell, nil),
+    }
+end
+
 local function GetPartyUnitBuffs(unit)
     local buffs = {}
     if not unit then return buffs end
     local okE, exists = pcall(UnitExists, unit)
     if not okE or SafeBoolean(exists, false) ~= true then return buffs end
 
-    for i = 1, 32 do
-        local name, icon, count, duration, expirationTime, source, spellId
-        local found = false
-
-        -- 1. Try native Classic UnitBuff first (safe, fast, never triggers taint error)
-        if UnitBuff then
-            local okB, bName, bIcon, bCount, _, bDur, bExp, bSrc, _, _, bSpellId = pcall(UnitBuff, unit, i)
-            if okB and bName and (not issecretvalue or not issecretvalue(bName)) then
-                name = bName
-                icon = bIcon
-                count = bCount
-                duration = bDur
-                expirationTime = bExp
-                source = bSrc
-                spellId = bSpellId
-                found = true
-            elseif okB and not bName then
-                break -- End of buffs
-            end
-        end
-
-        -- 2. Fallback to C_UnitAuras.GetAuraDataByIndex (strictly wrapped in pcall against taint & secret values)
-        if not found and C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
+    if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
+        for i = 1, 32 do
             local okC, aura = pcall(C_UnitAuras.GetAuraDataByIndex, unit, i, "HELPFUL")
-            if okC and type(aura) == "table" then
-                local okRead = pcall(function()
-                    local aName = aura.name
-                    if aName and (not issecretvalue or not issecretvalue(aName)) then
-                        name = aName
-                        icon = aura.icon
-                        count = aura.applications
-                        duration = aura.duration
-                        expirationTime = aura.expirationTime
-                        source = aura.sourceUnit
-                        spellId = aura.spellId
-                        found = true
-                    end
-                end)
-                if not okRead then
-                    break -- Taint/secret error reading aura fields, stop scanning safely
-                end
-            elseif okC and not aura then
-                break -- End of buffs
-            elseif not okC then
-                break -- GetAuraDataByIndex threw taint error, abort cleanly
+            if not okC or type(aura) ~= "table" then break end
+            local f = SafeReadBuffAura(aura)
+            if f.rawIcon ~= nil or f.icon ~= nil then
+                buffs[#buffs + 1] = {
+                    index = i,
+                    name = f.safeName,
+                    icon = f.icon or "Interface\\Icons\\INV_Misc_QuestionMark",
+                    rawIcon = f.rawIcon,
+                    count = f.count,
+                    duration = f.duration,
+                    expirationTime = f.expirationTime,
+                    source = f.source,
+                    isPlayerBuff = f.isPlayerBuff,
+                    spellId = f.spellId,
+                }
             end
         end
-
-        if not found then break end
-
-        local isPlayerBuff = false
-        pcall(function()
-            if source == "player" or (source == nil and name and PLAYER_BUFF_SPELLS and PLAYER_BUFF_SPELLS[name]) then
-                isPlayerBuff = true
+    elseif UnitBuff then
+        for i = 1, 32 do
+            local okB, bName, bIcon, bCount, _, bDur, bExp, bSrc, _, _, bSpellId = pcall(UnitBuff, unit, i)
+            if not okB or not bName then break end
+            local safeName = IsSafeStr(bName) and bName or nil
+            local safeSrc = IsSafeStr(bSrc) and bSrc or nil
+            local isPlayerBuff = (safeSrc == "player") or (safeSrc == nil and safeName and PLAYER_BUFF_SPELLS and PLAYER_BUFF_SPELLS[safeName]) or false
+            if IsAccessibleVal(bIcon) or bIcon ~= nil then
+                buffs[#buffs + 1] = {
+                    index = i,
+                    name = safeName or "Buff",
+                    icon = IsAccessibleVal(bIcon) and bIcon or "Interface\\Icons\\INV_Misc_QuestionMark",
+                    rawIcon = bIcon,
+                    count = SafeNumber(bCount, 0),
+                    duration = SafeNumber(bDur, 0),
+                    expirationTime = SafeNumber(bExp, 0),
+                    source = safeSrc,
+                    isPlayerBuff = isPlayerBuff,
+                    spellId = SafeNumber(bSpellId, nil),
+                }
             end
-        end)
-
-        buffs[#buffs + 1] = {
-            index = i,
-            name = (type(name) == "string" and name) or "Buff",
-            icon = icon or "Interface\\Icons\\INV_Misc_QuestionMark",
-            count = SafeNumber(count, 0),
-            duration = SafeNumber(duration, 0),
-            expirationTime = SafeNumber(expirationTime, 0),
-            source = source,
-            isPlayerBuff = isPlayerBuff,
-            spellId = SafeNumber(spellId, nil),
-        }
+        end
     end
 
     -- Sort buffs: player's own buffs FIRST, then other party buffs
@@ -791,20 +805,23 @@ local function UpdatePartyAuras(frame)
         -- Row 2: Buffs (up to 8 buffs, 16x16)
         container.buffSlots = {}
         for b = 1, 8 do
-            local btn = CreateFrame("Button", nil, container)
+            local btn = CreateFrame("Button", nil, container, "BackdropTemplate")
             btn:SetSize(16, 16)
             btn:SetPoint("TOPLEFT", container, "TOPLEFT", (b - 1) * 19, -21)
+            btn:SetBackdrop({
+                bgFile = "Interface\\Buttons\\WHITE8x8",
+                edgeFile = "Interface\\Buttons\\WHITE8x8",
+                edgeSize = 1,
+                insets = { left = 1, right = 1, top = 1, bottom = 1 },
+            })
+            btn:SetBackdropColor(0.05, 0.05, 0.08, 0.85)
+            btn:SetBackdropBorderColor(0.5, 0.5, 0.5, 0.7)
 
             local icon = btn:CreateTexture(nil, "ARTWORK")
-            icon:SetAllPoints(btn)
+            icon:SetPoint("TOPLEFT", 1, -1)
+            icon:SetPoint("BOTTOMRIGHT", -1, 1)
+            icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
             btn.icon = icon
-
-            local border = btn:CreateTexture(nil, "OVERLAY")
-            border:SetTexture("Interface\\Buttons\\UI-ActionButton-Border")
-            border:SetTexCoord(0, 1, 0, 1)
-            border:SetPoint("TOPLEFT", btn, "TOPLEFT", -2, 2)
-            border:SetPoint("BOTTOMRIGHT", btn, "BOTTOMRIGHT", 2, -2)
-            btn.border = border
 
             local countFs = btn:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
             countFs:SetPoint("BOTTOMRIGHT", btn, "BOTTOMRIGHT", 2, -2)
@@ -813,7 +830,7 @@ local function UpdatePartyAuras(frame)
             btn:SetScript("OnEnter", function(self)
                 if not self.unit or not self.auraIndex then return end
                 GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-                GameTooltip:SetUnitBuff(self.unit, self.auraIndex)
+                pcall(GameTooltip.SetUnitBuff, GameTooltip, self.unit, self.auraIndex)
                 GameTooltip:Show()
             end)
             btn:SetScript("OnLeave", function(self)
@@ -870,13 +887,19 @@ local function UpdatePartyAuras(frame)
             btn.auraIndex = buff.index
             btn:ClearAllPoints()
             btn:SetPoint("TOPLEFT", container, "TOPLEFT", (b - 1) * 19, buffYOffset)
-            btn.icon:SetTexture(buff.icon)
-            if buff.isPlayerBuff then
-                btn.border:SetVertexColor(1.0, 0.82, 0.0, 0.95)
-            else
-                btn.border:SetVertexColor(0.5, 0.5, 0.5, 0.6)
+            local okTex = pcall(btn.icon.SetTexture, btn.icon, buff.rawIcon or buff.icon)
+            if not okTex or not (buff.rawIcon or buff.icon) then
+                btn.icon:SetTexture(buff.icon or "Interface\\Icons\\INV_Misc_QuestionMark")
             end
-            btn.border:Show()
+            if btn.SetBackdropBorderColor then
+                if buff.isPlayerBuff then
+                    btn:SetBackdropBorderColor(1.0, 0.82, 0.0, 0.95)
+                else
+                    btn:SetBackdropBorderColor(0.5, 0.5, 0.5, 0.7)
+                end
+            elseif btn.border then
+                btn.border:Hide()
+            end
             if buff.count and buff.count > 1 then
                 btn.countFs:SetText(buff.count)
                 btn.countFs:Show()
@@ -1040,20 +1063,20 @@ local function UpdateCompactPartyAuras(frame)
 
         container.slots = {}
         for s = 1, 6 do
-            local btn = CreateFrame("Button", nil, container)
+            local btn = CreateFrame("Button", nil, container, "BackdropTemplate")
             btn:SetSize(14, 14)
             btn:SetPoint("LEFT", container, "LEFT", (s - 1) * 16, 0)
+            btn:SetBackdrop({
+                edgeFile = "Interface\\Buttons\\WHITE8x8",
+                edgeSize = 1,
+            })
+            btn:SetBackdropBorderColor(0.5, 0.5, 0.5, 0.8)
 
             local icon = btn:CreateTexture(nil, "ARTWORK")
-            icon:SetAllPoints(btn)
+            icon:SetPoint("TOPLEFT", 1, -1)
+            icon:SetPoint("BOTTOMRIGHT", -1, 1)
+            icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
             btn.icon = icon
-
-            local border = btn:CreateTexture(nil, "OVERLAY")
-            border:SetTexture("Interface\\Buttons\\UI-Debuff-Overlays")
-            border:SetTexCoord(0.296875, 0.5703125, 0, 0.515625)
-            border:SetPoint("TOPLEFT", btn, "TOPLEFT", -2, 2)
-            border:SetPoint("BOTTOMRIGHT", btn, "BOTTOMRIGHT", 2, -2)
-            btn.border = border
 
             local countFs = btn:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
             countFs:SetPoint("BOTTOMRIGHT", btn, "BOTTOMRIGHT", 2, -2)
@@ -1063,9 +1086,9 @@ local function UpdateCompactPartyAuras(frame)
                 if not self.unit or not self.auraIndex then return end
                 GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
                 if self.isDebuff then
-                    GameTooltip:SetUnitDebuff(self.unit, self.auraIndex)
+                    pcall(GameTooltip.SetUnitDebuff, GameTooltip, self.unit, self.auraIndex)
                 else
-                    GameTooltip:SetUnitBuff(self.unit, self.auraIndex)
+                    pcall(GameTooltip.SetUnitBuff, GameTooltip, self.unit, self.auraIndex)
                 end
                 GameTooltip:Show()
             end)
@@ -1096,10 +1119,12 @@ local function UpdateCompactPartyAuras(frame)
                 btn.icon:SetTexture(debuff.icon)
             end
             local col = DISPEL_COLORS[debuff.dispelType] or DISPEL_COLORS["none"]
-            btn.border:SetTexture("Interface\\Buttons\\UI-Debuff-Overlays")
-            btn.border:SetTexCoord(0.296875, 0.5703125, 0, 0.515625)
-            btn.border:SetVertexColor(col.r, col.g, col.b, 1)
-            btn.border:Show()
+            if btn.SetBackdropBorderColor then
+                btn:SetBackdropBorderColor(col.r, col.g, col.b, 1)
+            elseif btn.border then
+                btn.border:SetVertexColor(col.r, col.g, col.b, 1)
+                btn.border:Show()
+            end
             if debuff.count and debuff.count > 1 then
                 btn.countFs:SetText(debuff.count)
                 btn.countFs:Show()
@@ -1119,15 +1144,19 @@ local function UpdateCompactPartyAuras(frame)
             btn.unit = unit
             btn.auraIndex = buff.index
             btn.isDebuff = false
-            btn.icon:SetTexture(buff.icon)
-            btn.border:SetTexture("Interface\\Buttons\\UI-ActionButton-Border")
-            btn.border:SetTexCoord(0, 1, 0, 1)
-            if buff.isPlayerBuff then
-                btn.border:SetVertexColor(1.0, 0.82, 0.0, 0.95)
-            else
-                btn.border:SetVertexColor(0.5, 0.5, 0.5, 0.6)
+            local okTex = pcall(btn.icon.SetTexture, btn.icon, buff.rawIcon or buff.icon)
+            if not okTex then
+                btn.icon:SetTexture(buff.icon)
             end
-            btn.border:Show()
+            if btn.SetBackdropBorderColor then
+                if buff.isPlayerBuff then
+                    btn:SetBackdropBorderColor(1.0, 0.82, 0.0, 0.95)
+                else
+                    btn:SetBackdropBorderColor(0.5, 0.5, 0.5, 0.7)
+                end
+            elseif btn.border then
+                btn.border:Hide()
+            end
             if buff.count and buff.count > 1 then
                 btn.countFs:SetText(buff.count)
                 btn.countFs:Show()
@@ -1240,9 +1269,21 @@ local gridContainer = CreateFrame("Frame", "NexusKitPartyGrid", UIParent)
 gridContainer:SetSize(114, 240)
 gridContainer:SetClampedToScreen(true)
 gridContainer:SetMovable(true)
+gridContainer:EnableMouse(false)
 gridContainer:SetPoint("LEFT", UIParent, "LEFT", 30, 40)
 gridContainer:Hide()
 
+local function CommitGridMove()
+    gridContainer:StopMovingOrSizing()
+    local point, _, relPoint, x, y = gridContainer:GetPoint()
+    if point and relPoint and x and y then
+        local s = GetSettings()
+        s.gridPartyPos = { point = point, relPoint = relPoint, x = x, y = y }
+        gridContainer.posLoaded = true
+    end
+end
+
+-- Unlocked full drag bar
 local dragBar = CreateFrame("Frame", nil, gridContainer, "BackdropTemplate")
 dragBar:SetSize(114, 18)
 dragBar:SetPoint("BOTTOMLEFT", gridContainer, "TOPLEFT", 0, 2)
@@ -1251,26 +1292,102 @@ dragBar:SetBackdrop({
     edgeFile = "Interface\\Buttons\\WHITE8x8",
     edgeSize = 1,
 })
-dragBar:SetBackdropColor(0.08, 0.08, 0.08, 0.88)
-dragBar:SetBackdropBorderColor(0.25, 0.25, 0.25, 1)
+dragBar:SetBackdropColor(0.08, 0.08, 0.08, 0.90)
+dragBar:SetBackdropBorderColor(0.0, 0.85, 0.55, 0.95)
 
 local dragText = dragBar:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-dragText:SetPoint("CENTER", dragBar, "CENTER", 0, 0)
-dragText:SetText("Griglia Party [Sposta]")
+dragText:SetPoint("LEFT", dragBar, "LEFT", 5, 0)
+dragText:SetText("Party [Trascina]")
 dragText:SetTextColor(0, 1, 0.6, 1)
+
+local lockQuickBtn = CreateFrame("Button", nil, dragBar, "BackdropTemplate")
+lockQuickBtn:SetSize(34, 14)
+lockQuickBtn:SetPoint("RIGHT", dragBar, "RIGHT", -2, 0)
+lockQuickBtn:SetBackdrop({
+    bgFile = "Interface\\Buttons\\WHITE8x8",
+    edgeFile = "Interface\\Buttons\\WHITE8x8",
+    edgeSize = 1,
+})
+lockQuickBtn:SetBackdropColor(0.16, 0.22, 0.28, 0.95)
+lockQuickBtn:SetBackdropBorderColor(0.35, 0.45, 0.55, 1)
+local lockQuickTxt = lockQuickBtn:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+lockQuickTxt:SetPoint("CENTER", 0, 0)
+lockQuickTxt:SetText("Blocca")
+local lqFont = lockQuickTxt:GetFont()
+if lqFont then lockQuickTxt:SetFont(lqFont, 8, "OUTLINE") end
+lockQuickBtn:SetScript("OnClick", function()
+    if InCombatLockdown and InCombatLockdown() then return end
+    GetSettings().gridPartyLocked = true
+    FP:RefreshPartyGridLock()
+    if FP.RefreshSettingsUI then FP:RefreshSettingsUI() end
+end)
 
 dragBar:EnableMouse(true)
 dragBar:RegisterForDrag("LeftButton")
 dragBar:SetScript("OnDragStart", function()
+    if InCombatLockdown and InCombatLockdown() then return end
     gridContainer:StartMoving()
 end)
 dragBar:SetScript("OnDragStop", function()
-    gridContainer:StopMovingOrSizing()
-    local point, _, relPoint, x, y = gridContainer:GetPoint()
-    local s = GetSettings()
-    s.gridPartyPos = { point = point, relPoint = relPoint, x = x, y = y }
+    CommitGridMove()
 end)
 dragBar:Hide()
+
+-- Compact always-accessible top handle pill (allows dragging the party grid immediately out of combat!)
+local gridHandle = CreateFrame("Button", nil, gridContainer, "BackdropTemplate")
+gridHandle:SetSize(44, 13)
+gridHandle:SetPoint("BOTTOMLEFT", gridContainer, "TOPLEFT", 0, 2)
+gridHandle:SetBackdrop({
+    bgFile = "Interface\\Buttons\\WHITE8x8",
+    edgeFile = "Interface\\Buttons\\WHITE8x8",
+    edgeSize = 1,
+})
+gridHandle:SetBackdropColor(0.06, 0.08, 0.12, 0.80)
+gridHandle:SetBackdropBorderColor(0.35, 0.70, 0.95, 0.75)
+gridHandle:SetAlpha(0.45)
+
+local handleTxt = gridHandle:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+handleTxt:SetPoint("CENTER", 0, 0)
+handleTxt:SetText("Sposta")
+local hFont = handleTxt:GetFont()
+if hFont then handleTxt:SetFont(hFont, 8, "OUTLINE") end
+handleTxt:SetTextColor(0.85, 0.95, 1.0, 1)
+
+gridHandle:RegisterForDrag("LeftButton")
+gridHandle:SetScript("OnEnter", function(self)
+    self:SetAlpha(1.0)
+    if GameTooltip and not (GameTooltip.IsForbidden and GameTooltip:IsForbidden()) then
+        GameTooltip:SetOwner(self, "ANCHOR_TOPLEFT")
+        GameTooltip:SetText("Griglia Party", 0.2, 0.85, 1.0)
+        GameTooltip:AddLine("Trascina con il tasto sinistro per spostare.", 1, 1, 1)
+        GameTooltip:AddLine("Clicca per mostrare/nascondere la barra fissa.", 0.75, 0.8, 0.85)
+        GameTooltip:Show()
+    end
+end)
+gridHandle:SetScript("OnLeave", function(self)
+    self:SetAlpha(0.45)
+    if GameTooltip then GameTooltip:Hide() end
+end)
+gridHandle:SetScript("OnDragStart", function(self)
+    if InCombatLockdown and InCombatLockdown() then return end
+    self.lastDragAt = GetTime and GetTime() or 0
+    gridContainer:StartMoving()
+end)
+gridHandle:SetScript("OnDragStop", function(self)
+    self.lastDragAt = GetTime and GetTime() or 0
+    CommitGridMove()
+end)
+gridHandle:SetScript("OnClick", function(self)
+    local now = GetTime and GetTime() or 0
+    if self.lastDragAt and (now - self.lastDragAt) < 0.25 then
+        return
+    end
+    if InCombatLockdown and InCombatLockdown() then return end
+    local s = GetSettings()
+    s.gridPartyLocked = not (s.gridPartyLocked ~= false)
+    FP:RefreshPartyGridLock()
+    if FP.RefreshSettingsUI then FP:RefreshSettingsUI() end
+end)
 
 local function CheckUnitRange(unit)
     if not unit then return false end
@@ -1405,24 +1522,26 @@ for i = 1, 5 do
     hpText:SetJustifyH("RIGHT")
     btn.hpText = hpText
 
-    -- HoT / Buff Icons (3 slots in the center row)
+    -- HoT / Buff Icons (3 slots in the center row; crisp 1px BackdropTemplate border, no black overlay)
     btn.buffSlots = {}
     for b = 1, 3 do
-        local bBtn = CreateFrame("Button", nil, hpBar)
-        bBtn:SetSize(15, 15)
-        bBtn:SetPoint("CENTER", hpBar, "CENTER", (b - 2) * 17, -3)
+        local bBtn = CreateFrame("Button", nil, hpBar, "BackdropTemplate")
+        bBtn:SetSize(16, 16)
+        bBtn:SetPoint("CENTER", hpBar, "CENTER", (b - 2) * 18, -3)
+        bBtn:SetBackdrop({
+            bgFile = "Interface\\Buttons\\WHITE8x8",
+            edgeFile = "Interface\\Buttons\\WHITE8x8",
+            edgeSize = 1,
+            insets = { left = 1, right = 1, top = 1, bottom = 1 },
+        })
+        bBtn:SetBackdropColor(0.05, 0.05, 0.08, 0.85)
+        bBtn:SetBackdropBorderColor(0.45, 0.45, 0.50, 0.8)
 
         local icon = bBtn:CreateTexture(nil, "ARTWORK")
-        icon:SetAllPoints(bBtn)
+        icon:SetPoint("TOPLEFT", bBtn, "TOPLEFT", 1, -1)
+        icon:SetPoint("BOTTOMRIGHT", bBtn, "BOTTOMRIGHT", -1, 1)
+        icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
         bBtn.icon = icon
-
-        local bBorder = bBtn:CreateTexture(nil, "OVERLAY")
-        bBorder:SetTexture("Interface\\Buttons\\UI-ActionButton-Border")
-        bBorder:SetTexCoord(0, 1, 0, 1)
-        bBorder:SetPoint("TOPLEFT", bBtn, "TOPLEFT", -2, 2)
-        bBorder:SetPoint("BOTTOMRIGHT", bBtn, "BOTTOMRIGHT", 2, -2)
-        bBorder:SetVertexColor(0.4, 0.4, 0.4, 0.6)
-        bBtn.border = bBorder
 
         local countFs = bBtn:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
         countFs:SetPoint("BOTTOMRIGHT", bBtn, "BOTTOMRIGHT", 2, -1)
@@ -1431,10 +1550,11 @@ for i = 1, 5 do
         bBtn:SetScript("OnEnter", function(self)
             if not self.unit or not self.auraIndex then return end
             GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-            GameTooltip:SetUnitBuff(self.unit, self.auraIndex)
+            pcall(GameTooltip.SetUnitBuff, GameTooltip, self.unit, self.auraIndex)
             GameTooltip:Show()
         end)
         bBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+        if bBtn.SetPropagateMouseClicks then pcall(bBtn.SetPropagateMouseClicks, bBtn, true) end
         bBtn:Hide()
 
         btn.buffSlots[b] = bBtn
@@ -1443,20 +1563,23 @@ for i = 1, 5 do
     -- Debuff Icons (2 slots in top right)
     btn.debuffSlots = {}
     for d = 1, 2 do
-        local dBtn = CreateFrame("Button", nil, hpBar)
+        local dBtn = CreateFrame("Button", nil, hpBar, "BackdropTemplate")
         dBtn:SetSize(16, 16)
         dBtn:SetPoint("TOPRIGHT", hpBar, "TOPRIGHT", -((d - 1) * 18 + 2), -2)
+        dBtn:SetBackdrop({
+            bgFile = "Interface\\Buttons\\WHITE8x8",
+            edgeFile = "Interface\\Buttons\\WHITE8x8",
+            edgeSize = 1,
+            insets = { left = 1, right = 1, top = 1, bottom = 1 },
+        })
+        dBtn:SetBackdropColor(0.05, 0.05, 0.08, 0.85)
+        dBtn:SetBackdropBorderColor(0.85, 0.2, 0.2, 1.0)
 
         local icon = dBtn:CreateTexture(nil, "ARTWORK")
-        icon:SetAllPoints(dBtn)
+        icon:SetPoint("TOPLEFT", dBtn, "TOPLEFT", 1, -1)
+        icon:SetPoint("BOTTOMRIGHT", dBtn, "BOTTOMRIGHT", -1, 1)
+        icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
         dBtn.icon = icon
-
-        local dBorder = dBtn:CreateTexture(nil, "OVERLAY")
-        dBorder:SetTexture("Interface\\Buttons\\UI-Debuff-Overlays")
-        dBorder:SetTexCoord(0.296875, 0.5703125, 0, 0.515625)
-        dBorder:SetPoint("TOPLEFT", dBtn, "TOPLEFT", -2, 2)
-        dBorder:SetPoint("BOTTOMRIGHT", dBtn, "BOTTOMRIGHT", 2, -2)
-        dBtn.border = dBorder
 
         local countFs = dBtn:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
         countFs:SetPoint("BOTTOMRIGHT", dBtn, "BOTTOMRIGHT", 2, -1)
@@ -1465,10 +1588,11 @@ for i = 1, 5 do
         dBtn:SetScript("OnEnter", function(self)
             if not self.unit or not self.auraIndex then return end
             GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-            GameTooltip:SetUnitDebuff(self.unit, self.auraIndex)
+            pcall(GameTooltip.SetUnitDebuff, GameTooltip, self.unit, self.auraIndex)
             GameTooltip:Show()
         end)
         dBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+        if dBtn.SetPropagateMouseClicks then pcall(dBtn.SetPropagateMouseClicks, dBtn, true) end
         dBtn:Hide()
 
         btn.debuffSlots[d] = dBtn
@@ -1695,11 +1819,14 @@ local function UpdateGridMember(btn)
             local buff = buffs[b]
             bBtn.unit = unit
             bBtn.auraIndex = buff.index
-            bBtn.icon:SetTexture(buff.icon)
+            local okTex = pcall(bBtn.icon.SetTexture, bBtn.icon, buff.rawIcon or buff.icon)
+            if not okTex or not (buff.rawIcon or buff.icon) then
+                bBtn.icon:SetTexture(buff.icon or "Interface\\Icons\\INV_Misc_QuestionMark")
+            end
             if buff.isPlayerBuff then
-                bBtn.border:SetVertexColor(1.0, 0.85, 0.0, 0.95)
+                bBtn:SetBackdropBorderColor(1.0, 0.85, 0.0, 0.95)
             else
-                bBtn.border:SetVertexColor(0.4, 0.4, 0.4, 0.6)
+                bBtn:SetBackdropBorderColor(0.45, 0.45, 0.50, 0.75)
             end
             local bCount = SafeNumber(buff.count, 0)
             if bCount > 1 then
@@ -1738,9 +1865,12 @@ local function UpdateGridMember(btn)
             local debuff = debuffs[d]
             dBtn.unit = unit
             dBtn.auraIndex = debuff.index
-            dBtn.icon:SetTexture(debuff.icon)
+            local okTex = pcall(dBtn.icon.SetTexture, dBtn.icon, debuff.rawIcon or debuff.icon)
+            if not okTex or not (debuff.rawIcon or debuff.icon) then
+                dBtn.icon:SetTexture(debuff.icon or "Interface\\Icons\\INV_Misc_QuestionMark")
+            end
             local col = DISPEL_COLORS[debuff.dispelType] or DISPEL_COLORS["none"]
-            dBtn.border:SetVertexColor(col.r, col.g, col.b, 1)
+            dBtn:SetBackdropBorderColor(col.r, col.g, col.b, 1)
             local dCount = SafeNumber(debuff.count, 0)
             if dCount > 1 then
                 dBtn.countFs:SetText(tostring(dCount))
@@ -1777,6 +1907,7 @@ local function UpdatePartyGrid()
     end
 
     local s = GetSettings()
+    local isLocked = (s.gridPartyLocked ~= false)
     if not inCombat then
         gridContainer:Show()
         local scale = s.gridPartyScale or 1.0
@@ -1787,16 +1918,16 @@ local function UpdatePartyGrid()
             gridContainer:ClearAllPoints()
             gridContainer:SetPoint(s.gridPartyPos.point, UIParent, s.gridPartyPos.relPoint, s.gridPartyPos.x, s.gridPartyPos.y)
         end
+
+        if isLocked then
+            dragBar:Hide()
+            if gridHandle then gridHandle:Show() end
+        else
+            dragBar:Show()
+            if gridHandle then gridHandle:Hide() end
+        end
     elseif not gridContainer:IsShown() then
         pendingCombatGridSync = true
-    end
-
-    if s.gridPartyLocked ~= false then
-        dragBar:Hide()
-        gridContainer:EnableMouse(false)
-    else
-        dragBar:Show()
-        gridContainer:EnableMouse(true)
     end
 
     local activeCount = 0
@@ -2399,14 +2530,18 @@ function FP:RefreshClassFrames()
 end
 
 function FP:RefreshPartyGridLock()
+    if InCombatLockdown and InCombatLockdown() then
+        pendingCombatGridSync = true
+        return
+    end
     local s = GetSettings()
     if dragBar then
         if s.gridPartyLocked ~= false then
             dragBar:Hide()
-            gridContainer:EnableMouse(false)
+            if gridHandle then gridHandle:Show() end
         else
             dragBar:Show()
-            gridContainer:EnableMouse(true)
+            if gridHandle then gridHandle:Hide() end
         end
     end
 end
