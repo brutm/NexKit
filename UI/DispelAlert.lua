@@ -280,11 +280,38 @@ local function ScanGroupDispellables()
 end
 
 -------------------------------------------------------------------------------
+-- Position & Sound Presets
+-------------------------------------------------------------------------------
+local DISPEL_POS_PRESETS = {
+    { key = "TOPRIGHT",  labelKey = "DISPEL_POS_TOPRIGHT",  fallback = "Top Right",         point = "TOPRIGHT", relPoint = "TOPRIGHT", x = -230, y = -145 },
+    { key = "TOPLEFT",   labelKey = "DISPEL_POS_TOPLEFT",   fallback = "Top Left",          point = "TOPLEFT",  relPoint = "TOPLEFT",  x = 24,   y = -145 },
+    { key = "TOPCENTER", labelKey = "DISPEL_POS_TOPCENTER", fallback = "Top Center",        point = "TOP",      relPoint = "TOP",      x = 0,    y = -90  },
+    { key = "CENTER",    labelKey = "DISPEL_POS_CENTER",    fallback = "Center (Above PC)", point = "CENTER",   relPoint = "CENTER",   x = 0,    y = 155  },
+    { key = "CUSTOM",    labelKey = "DISPEL_POS_CUSTOM",    fallback = "Custom (Drag)" },
+}
+FP.DISPEL_POS_PRESETS = DISPEL_POS_PRESETS
+
+local DISPEL_SOUND_PRESETS = {
+    { key = "readycheck", labelKey = "DISPEL_SND_READYCHECK", fallback = "Ready Check (Default)", kit = "READY_CHECK",           fallbackId = 8960  },
+    { key = "ping",       labelKey = "DISPEL_SND_PING",       fallback = "Map Ping",              kit = "MAP_PING",              fallbackId = 3175  },
+    { key = "raid",       labelKey = "DISPEL_SND_RAID",       fallback = "Raid Warning",          kit = "RAID_WARNING",          fallbackId = 8959  },
+    { key = "alarm",      labelKey = "DISPEL_SND_ALARM",      fallback = "Clock Chime",           kit = "ALARM_CLOCK_WARNING_3", fallbackId = 12889 },
+}
+FP.DISPEL_SOUND_PRESETS = DISPEL_SOUND_PRESETS
+
+local function FindPreset(tbl, key)
+    for _, opt in ipairs(tbl) do
+        if opt.key == key then return opt end
+    end
+    return tbl[1]
+end
+
+-------------------------------------------------------------------------------
 -- Alert HUD Frame (Non-Secure, 100% Combat-Safe Visuals & Movement)
 -------------------------------------------------------------------------------
 local alertFrame = CreateFrame("Frame", "NKDispelAlertFrame", UIParent, "BackdropTemplate")
 alertFrame:SetSize(304, 58)
-alertFrame:SetPoint("CENTER", UIParent, "CENTER", 0, 155)
+alertFrame:SetPoint("TOPRIGHT", UIParent, "TOPRIGHT", -230, -145)
 alertFrame:SetClampedToScreen(true)
 alertFrame:SetMovable(true)
 alertFrame:EnableMouse(false)
@@ -315,7 +342,9 @@ alertFrame:SetScript("OnDragStop", function(self)
     self:StopMovingOrSizing()
     local point, _, relPoint, x, y = self:GetPoint()
     local s = GetSettings()
+    s.dispelAlertPosPreset = "CUSTOM"
     s.dispelAlertPos = { point = point, relPoint = relPoint, x = x, y = y }
+    if FP.RefreshSettingsUI then FP:RefreshSettingsUI() end
 end)
 
 -- Debuff Icon Box (Left)
@@ -365,9 +394,14 @@ spellCooldown:SetPoint("TOPLEFT", 1.5, -1.5)
 spellCooldown:SetPoint("BOTTOMRIGHT", -1.5, 1.5)
 if spellCooldown.SetDrawEdge then spellCooldown:SetDrawEdge(true) end
 if spellCooldown.SetSwipeColor then spellCooldown:SetSwipeColor(0, 0, 0, 0.72) end
+if spellCooldown.SetHideCountdownNumbers then spellCooldown:SetHideCountdownNumbers(true) end
 
-local spellKeybind = spellBox:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmallOutline")
-spellKeybind:SetPoint("TOPRIGHT", spellBox, "TOPRIGHT", -2, -2)
+local spellTextOverlay = CreateFrame("Frame", nil, spellBox)
+spellTextOverlay:SetAllPoints(spellBox)
+spellTextOverlay:SetFrameLevel(spellCooldown:GetFrameLevel() + 6)
+
+local spellKeybind = spellTextOverlay:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmallOutline")
+spellKeybind:SetPoint("TOPRIGHT", spellTextOverlay, "TOPRIGHT", -2, -2)
 spellKeybind:SetTextColor(1, 1, 1, 1)
 
 -- Center Info Texts
@@ -399,13 +433,31 @@ local lastScale = nil
 local lastLocked = nil
 local pulsePhase = 0
 
-local function PlayDispelCue()
+local function PlayDispelCue(force)
     if not IsDispelSoundEnabled() then return end
     local now = (GetTime and SafeCall(GetTime)) or 0
-    if (now - lastSoundAt) < 3.0 then return end
+    if not force and (now - lastSoundAt) < 3.0 then return end
     lastSoundAt = now
-    local soundId = (SOUNDKIT and (SOUNDKIT.TELL_MESSAGE or SOUNDKIT.IG_QUEST_LIST_OPEN)) or 3081
+    local presetKey = GetSettings().dispelAlertSoundPreset or "readycheck"
+    local preset = FindPreset(DISPEL_SOUND_PRESETS, presetKey)
+    local soundId = (SOUNDKIT and preset.kit and SOUNDKIT[preset.kit]) or preset.fallbackId or 8960
     pcall(PlaySound, soundId, "Master")
+end
+
+local function ApplyAlertAnchor()
+    local s = GetSettings()
+    local presetKey = s.dispelAlertPosPreset
+    if not presetKey then
+        presetKey = s.dispelAlertPos and "CUSTOM" or "TOPRIGHT"
+    end
+    alertFrame:ClearAllPoints()
+    if presetKey == "CUSTOM" and type(s.dispelAlertPos) == "table" and s.dispelAlertPos.point then
+        alertFrame:SetPoint(s.dispelAlertPos.point, UIParent, s.dispelAlertPos.relPoint or s.dispelAlertPos.point, s.dispelAlertPos.x or 0, s.dispelAlertPos.y or 0)
+    else
+        local p = FindPreset(DISPEL_POS_PRESETS, presetKey ~= "CUSTOM" and presetKey or "TOPRIGHT")
+        alertFrame:SetPoint(p.point or "TOPRIGHT", UIParent, p.relPoint or "TOPRIGHT", p.x or -230, p.y or -145)
+    end
+    alertFrame.posLoaded = true
 end
 
 local function BuildPreviewEntry()
@@ -512,11 +564,8 @@ end
 
 local function UpdateDispelAlert()
     local L = FP.L or {}
-    local s = GetSettings()
-    if s.dispelAlertPos and not alertFrame.posLoaded then
-        alertFrame.posLoaded = true
-        alertFrame:ClearAllPoints()
-        alertFrame:SetPoint(s.dispelAlertPos.point, UIParent, s.dispelAlertPos.relPoint, s.dispelAlertPos.x, s.dispelAlertPos.y)
+    if not alertFrame.posLoaded then
+        ApplyAlertAnchor()
     end
 
     local locked = IsDispelAlertLocked()
@@ -590,15 +639,40 @@ function FP:SetDispelAlertLocked(locked)
     if self.RefreshSettingsUI then self:RefreshSettingsUI() end
 end
 
+function FP:SetDispelAlertPosPreset(presetKey)
+    local s = GetSettings()
+    local chosen = FindPreset(DISPEL_POS_PRESETS, presetKey)
+    s.dispelAlertPosPreset = chosen.key
+    if chosen.key ~= "CUSTOM" then
+        s.dispelAlertPos = nil
+    else
+        s.dispelAlertLocked = false
+    end
+    ApplyAlertAnchor()
+    local now = (GetTime and SafeCall(GetTime)) or 0
+    previewUntil = now + 3.5
+    UpdateDispelAlert()
+    if self.RefreshSettingsUI then self:RefreshSettingsUI() end
+end
+
+function FP:SetDispelAlertSoundPreset(presetKey)
+    local s = GetSettings()
+    local chosen = FindPreset(DISPEL_SOUND_PRESETS, presetKey)
+    s.dispelAlertSoundPreset = chosen.key
+    s.dispelAlertSound = true
+    PlayDispelCue(true)
+    if self.RefreshSettingsUI then self:RefreshSettingsUI() end
+end
+
 function FP:ResetDispelAlertPos()
     local L = FP.L or {}
     local s = GetSettings()
+    s.dispelAlertPosPreset = "TOPRIGHT"
     s.dispelAlertPos = nil
-    alertFrame.posLoaded = true
-    alertFrame:ClearAllPoints()
-    alertFrame:SetPoint("CENTER", UIParent, "CENTER", 0, 155)
+    ApplyAlertAnchor()
     UpdateDispelAlert()
     FP:Print(L["DISPEL_POS_RESET_MSG"] or "Dispel Alert position reset.")
+    if self.RefreshSettingsUI then self:RefreshSettingsUI() end
 end
 
 function FP:ToggleDispelAlert()

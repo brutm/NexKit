@@ -535,6 +535,19 @@ local enUS = {
     SETTING_DISPEL_LOCKED_TIP        = "Uncheck to show and drag the Dispel Alert frame anywhere on screen.",
     SETTING_DISPEL_SCALE             = "Dispel Alert scale",
     SETTING_DISPEL_SCALE_TIP         = "Adjusts the scale of the Dispel Alert HUD.",
+    SETTING_DISPEL_POS               = "Dispel Alert position",
+    SETTING_DISPEL_POS_TIP           = "Choose a screen corner or area where the Dispel Alert appears (or drag it freely for Custom).",
+    DISPEL_POS_TOPRIGHT              = "Top Right",
+    DISPEL_POS_TOPLEFT               = "Top Left",
+    DISPEL_POS_TOPCENTER             = "Top Center",
+    DISPEL_POS_CENTER                = "Center (Above PC)",
+    DISPEL_POS_CUSTOM                = "Custom (Drag)",
+    SETTING_DISPEL_SND               = "Dispel alert sound",
+    SETTING_DISPEL_SND_TIP           = "Select which notification sound plays when a dispellable debuff is detected.",
+    DISPEL_SND_READYCHECK            = "Ready Check (Default)",
+    DISPEL_SND_PING                  = "Map Ping",
+    DISPEL_SND_RAID                  = "Raid Warning",
+    DISPEL_SND_ALARM                 = "Clock Chime",
 }
 
 FP.Locales["enUS"] = enUS

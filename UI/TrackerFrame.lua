@@ -1871,6 +1871,14 @@ local SETTINGS_CONTROLS = {
             end,
         },
         {
+            kind = "dispelSound", key = "dispelAlertSoundPreset", default = "readycheck",
+            labelKey = "SETTING_DISPEL_SND", tipKey = "SETTING_DISPEL_SND_TIP", fallback = "Dispel sound",
+        },
+        {
+            kind = "dispelPos", key = "dispelAlertPosPreset", default = "TOPRIGHT",
+            labelKey = "SETTING_DISPEL_POS", tipKey = "SETTING_DISPEL_POS_TIP", fallback = "Dispel Alert position",
+        },
+        {
             kind = "checkbox", key = "dispelAlertLocked", default = true,
             labelKey = "SETTING_DISPEL_LOCKED", tipKey = "SETTING_DISPEL_LOCKED_TIP", fallback = "Lock Dispel Alert position",
             onChange = function(checked)
@@ -2059,6 +2067,27 @@ local function BuildDropdownItems(kind)
             })
         end
         return items
+    elseif kind == "dispelPos" or kind == "dispelSound" then
+        local L = FP.L or {}
+        local s = (NexusKitDB and NexusKitDB.settings) or {}
+        local isPos = (kind == "dispelPos")
+        local opts = isPos and (FP.DISPEL_POS_PRESETS or {}) or (FP.DISPEL_SOUND_PRESETS or {})
+        local current = isPos and (s.dispelAlertPosPreset or "TOPRIGHT") or (s.dispelAlertSoundPreset or "readycheck")
+        local items = {}
+        for _, opt in ipairs(opts) do
+            table.insert(items, {
+                text    = L[opt.labelKey] or opt.fallback,
+                checked = (current == opt.key),
+                func    = function()
+                    if isPos and FP.SetDispelAlertPosPreset then
+                        FP:SetDispelAlertPosPreset(opt.key)
+                    elseif not isPos and FP.SetDispelAlertSoundPreset then
+                        FP:SetDispelAlertSoundPreset(opt.key)
+                    end
+                end,
+            })
+        end
+        return items
     end
     local current = (NexusKitDB and NexusKitDB.settings and NexusKitDB.settings.locale) or "auto"
     local items = {}
@@ -2152,7 +2181,7 @@ local function PopulateTabControls(panel, tabId, widgetStore)
             local widget = CreateSettingSlider(panel, def, y)
             widgetStore[#widgetStore + 1] = { def = def, widget = widget }
             y = y - 30
-        elseif def.kind == "locale" or def.kind == "theme" or def.kind == "rewardSpec" or def.kind == "rotationMode" then
+        elseif def.kind == "locale" or def.kind == "theme" or def.kind == "rewardSpec" or def.kind == "rotationMode" or def.kind == "dispelPos" or def.kind == "dispelSound" then
             y = y - 4
             local widget = CreateDropdownRow(panel, def, y)
             widgetStore[#widgetStore + 1] = { def = def, widget = widget }
@@ -2516,12 +2545,22 @@ function FP:RefreshSettingsUI()
             if w.dropdown.arrow then
                 w.dropdown.arrow:SetTextColor(ACCENT.r, ACCENT.g, ACCENT.b, 1)
             end
-        elseif def.kind == "rotationMode" then
+        elseif def.kind == "rotationMode" or def.kind == "dispelPos" or def.kind == "dispelSound" then
             w.label:SetText((L[def.labelKey] or def.fallback) .. ":")
-            local currentMode = settings.rotationMode or "always"
-            local displayText = currentMode
-            for _, opt in ipairs(ROTATION_MODE_OPTIONS) do
-                if opt.key == currentMode then
+            local opts, current
+            if def.kind == "rotationMode" then
+                opts = ROTATION_MODE_OPTIONS
+                current = settings.rotationMode or "always"
+            elseif def.kind == "dispelPos" then
+                opts = FP.DISPEL_POS_PRESETS or {}
+                current = settings.dispelAlertPosPreset or "TOPRIGHT"
+            else
+                opts = FP.DISPEL_SOUND_PRESETS or {}
+                current = settings.dispelAlertSoundPreset or "readycheck"
+            end
+            local displayText = current
+            for _, opt in ipairs(opts) do
+                if opt.key == current then
                     displayText = L[opt.labelKey] or opt.fallback
                     break
                 end

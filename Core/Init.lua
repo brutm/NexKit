@@ -436,6 +436,30 @@ function FP:GetSpellActionSlot(spellID)
     return slot
 end
 
+local observedSpellBaseCD = {}
+local castCooldownExpiresAt = {}
+local castCooldownDurations = {}
+
+local FALLBACK_BASE_COOLDOWNS = {
+    [20271] = 8.0, [53408] = 8.0, [53407] = 8.0, -- Judgement
+    [35395] = 4.0, [53385] = 10.0, -- Crusader Strike / Divine Storm
+    [26573] = 8.0, [20116] = 8.0, [20922] = 8.0, [20923] = 8.0, [20924] = 8.0, [27173] = 8.0, [48819] = 8.0, -- Consecration
+    [20925] = 10.0, [20927] = 10.0, [20928] = 10.0, [27179] = 10.0, [48952] = 8.0, -- Holy Shield
+    [31935] = 15.0, [31589] = 15.0, [32699] = 15.0, [32700] = 15.0, [48827] = 30.0, -- Avenger's Shield
+    [53600] = 6.0, [61411] = 6.0, [53595] = 6.0, -- Shield / Hammer of Righteousness
+    [24275] = 6.0, [24274] = 6.0, [24239] = 6.0, [27180] = 6.0, [48806] = 6.0, -- Hammer of Wrath
+    [879]   = 15.0, [5614]  = 15.0, [5615]  = 15.0, [10312] = 15.0, [10313] = 15.0, [10314] = 15.0, [27138] = 15.0, [48801] = 15.0, -- Exorcism
+    [853]   = 60.0, [5588]  = 60.0, [5589]  = 60.0, [10308] = 60.0, -- Hammer of Justice
+    [20473] = 6.0, [20929] = 6.0, [20930] = 6.0, [27174] = 6.0, [48825] = 6.0, -- Holy Shock
+    [23922] = 6.0, [23923] = 6.0, [23924] = 6.0, [23925] = 6.0, [25258] = 6.0, [47488] = 6.0, -- Shield Slam
+    [12294] = 6.0, [21551] = 6.0, [21552] = 6.0, [21553] = 6.0, [25248] = 6.0, [30330] = 6.0, [47486] = 6.0, -- Mortal Strike
+    [23881] = 4.0, [23892] = 4.0, [23893] = 4.0, [23894] = 4.0, [25251] = 4.0, [30335] = 4.0, -- Bloodthirst
+    [6572]  = 5.0, [6574]  = 5.0, [7379]  = 5.0, [11600] = 5.0, [11601] = 5.0, [25288] = 5.0, [57823] = 5.0, -- Revenge
+    [2136]  = 8.0, [2137]  = 8.0, [2138]  = 8.0, [8412]  = 8.0, [8413]  = 8.0, [10197] = 8.0, [10199] = 8.0, [10200] = 8.0, [27079] = 8.0, [42873] = 8.0, -- Fire Blast
+    [8092]  = 8.0, [8102]  = 8.0, [8103]  = 8.0, [8104]  = 8.0, [10945] = 8.0, [10946] = 8.0, [10947] = 8.0, [25375] = 8.0, [48127] = 8.0, -- Mind Blast
+    [17364] = 8.0, [60103] = 6.0, [51505] = 8.0, -- Stormstrike / Lava Lash / Lava Burst
+}
+
 local function ReadCooldownForID(queryID, now)
     if not queryID then return 0, 0 end
     if C_Spell and C_Spell.GetSpellCooldown then
@@ -443,18 +467,43 @@ local function ReadCooldownForID(queryID, now)
         if type(cd) == "table" and IsSafeNum(cd.startTime) and IsSafeNum(cd.duration) then
             local s = cd.startTime or 0
             local d = cd.duration or 0
-            local isReal = (cd.isOnGCD == false and d > 0) or (cd.isOnGCD == nil and d > 1.5)
+            local onGCDKnown = IsAccessible(cd.isOnGCD) and (type(cd.isOnGCD) == "boolean")
+            local isReal = (onGCDKnown and cd.isOnGCD == false and d > 0)
+                or ((not onGCDKnown or cd.isOnGCD == nil) and d > 1.5)
             if isReal and s > 0 then
+                if d > 1.5 then observedSpellBaseCD[queryID] = d end
                 return math.max(0, (s + d) - now), d
             end
         end
     elseif GetSpellCooldown then
         local s, d = SafeCall(GetSpellCooldown, queryID)
         if IsSafeNum(s) and IsSafeNum(d) and d > 1.5 and s > 0 then
+            observedSpellBaseCD[queryID] = d
             return math.max(0, (s + d) - now), d
         end
     end
     return 0, 0
+end
+
+local function RecordSpellCastCooldown(spellID)
+    if not IsSafeNum(spellID) or spellID <= 0 then return end
+    local now = (GetTime and SafeCall(GetTime)) or 0
+    if not IsSafeNum(now) then return end
+
+    local dur = observedSpellBaseCD[spellID]
+    if not dur and GetSpellBaseCooldown then
+        local baseMs = SafeCall(GetSpellBaseCooldown, spellID)
+        if IsSafeNum(baseMs) and baseMs > 1500 then
+            dur = baseMs / 1000
+        end
+    end
+    if not dur then
+        dur = FALLBACK_BASE_COOLDOWNS[spellID]
+    end
+    if dur and dur > 1.5 then
+        castCooldownExpiresAt[spellID] = now + dur
+        castCooldownDurations[spellID] = dur
+    end
 end
 
 local function GetAccurateSpellCooldown(spellID, extraArg)
@@ -486,6 +535,7 @@ local function GetAccurateSpellCooldown(spellID, extraArg)
             if IsSafeNum(s) and IsSafeNum(d) and d > 1.5 and s > 0 then
                 remaining = math.max(0, (s + d) - now)
                 dur = d
+                observedSpellBaseCD[spellID] = d
             end
         end
     end
@@ -512,8 +562,25 @@ local function GetAccurateSpellCooldown(spellID, extraArg)
             if IsSafeNum(s) and IsSafeNum(d) and d > 1.5 and s > 0 then
                 remaining = math.max(0, (s + d) - now)
                 dur = d
+                observedSpellBaseCD[spellID] = d
             end
         end
+    end
+
+    -- Combat secret-value cast cooldown fallback
+    if remaining <= 0 then
+        local exp = castCooldownExpiresAt[queryID] or castCooldownExpiresAt[spellID]
+        local cDur = castCooldownDurations[queryID] or castCooldownDurations[spellID]
+        if exp and exp > now then
+            remaining = exp - now
+            dur = cDur or remaining
+        elseif exp and exp <= now then
+            castCooldownExpiresAt[spellID] = nil
+            castCooldownExpiresAt[queryID] = nil
+        end
+    else
+        castCooldownExpiresAt[spellID] = now + remaining
+        castCooldownDurations[spellID] = dur
     end
 
     return remaining, dur, (remaining <= 0.15)
@@ -789,6 +856,7 @@ FP.IsSpellKnown          = IsSpellKnownCompat
 FP.IsSpellPassive        = IsSpellPassiveCompat
 FP.IsSpellUsable         = IsSpellUsableCompat
 FP.GetSpellCooldown      = GetAccurateSpellCooldown
+FP.RecordSpellCastCooldown = RecordSpellCastCooldown
 FP.ReadTalentTabCompat   = ReadTalentTabCompat
 FP.IsPlayerShieldEquipped = IsPlayerShieldEquipped
 
@@ -1262,8 +1330,10 @@ local SV_DEFAULTS = {
         -- Dispel Alert HUD
         enableDispelAlert       = true,
         dispelAlertSound        = true,
+        dispelAlertSoundPreset  = "readycheck",
         dispelAlertLocked       = true,
         dispelAlertScale        = 1.0,
+        dispelAlertPosPreset    = "TOPRIGHT",
         dispelAlertPos          = nil,
     },
 }
@@ -1454,6 +1524,10 @@ local function HandleSlashCommand(input)
             if FP.ResetRotationAdvisorPos then
                 FP:ResetRotationAdvisorPos()
             end
+        elseif sub == "debug" then
+            if FP.DumpRotationDebug then
+                FP:DumpRotationDebug()
+            end
         elseif sub == "always" or sub == "combat" or sub == "target" then
             if NexusKitDB and NexusKitDB.settings then
                 NexusKitDB.settings.rotationMode = sub
@@ -1467,8 +1541,9 @@ local function HandleSlashCommand(input)
             end
         end
     elseif cmd == "dispel" or cmd == "cleanse" or cmd == "decurse" then
-        local sub = rest and rest:match("^(%S+)")
+        local sub, arg = (rest or ""):match("^(%S+)%s*(.-)$")
         sub = sub and sub:lower() or ""
+        arg = Trim(arg or ""):lower()
         if sub == "lock" or sub == "unlock" then
             local locked = (sub == "lock")
             if sub == "lock" and NexusKitDB and NexusKitDB.settings and NexusKitDB.settings.dispelAlertLocked == true then
@@ -1481,8 +1556,18 @@ local function HandleSlashCommand(input)
             if FP.ResetDispelAlertPos then
                 FP:ResetDispelAlertPos()
             end
+        elseif sub == "pos" and arg ~= "" then
+            local map = { topright = "TOPRIGHT", tr = "TOPRIGHT", topleft = "TOPLEFT", tl = "TOPLEFT", top = "TOPCENTER", center = "CENTER" }
+            local key = map[arg]
+            if key and FP.SetDispelAlertPosPreset then
+                FP:SetDispelAlertPosPreset(key)
+            else
+                FP:Print("Uso: /nk dispel pos <topright|topleft|top|center>")
+            end
         elseif sub == "sound" then
-            if NexusKitDB and NexusKitDB.settings then
+            if arg ~= "" and FP.SetDispelAlertSoundPreset then
+                FP:SetDispelAlertSoundPreset(arg)
+            elseif NexusKitDB and NexusKitDB.settings then
                 NexusKitDB.settings.dispelAlertSound = not (NexusKitDB.settings.dispelAlertSound ~= false)
                 local st = NexusKitDB.settings.dispelAlertSound and "|cff00ff00ATTIVO|r" or "|cffff0000DISATTIVO|r"
                 FP:Print("Suono Avviso Dispel: " .. st)

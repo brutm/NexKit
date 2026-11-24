@@ -494,7 +494,13 @@ end
 local lastCastSpellID = nil
 local lastCastTime = 0
 local lastCastName = nil
+local lastSentSpellID = nil
+local lastSentTime = 0
 local activeSealGraceUntil = 0
+local combatTrackedSealUntil = 0
+local lastConfirmedSealUntil = 0
+local sealConsumedByJudgement = nil
+local pendingJudgementVerifyAt = 0
 
 local PALADIN_SEAL_SPELLS = {
     [20154] = true, [21082] = true, [21084] = true, [20287] = true, [20288] = true, [20289] = true, [20290] = true,
@@ -508,20 +514,49 @@ local PALADIN_SEAL_SPELLS = {
     [31892] = true, [53720] = true, -- Seal of Blood / Corruption
 }
 
-local function IsPaladinSealSpellOrBuff(name, sid)
-    if sid and PALADIN_SEAL_SPELLS[sid] then
+local function IsPaladinSealSpellOrBuff(name, sid, extraIDs, extraNames, icon, extraIcons)
+    if sid and (PALADIN_SEAL_SPELLS[sid] or (extraIDs and extraIDs[sid])) then
+        return true
+    end
+    if icon and extraIcons and extraIcons[icon] then
+        return true
+    end
+    if type(icon) == "string" then
+        local lowIcon = string.lower(icon)
+        if lowIcon:find("ability_thunderbolt", 1, true) or lowIcon:find("righteousnessaura", 1, true) then
+            return true
+        end
+    end
+    if type(name) == "string" and name ~= "" then
+        local low = string.lower(name)
+        if extraNames and extraNames[low] then
+            return true
+        end
+        if low:find("seal of", 1, true)
+            or low:find("sigillo", 1, true)
+            or low:find("siegel ", 1, true)
+            or low:find("sello ", 1, true)
+            or low:find("sceau ", 1, true)
+            or low:find("печать ", 1, true)
+        then
+            if not low:find("blessing", 1, true) and not low:find("benedizione", 1, true) and not low:find("fury", 1, true) and not low:find("furia", 1, true) then
+                return true
+            end
+        end
+    end
+    return false
+end
+
+local function IsJudgementSpell(name, sid)
+    if sid == 20271 or sid == 53408 or sid == 53407 or sid == 20473 then
+        if sid == 20473 then return false end
         return true
     end
     if type(name) == "string" and name ~= "" then
         local low = string.lower(name)
-        if low:find("seal of", 1, true)
-            or low:find("sigillo ", 1, true)
-            or low:find("sigillo dell", 1, true)
-            or low:find("sigillo d'", 1, true)
-            or low:find("siegel d", 1, true)
-            or low:find("sello d", 1, true)
-            or low:find("sceau ", 1, true)
-            or low:find("печать ", 1, true)
+        if low:find("judgement", 1, true) or low:find("judgment", 1, true)
+            or low:find("giudizio", 1, true) or low:find("richturteil", 1, true)
+            or low:find("sentencia", 1, true) or low:find("jugement", 1, true)
         then
             return true
         end
@@ -529,40 +564,146 @@ local function IsPaladinSealSpellOrBuff(name, sid)
     return false
 end
 
-local function IsPaladinSealActive()
-    -- 1. Live buff scan on player (never matches Blessings or Righteous Fury)
-    for i = 1, 40 do
-        local name, sid = nil, nil
-        if UnitBuff then
-            local ok, bName, _, _, _, _, _, _, _, _, bSid = pcall(UnitBuff, "player", i)
-            if ok and IsAccessible(bName) then name = bName end
-            if ok and IsAccessible(bSid) then sid = bSid end
-        end
-        if not name and C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
-            local ok, a = pcall(C_UnitAuras.GetAuraDataByIndex, "player", i, "HELPFUL")
-            if not ok then break end
-            if type(a) == "table" then
-                pcall(function()
-                    if IsAccessible(a.name) then name = a.name end
-                    if IsAccessible(a.spellId) then sid = a.spellId end
-                end)
+local lastSealDebug = {}
+
+local function IsPaladinSealActive(knownSeals)
+    local now = (GetTime and SafeCall(GetTime)) or 0
+    if type(now) ~= "number" then now = 0 end
+
+    local extraIDs, extraNames, extraIcons = {}, {}, {}
+    if type(knownSeals) == "table" then
+        for _, sid in ipairs(knownSeals) do
+            if type(sid) == "number" then
+                extraIDs[sid] = true
+                local sName = GetSpellNameCompat(sid)
+                if sName and sName ~= "" then
+                    extraNames[string.lower(sName)] = true
+                end
+                local sTex = GetSpellTextureCompat(sid)
+                if sTex and sTex ~= "" and sTex ~= 135962 then
+                    extraIcons[sTex] = true
+                end
             end
         end
+    end
 
-        if IsPaladinSealSpellOrBuff(name, sid) then
-            return true
-        end
-        if not name and not sid and i > 8 then
-            break
+    local matchedLive = false
+    local matchedExp = 0
+    local totalSlots = 0
+    local readableSlots = 0
+    local hadAuraError = false
+
+    -- 1. Try direct C_UnitAuras.GetPlayerAuraBySpellID first (works cleanly on modern 1.60.1)
+    if C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID then
+        local checkSet = {}
+        for sid in pairs(extraIDs) do checkSet[sid] = true end
+        for sid in pairs(PALADIN_SEAL_SPELLS) do checkSet[sid] = true end
+        for sid in pairs(checkSet) do
+            local sec = C_Secrets and C_Secrets.ShouldSpellAuraBeSecret and SafeCall(C_Secrets.ShouldSpellAuraBeSecret, sid)
+            if not sec then
+                local aura = SafeCall(C_UnitAuras.GetPlayerAuraBySpellID, sid)
+                if type(aura) == "table" then
+                    matchedLive = true
+                    local okExp, expT = pcall(function()
+                        return IsAccessible(aura.expirationTime) and tonumber(aura.expirationTime) or 0
+                    end)
+                    if okExp and type(expT) == "number" and expT > 0 then
+                        matchedExp = expT
+                    end
+                    break
+                end
+            end
         end
     end
 
-    -- 2. Short 2.0s post-cast bridge while UNIT_AURA catches up (cleared on Judgement!)
-    local now = (GetTime and SafeCall(GetTime)) or 0
-    if activeSealGraceUntil > 0 and type(now) == "number" and now < activeSealGraceUntil then
+    -- 2. Scan player buff list via C_UnitAuras.GetAuraDataByIndex (preferred) or UnitBuff fallback
+    if not matchedLive then
+        if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
+            for i = 1, 40 do
+                local ok, aura = pcall(C_UnitAuras.GetAuraDataByIndex, "player", i, "HELPFUL")
+                if not ok then
+                    hadAuraError = true
+                    break
+                end
+                if not aura then break end
+                totalSlots = totalSlots + 1
+                if type(aura) == "table" then
+                    local okRead, aName, aSid, aIcon, aExp = pcall(function()
+                        local n = IsAccessible(aura.name) and aura.name or nil
+                        local s = IsAccessible(aura.spellId) and aura.spellId or nil
+                        local ic = IsAccessible(aura.icon) and aura.icon or nil
+                        local ex = IsAccessible(aura.expirationTime) and tonumber(aura.expirationTime) or 0
+                        return n, s, ic, ex
+                    end)
+                    if not okRead then
+                        hadAuraError = true
+                        break
+                    end
+                    if aName or aSid or aIcon then
+                        readableSlots = readableSlots + 1
+                        if IsPaladinSealSpellOrBuff(aName, aSid, extraIDs, extraNames, aIcon, extraIcons) then
+                            matchedLive = true
+                            matchedExp = (type(aExp) == "number" and aExp > 0) and aExp or 0
+                            break
+                        end
+                    end
+                end
+            end
+        elseif UnitBuff then
+            for i = 1, 40 do
+                local ok, bName, _, bIcon, _, _, bExp, _, _, _, bSid = pcall(UnitBuff, "player", i)
+                if not ok then
+                    hadAuraError = true
+                    break
+                end
+                if bName == nil and bSid == nil and bIcon == nil then
+                    break
+                end
+                totalSlots = totalSlots + 1
+                local n = IsAccessible(bName) and bName or nil
+                local s = IsAccessible(bSid) and bSid or nil
+                local ic = IsAccessible(bIcon) and bIcon or nil
+                local ex = (IsAccessible(bExp) and tonumber(bExp)) or 0
+                if n or s or ic then
+                    readableSlots = readableSlots + 1
+                    if IsPaladinSealSpellOrBuff(n, s, extraIDs, extraNames, ic, extraIcons) then
+                        matchedLive = true
+                        matchedExp = (ex > 0) and ex or 0
+                        break
+                    end
+                end
+            end
+        end
+    end
+
+    local globalSecret = (C_Secrets and C_Secrets.ShouldAurasBeSecret and SafeCall(C_Secrets.ShouldAurasBeSecret)) == true
+    local aurasRestricted = (globalSecret == true) or hadAuraError or (totalSlots > 0 and readableSlots == 0)
+
+    lastSealDebug.aurasRestricted = aurasRestricted
+    lastSealDebug.totalSlots = totalSlots
+    lastSealDebug.readableSlots = readableSlots
+    lastSealDebug.matchedLive = matchedLive
+
+    if matchedLive then
+        lastConfirmedSealUntil = (matchedExp > now) and matchedExp or (now + 30.0)
+        combatTrackedSealUntil = math.max(combatTrackedSealUntil, lastConfirmedSealUntil)
+        if pendingJudgementVerifyAt > 0 and now >= pendingJudgementVerifyAt then
+            sealConsumedByJudgement = false
+            pendingJudgementVerifyAt = 0
+        end
         return true
     end
-    return false
+
+    if aurasRestricted then
+        return (combatTrackedSealUntil > now) or (lastConfirmedSealUntil > now) or (activeSealGraceUntil > now)
+    end
+
+    -- Auras are readable and no Seal buff was found:
+    if pendingJudgementVerifyAt > 0 and now >= pendingJudgementVerifyAt then
+        sealConsumedByJudgement = true
+        pendingJudgementVerifyAt = 0
+    end
+    return (activeSealGraceUntil > now)
 end
 
 local function BuildRotation(ctx)
@@ -631,7 +772,7 @@ local function BuildRotation(ctx)
         local sealWisdom    = FindBestSpellInRanks({ 20165, 20356, 20357, 27166 }, { "Seal of Wisdom", "Sigillo della Saggezza" })
         local sealCrusader  = FindBestSpellInRanks({ 20305, 20306, 20307, 20308, 20162, 20309, 27158 }, { "Seal of the Crusader", "Sigillo del Crociato" })
 
-        local activeSeal = IsPaladinSealActive()
+        local activeSeal = IsPaladinSealActive({ sealRighteous, sealCommand, sealVengeance, sealWisdom, sealCrusader })
 
         local holyShield       = FindBestSpellInRanks({ 20925, 20927, 20928, 27179, 48952 }, { "Holy Shield", "Scudo Sacro" })
         local shieldRighteous  = FindBestSpellInRanks({ 53600, 61411 }, { "Shield of Righteousness", "Shield of the Righteous", "Scudo del Giusto" })
@@ -1288,19 +1429,24 @@ local mainCooldown = CreateFrame("Cooldown", nil, mainSlot, "CooldownFrameTempla
 mainCooldown:SetPoint("TOPLEFT", mainSlot, "TOPLEFT", 2, -2)
 mainCooldown:SetPoint("BOTTOMRIGHT", mainSlot, "BOTTOMRIGHT", -2, 2)
 if mainCooldown.SetDrawEdge then mainCooldown:SetDrawEdge(true) end
-if mainCooldown.SetSwipeColor then mainCooldown:SetSwipeColor(0, 0, 0, 0.75) end
+if mainCooldown.SetSwipeColor then mainCooldown:SetSwipeColor(0, 0, 0, 0.72) end
+if mainCooldown.SetHideCountdownNumbers then mainCooldown:SetHideCountdownNumbers(true) end
 mainSlot.cooldown = mainCooldown
 
-local mainKeybind = mainSlot:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmallOutline")
-mainKeybind:SetPoint("TOPRIGHT", mainSlot, "TOPRIGHT", -3, -3)
+local mainTextOverlay = CreateFrame("Frame", nil, mainSlot)
+mainTextOverlay:SetAllPoints(mainSlot)
+mainTextOverlay:SetFrameLevel(mainCooldown:GetFrameLevel() + 8)
+
+local mainKeybind = mainTextOverlay:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmallOutline")
+mainKeybind:SetPoint("TOPRIGHT", mainTextOverlay, "TOPRIGHT", -3, -3)
 mainKeybind:SetTextColor(1.0, 1.0, 1.0, 1.0)
 mainSlot.keybind = mainKeybind
 
-local mainTimerText = mainSlot:CreateFontString(nil, "OVERLAY", "GameFontHighlightLarge")
-mainTimerText:SetPoint("CENTER", mainSlot, "CENTER", 0, 0)
+local mainTimerText = mainTextOverlay:CreateFontString(nil, "OVERLAY", "GameFontHighlightLarge")
+mainTimerText:SetPoint("CENTER", mainTextOverlay, "CENTER", 0, 0)
 local tFont = mainTimerText:GetFont()
 if tFont then
-    mainTimerText:SetFont(tFont, 16, "OUTLINE")
+    mainTimerText:SetFont(tFont, 15, "OUTLINE")
 end
 mainTimerText:SetTextColor(1.0, 0.95, 0.2, 1.0)
 mainTimerText:Hide()
@@ -1330,20 +1476,25 @@ queueIcon:SetPoint("BOTTOMRIGHT", queueSlot, "BOTTOMRIGHT", -1.5, 1.5)
 queueIcon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
 queueSlot.icon = queueIcon
 
-local queueKeybind = queueSlot:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmallOutline")
-queueKeybind:SetPoint("TOPRIGHT", queueSlot, "TOPRIGHT", -2, -2)
-queueKeybind:SetTextColor(0.9, 0.9, 0.9, 1.0)
-queueSlot.keybind = queueKeybind
-
 local queueCooldown = CreateFrame("Cooldown", nil, queueSlot, "CooldownFrameTemplate")
 queueCooldown:SetPoint("TOPLEFT", queueSlot, "TOPLEFT", 1.5, -1.5)
 queueCooldown:SetPoint("BOTTOMRIGHT", queueSlot, "BOTTOMRIGHT", -1.5, 1.5)
 if queueCooldown.SetDrawEdge then queueCooldown:SetDrawEdge(true) end
 if queueCooldown.SetSwipeColor then queueCooldown:SetSwipeColor(0, 0, 0, 0.72) end
+if queueCooldown.SetHideCountdownNumbers then queueCooldown:SetHideCountdownNumbers(true) end
 queueSlot.cooldown = queueCooldown
 
-local queueTimerText = queueSlot:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmallOutline")
-queueTimerText:SetPoint("CENTER", queueSlot, "CENTER", 0, 0)
+local queueTextOverlay = CreateFrame("Frame", nil, queueSlot)
+queueTextOverlay:SetAllPoints(queueSlot)
+queueTextOverlay:SetFrameLevel(queueCooldown:GetFrameLevel() + 8)
+
+local queueKeybind = queueTextOverlay:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmallOutline")
+queueKeybind:SetPoint("TOPRIGHT", queueTextOverlay, "TOPRIGHT", -2, -2)
+queueKeybind:SetTextColor(0.9, 0.9, 0.9, 1.0)
+queueSlot.keybind = queueKeybind
+
+local queueTimerText = queueTextOverlay:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmallOutline")
+queueTimerText:SetPoint("CENTER", queueTextOverlay, "CENTER", 0, 0)
 queueTimerText:SetTextColor(1.0, 0.95, 0.2, 1.0)
 queueTimerText:Hide()
 queueSlot.timerText = queueTimerText
@@ -1543,12 +1694,24 @@ SafeRegisterEvent(evFrame, "SPELLS_CHANGED")
 SafeRegisterEvent(evFrame, "LEARNED_SPELL_IN_TAB")
 SafeRegisterEvent(evFrame, "CHARACTER_POINTS_CHANGED")
 SafeRegisterEvent(evFrame, "PLAYER_TALENT_UPDATE")
+SafeRegisterEvent(evFrame, "UNIT_SPELLCAST_SENT")
 SafeRegisterEvent(evFrame, "UNIT_SPELLCAST_SUCCEEDED")
 SafeRegisterEvent(evFrame, "UNIT_SPELLCAST_START")
 SafeRegisterEvent(evFrame, "UNIT_AURA")
 
 evFrame:SetScript("OnEvent", function(self, event, arg1, arg2, arg3, arg4, arg5)
-    if event == "UNIT_SPELLCAST_SUCCEEDED" and IsAccessible(arg1) and arg1 == "player" then
+    local now = (GetTime and SafeCall(GetTime)) or 0
+    if type(now) ~= "number" then now = 0 end
+
+    if event == "UNIT_SPELLCAST_SENT" and IsAccessible(arg1) and arg1 == "player" then
+        local sentID = (IsAccessible(arg4) and type(arg4) == "number" and arg4)
+            or (IsAccessible(arg3) and type(arg3) == "number" and arg3)
+            or nil
+        if sentID then
+            lastSentSpellID = sentID
+            lastSentTime = now
+        end
+    elseif event == "UNIT_SPELLCAST_SUCCEEDED" and IsAccessible(arg1) and arg1 == "player" then
         local spellName, spellID = nil, nil
         if IsAccessible(arg3) and type(arg3) == "number" then
             -- Modern Retail client (1.60 / 11.0): arg1=unit ("player"), arg2=castGUID, arg3=spellID
@@ -1567,26 +1730,30 @@ evFrame:SetScript("OnEvent", function(self, event, arg1, arg2, arg3, arg4, arg5)
             spellName = GetSpellNameCompat(spellID)
         end
 
+        if not spellID and lastSentSpellID and (now - lastSentTime) < 1.5 then
+            spellID = lastSentSpellID
+        end
         if not spellName and spellID then
             spellName = GetSpellNameCompat(spellID)
         end
 
         lastCastSpellID = spellID
-        lastCastTime = (GetTime and SafeCall(GetTime)) or 0
-        if spellName then
-            lastCastName = spellName
-            local low = string.lower(spellName)
-            local isJudgement = (spellID == 20271 or spellID == 53408 or spellID == 53407)
-                or low:find("judgement", 1, true) or low:find("judgment", 1, true)
-                or low:find("giudizio", 1, true) or low:find("richturteil", 1, true)
-                or low:find("sentencia", 1, true) or low:find("jugement", 1, true)
-            if isJudgement then
-                activeSealGraceUntil = 0
-            elseif IsPaladinSealSpellOrBuff(spellName, spellID) then
-                activeSealGraceUntil = lastCastTime + 2.0
+        lastCastTime = now
+        if spellName then lastCastName = spellName end
+        if spellID and FP.RecordSpellCastCooldown then
+            FP.RecordSpellCastCooldown(spellID)
+        end
+
+        if IsJudgementSpell(spellName, spellID) then
+            activeSealGraceUntil = 0
+            pendingJudgementVerifyAt = now + 0.45
+            if sealConsumedByJudgement ~= false then
+                combatTrackedSealUntil = 0
+                lastConfirmedSealUntil = 0
             end
-        elseif spellID and PALADIN_SEAL_SPELLS[spellID] then
-            activeSealGraceUntil = lastCastTime + 2.0
+        elseif IsPaladinSealSpellOrBuff(spellName, spellID) then
+            activeSealGraceUntil = now + 3.0
+            combatTrackedSealUntil = now + 30.0
         end
     end
 
@@ -1597,6 +1764,8 @@ evFrame:SetScript("OnEvent", function(self, event, arg1, arg2, arg3, arg4, arg5)
             s.rotationShowQueue = false
         end
         activeSealGraceUntil = 0
+        combatTrackedSealUntil = 0
+        lastConfirmedSealUntil = 0
     end
 
     if event == "ACTIONBAR_SLOT_CHANGED" or event == "UPDATE_BINDINGS" then
@@ -1654,4 +1823,21 @@ end
 
 function FP:RefreshRotationAdvisor()
     UpdateRotationUI()
+end
+
+function FP:DumpRotationDebug()
+    local ctx = GetPlayerCombatContext()
+    local cands = BuildRotation(ctx)
+    local now = (GetTime and SafeCall(GetTime)) or 0
+    FP:Print(string.format("|cffffd100[Rotation Debug]|r class=%s tab=%s role=%s shield=%s combat=%s speed=%.2f",
+        tostring(ctx.classTag), tostring(ctx.tabIdx), tostring(ctx.role), tostring(ctx.isShieldEquipped), tostring(ctx.inCombat), ctx.mainSpeed or 0))
+    FP:Print(string.format("  sealRestricted=%s slots=%s/%s live=%s combatTrack=%.1fs grace=%.1fs consumed=%s",
+        tostring(lastSealDebug.aurasRestricted), tostring(lastSealDebug.readableSlots), tostring(lastSealDebug.totalSlots),
+        tostring(lastSealDebug.matchedLive), math.max(0, combatTrackedSealUntil - now), math.max(0, activeSealGraceUntil - now), tostring(sealConsumedByJudgement)))
+    for i = 1, math.min(3, #cands) do
+        local c = cands[i]
+        FP:Print(string.format("  #%d: %s (%s) ready=%s rem=%.1f dur=%.1f usable=%s noMana=%s range=%s",
+            i, tostring(c.name), tostring(c.spellID), tostring(c.isReady), c.remaining or 0, c.duration or 0,
+            tostring(c.usable), tostring(c.noMana), tostring(c.inRange)))
+    end
 end
