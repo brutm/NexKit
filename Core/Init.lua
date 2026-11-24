@@ -372,9 +372,9 @@ local function ScanActionBarForSpell(spellID)
 
     local firstMatchedSlot = nil
     for slot = 1, 120 do
-        local actionType, id = SafeCall(GetActionInfo, slot)
+        local actionType, id, subType = SafeCall(GetActionInfo, slot)
         local matched = false
-        if actionType == "spell" then
+        if actionType == "spell" and type(id) == "number" and subType ~= "assistedcombat" then
             if id == spellID then
                 matched = true
             else
@@ -383,9 +383,9 @@ local function ScanActionBarForSpell(spellID)
                     matched = true
                 end
             end
-        elseif actionType == "macro" and id and GetMacroSpell then
+        elseif actionType == "macro" and type(id) == "number" and GetMacroSpell then
             local mSpell = SafeCall(GetMacroSpell, id)
-            if mSpell and (mSpell == spellID or GetSpellNameCompat(mSpell) == spellName) then
+            if type(mSpell) == "number" and (mSpell == spellID or GetSpellNameCompat(mSpell) == spellName) then
                 matched = true
             end
         end
@@ -441,6 +441,7 @@ local castCooldownExpiresAt = {}
 local castCooldownDurations = {}
 
 local FALLBACK_BASE_COOLDOWNS = {
+    [680]   = 10.0, [10332] = 10.0, -- Holy Strike (WoW Forever)
     [20271] = 8.0, [53408] = 8.0, [53407] = 8.0, -- Judgement
     [35395] = 4.0, [53385] = 10.0, -- Crusader Strike / Divine Storm
     [26573] = 8.0, [20116] = 8.0, [20922] = 8.0, [20923] = 8.0, [20924] = 8.0, [27173] = 8.0, [48819] = 8.0, -- Consecration
@@ -460,7 +461,35 @@ local FALLBACK_BASE_COOLDOWNS = {
     [17364] = 8.0, [60103] = 6.0, [51505] = 8.0, -- Stormstrike / Lava Lash / Lava Burst
 }
 
-local function ReadCooldownForID(queryID, now)
+local FALLBACK_NAME_COOLDOWNS = {
+    ["holy strike"]             = 10.0, ["colpo sacro"]           = 10.0, ["assalto sacro"]           = 10.0,
+    ["judgement"]               = 8.0,  ["judgment"]              = 8.0,  ["giudizio"]                = 8.0,
+    ["consecration"]            = 8.0,  ["consacrazione"]         = 8.0,
+    ["holy shield"]             = 10.0, ["scudo sacro"]           = 10.0,
+    ["crusader strike"]         = 4.0,  ["assalto del crociato"]  = 4.0,
+    ["avenger's shield"]        = 15.0, ["scudo del vendicatore"] = 15.0,
+    ["hammer of wrath"]         = 6.0,  ["martello dell'ira"]     = 6.0,
+    ["exorcism"]                = 15.0, ["esorcismo"]             = 15.0,
+    ["holy shock"]              = 6.0,  ["folgore sacra"]         = 6.0,
+    ["divine storm"]            = 10.0, ["tempesta divina"]       = 10.0,
+    ["shield of righteousness"] = 6.0,  ["hammer of the righteous"] = 6.0,
+    ["shield slam"]             = 6.0,  ["mortal strike"]         = 6.0,  ["bloodthirst"]             = 4.0,
+    ["revenge"]                 = 5.0,  ["whirlwind"]             = 8.0,  ["thunder clap"]            = 6.0,
+    ["spearing strike"]         = 10.0, ["fire blast"]            = 8.0,  ["mind blast"]              = 8.0,
+    ["penance"]                 = 12.0, ["chastise"]              = 10.0,
+    ["stormstrike"]             = 8.0,  ["lava burst"]            = 8.0,  ["lava lash"]               = 6.0,
+    ["sniper shot"]             = 10.0, ["strider kick"]          = 6.0,  ["aimed shot"]              = 10.0,
+    ["multi-shot"]              = 10.0, ["arcane shot"]           = 6.0,
+    ["mangle (bear)"]           = 6.0,  ["mangle (cat)"]          = 6.0,
+}
+
+local function CacheObservedCooldown(spellID, spellName, dur)
+    if type(dur) ~= "number" or dur <= 1.5 then return end
+    if IsSafeNum(spellID) then observedSpellBaseCD[spellID] = dur end
+    if IsSafeStr(spellName) then observedSpellBaseCD[string.lower(spellName)] = dur end
+end
+
+local function ReadCooldownForID(queryID, spellName, now)
     if not queryID then return 0, 0 end
     if C_Spell and C_Spell.GetSpellCooldown then
         local cd = SafeCall(C_Spell.GetSpellCooldown, queryID)
@@ -471,44 +500,57 @@ local function ReadCooldownForID(queryID, now)
             local isReal = (onGCDKnown and cd.isOnGCD == false and d > 0)
                 or ((not onGCDKnown or cd.isOnGCD == nil) and d > 1.5)
             if isReal and s > 0 then
-                if d > 1.5 then observedSpellBaseCD[queryID] = d end
+                CacheObservedCooldown(queryID, spellName, d)
                 return math.max(0, (s + d) - now), d
             end
         end
     elseif GetSpellCooldown then
         local s, d = SafeCall(GetSpellCooldown, queryID)
         if IsSafeNum(s) and IsSafeNum(d) and d > 1.5 and s > 0 then
-            observedSpellBaseCD[queryID] = d
+            CacheObservedCooldown(queryID, spellName, d)
             return math.max(0, (s + d) - now), d
         end
     end
     return 0, 0
 end
 
-local function RecordSpellCastCooldown(spellID)
-    if not IsSafeNum(spellID) or spellID <= 0 then return end
+local function RecordSpellCastCooldown(spellID, spellNameArg)
+    if not IsSafeNum(spellID) and not IsSafeStr(spellNameArg) then return end
     local now = (GetTime and SafeCall(GetTime)) or 0
     if not IsSafeNum(now) then return end
 
-    local dur = observedSpellBaseCD[spellID]
-    if not dur and GetSpellBaseCooldown then
+    local sName = IsSafeStr(spellNameArg) and spellNameArg or (IsSafeNum(spellID) and GetSpellNameCompat(spellID))
+    local lowName = IsSafeStr(sName) and string.lower(sName) or nil
+
+    local dur = (IsSafeNum(spellID) and observedSpellBaseCD[spellID])
+        or (lowName and observedSpellBaseCD[lowName])
+    if not dur and IsSafeNum(spellID) and GetSpellBaseCooldown then
         local baseMs = SafeCall(GetSpellBaseCooldown, spellID)
         if IsSafeNum(baseMs) and baseMs > 1500 then
             dur = baseMs / 1000
         end
     end
-    if not dur then
+    if not dur and IsSafeNum(spellID) then
         dur = FALLBACK_BASE_COOLDOWNS[spellID]
     end
+    if not dur and lowName then
+        dur = FALLBACK_NAME_COOLDOWNS[lowName]
+    end
     if dur and dur > 1.5 then
-        castCooldownExpiresAt[spellID] = now + dur
-        castCooldownDurations[spellID] = dur
+        if IsSafeNum(spellID) then
+            castCooldownExpiresAt[spellID] = now + dur
+            castCooldownDurations[spellID] = dur
+        end
+        if lowName then
+            castCooldownExpiresAt[lowName] = now + dur
+            castCooldownDurations[lowName] = dur
+        end
     end
 end
 
 local function GetAccurateSpellCooldown(spellID, extraArg)
     if type(spellID) == "table" then spellID = extraArg end
-    if not spellID then return 0, 0, true end
+    if not spellID then return 0, 0, true, nil end
 
     local now = (GetTime and SafeCall(GetTime)) or 0
     if not IsSafeNum(now) then now = 0 end
@@ -522,21 +564,27 @@ local function GetAccurateSpellCooldown(spellID, extraArg)
         if IsSafeNum(ov) and ov > 0 then queryID = ov end
     end
 
-    local remaining, dur = ReadCooldownForID(queryID, now)
+    local spellName = GetSpellNameCompat(spellID)
+    local lowName = IsSafeStr(spellName) and string.lower(spellName) or nil
+
+    local durationObj = nil
+    if C_Spell and C_Spell.GetSpellCooldownDuration then
+        local okObj, obj = pcall(C_Spell.GetSpellCooldownDuration, queryID, true)
+        if okObj and obj then durationObj = obj end
+    end
+
+    local remaining, dur = ReadCooldownForID(queryID, spellName, now)
     if remaining <= 0 and queryID ~= spellID then
-        remaining, dur = ReadCooldownForID(spellID, now)
+        remaining, dur = ReadCooldownForID(spellID, spellName, now)
     end
 
     -- Fallback by spell name (handles custom/rank spellID differences)
-    if remaining <= 0 and GetSpellCooldown then
-        local spellName = GetSpellNameCompat(spellID)
-        if IsSafeStr(spellName) then
-            local s, d = SafeCall(GetSpellCooldown, spellName)
-            if IsSafeNum(s) and IsSafeNum(d) and d > 1.5 and s > 0 then
-                remaining = math.max(0, (s + d) - now)
-                dur = d
-                observedSpellBaseCD[spellID] = d
-            end
+    if remaining <= 0 and GetSpellCooldown and IsSafeStr(spellName) then
+        local s, d = SafeCall(GetSpellCooldown, spellName)
+        if IsSafeNum(s) and IsSafeNum(d) and d > 1.5 and s > 0 then
+            remaining = math.max(0, (s + d) - now)
+            dur = d
+            CacheObservedCooldown(spellID, spellName, d)
         end
     end
 
@@ -562,28 +610,43 @@ local function GetAccurateSpellCooldown(spellID, extraArg)
             if IsSafeNum(s) and IsSafeNum(d) and d > 1.5 and s > 0 then
                 remaining = math.max(0, (s + d) - now)
                 dur = d
-                observedSpellBaseCD[spellID] = d
+                CacheObservedCooldown(spellID, spellName, d)
             end
         end
     end
 
-    -- Combat secret-value cast cooldown fallback
+    -- Combat secret-value fallback: check Cast cooldown tracker and DurationObject:IsZero()
     if remaining <= 0 then
-        local exp = castCooldownExpiresAt[queryID] or castCooldownExpiresAt[spellID]
-        local cDur = castCooldownDurations[queryID] or castCooldownDurations[spellID]
+        local exp = castCooldownExpiresAt[queryID] or castCooldownExpiresAt[spellID] or (lowName and castCooldownExpiresAt[lowName])
+        local cDur = castCooldownDurations[queryID] or castCooldownDurations[spellID] or (lowName and castCooldownDurations[lowName])
         if exp and exp > now then
             remaining = exp - now
             dur = cDur or remaining
         elseif exp and exp <= now then
             castCooldownExpiresAt[spellID] = nil
             castCooldownExpiresAt[queryID] = nil
+            if lowName then castCooldownExpiresAt[lowName] = nil end
         end
     else
-        castCooldownExpiresAt[spellID] = now + remaining
-        castCooldownDurations[spellID] = dur
+        if IsSafeNum(spellID) then
+            castCooldownExpiresAt[spellID] = now + remaining
+            castCooldownDurations[spellID] = dur
+        end
+        if lowName then
+            castCooldownExpiresAt[lowName] = now + remaining
+            castCooldownDurations[lowName] = dur
+        end
     end
 
-    return remaining, dur, (remaining <= 0.15)
+    local isReady = (remaining <= 0.15)
+    if isReady and durationObj and durationObj.IsZero then
+        local okZ, z = pcall(durationObj.IsZero, durationObj)
+        if okZ and IsAccessible(z) and z == false then
+            isReady = false
+        end
+    end
+
+    return remaining, dur, isReady, durationObj
 end
 
 local function IsSpellHelpfulCompat(spellID)

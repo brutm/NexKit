@@ -389,7 +389,7 @@ local function ScanPlayerAurasAndForms()
     local globalSecret = (C_Secrets and C_Secrets.ShouldAurasBeSecret and SafeCall(C_Secrets.ShouldAurasBeSecret)) == true
     if globalSecret or hadAuraError then
         state.restricted = true
-    elseif totalSlots > 0 and readableSlots == 0 and InCombatLockdown and InCombatLockdown() then
+    elseif totalSlots > 0 and readableSlots < totalSlots and InCombatLockdown and InCombatLockdown() then
         state.restricted = true
     end
 
@@ -898,6 +898,9 @@ local DUNGEON_ELIXIRS = {
 -------------------------------------------------------------------------------
 local dismissedKeys = {}
 local snoozedKeys = {}
+local recentCastUntil = {}
+local recentCastSpellIDs = {}
+local recentCastSpellNames = {}
 local currentSuggestions = {}
 
 local TRACKING_HINTS = {
@@ -954,9 +957,18 @@ local function EvaluateRecommendations()
     local profs = DetectPlayerProfessions()
     local weap = InspectEquippedWeapons()
 
+    local nowCast = (GetTime and SafeCall(GetTime)) or 0
+    if type(nowCast) ~= "number" then nowCast = 0 end
+
     local function PushSuggestion(entry)
         if not entry or not entry.key then return end
         if dismissedKeys[entry.key] or snoozedKeys[entry.key] then return end
+        if recentCastUntil[entry.key] and recentCastUntil[entry.key] > nowCast then return end
+        if entry.castSpell and recentCastSpellIDs[entry.castSpell] and recentCastSpellIDs[entry.castSpell] > nowCast then return end
+        if type(entry.name) == "string" and entry.name ~= "" then
+            local lowName = string.lower(entry.name)
+            if recentCastSpellNames[lowName] and recentCastSpellNames[lowName] > nowCast then return end
+        end
         out[#out + 1] = entry
     end
 
@@ -2043,20 +2055,41 @@ function FP:RefreshBuffAdvisor()
 
     currentSuggestions = EvaluateRecommendations()
 
-    -- Defer structural Show/Hide/Size/SetAttribute mutations cleanly if locked down in combat
+    -- Defer structural Show/Hide/Size/SetAttribute mutations cleanly if locked down in combat,
+    -- while still fading out applied/dismissed buffs visually via SetAlpha (allowed in combat).
     if InCombatLockdown() then
         pendingRefresh = true
         if buffFrame:IsShown() then
-            local byKey = {}
-            for _, item in ipairs(currentSuggestions) do
-                byKey[item.key] = item
-            end
-            for i = 1, MAX_SLOTS do
-                local slot = slotPool[i]
-                if slot and slot:IsShown() and slot.itemData then
-                    local updated = byKey[slot.itemData.key]
-                    if updated then
-                        UpdateSlotVisuals(slot, updated)
+            if #currentSuggestions == 0 then
+                pcall(buffFrame.SetAlpha, buffFrame, 0)
+                for i = 1, MAX_SLOTS do
+                    local slot = slotPool[i]
+                    if slot then
+                        if slot.pulseAnim and slot.pulseAnim.Stop then slot.pulseAnim:Stop() end
+                        pcall(slot.SetAlpha, slot, 0)
+                    end
+                end
+            else
+                pcall(buffFrame.SetAlpha, buffFrame, 1)
+                local byKey = {}
+                for _, item in ipairs(currentSuggestions) do
+                    byKey[item.key] = item
+                end
+                for i = 1, MAX_SLOTS do
+                    local slot = slotPool[i]
+                    if slot and slot:IsShown() and slot.itemData then
+                        local updated = byKey[slot.itemData.key]
+                        if updated then
+                            pcall(slot.SetAlpha, slot, 1.0)
+                            if slot.pulseAnim and slot.pulseAnim.IsPlaying and not slot.pulseAnim:IsPlaying() then
+                                slot.pulseAnim:Play()
+                            end
+                            UpdateSlotVisuals(slot, updated)
+                        else
+                            if slot.pulseAnim and slot.pulseAnim.Stop then slot.pulseAnim:Stop() end
+                            if slot.badgeText then slot.badgeText:SetText("OK") end
+                            pcall(slot.SetAlpha, slot, 0.16)
+                        end
                     end
                 end
             end
@@ -2065,11 +2098,13 @@ function FP:RefreshBuffAdvisor()
     end
 
     pendingRefresh = false
+    pcall(buffFrame.SetAlpha, buffFrame, 1.0)
     local visibleCount = math.min(MAX_SLOTS, #currentSuggestions)
     if visibleCount <= 0 then
         for i = 1, MAX_SLOTS do
             if slotPool[i] then
                 slotPool[i].itemData = nil
+                pcall(slotPool[i].SetAlpha, slotPool[i], 1.0)
                 slotPool[i]:Hide()
             end
         end
@@ -2086,6 +2121,10 @@ function FP:RefreshBuffAdvisor()
     for i = 1, visibleCount do
         local item = currentSuggestions[i]
         local slot = GetOrCreateSlot(i)
+        pcall(slot.SetAlpha, slot, 1.0)
+        if slot.pulseAnim and slot.pulseAnim.IsPlaying and not slot.pulseAnim:IsPlaying() then
+            slot.pulseAnim:Play()
+        end
         UpdateSlotVisuals(slot, item)
         ConfigureSlotAction(slot, item)
         slot:ClearAllPoints()
@@ -2166,6 +2205,7 @@ SafeRegisterEvent(eventFrame, "PLAYER_LOGIN")
 SafeRegisterEvent(eventFrame, "PLAYER_ENTERING_WORLD")
 SafeRegisterUnitEvent(eventFrame, "UNIT_AURA", "player")
 SafeRegisterEvent(eventFrame, "PLAYER_AURAS_CHANGED")
+SafeRegisterUnitEvent(eventFrame, "UNIT_SPELLCAST_SUCCEEDED", "player")
 SafeRegisterUnitEvent(eventFrame, "UNIT_PET", "player")
 SafeRegisterUnitEvent(eventFrame, "UNIT_POWER_UPDATE", "player")
 SafeRegisterUnitEvent(eventFrame, "UNIT_INVENTORY_CHANGED", "player")
@@ -2190,10 +2230,42 @@ SafeRegisterEvent(eventFrame, "PLAYER_REGEN_DISABLED")
 SafeRegisterEvent(eventFrame, "PLAYER_REGEN_ENABLED")
 
 local lastPowerCheck = 0
-eventFrame:SetScript("OnEvent", function(_, event)
+eventFrame:SetScript("OnEvent", function(_, event, arg1, arg2, arg3, arg4, arg5)
     if event == "SPELLS_CHANGED" or event == "LEARNED_SPELL_IN_TAB" or event == "SKILL_LINES_CHANGED" then
         spellbookLoaded = false
         FP:ScheduleBuffAdvisorRefresh(0.10)
+    elseif event == "UNIT_SPELLCAST_SUCCEEDED" and IsAccessible(arg1) and arg1 == "player" then
+        local sid = (IsAccessible(arg3) and type(arg3) == "number" and arg3)
+            or (IsAccessible(arg5) and type(arg5) == "number" and arg5)
+            or (IsAccessible(arg4) and type(arg4) == "number" and arg4)
+            or nil
+        local sName = sid and GetSpellNameCompat(sid) or (IsAccessible(arg2) and type(arg2) == "string" and arg2) or nil
+        local nowT = (GetTime and SafeCall(GetTime)) or 0
+        if type(nowT) == "number" and nowT > 0 then
+            if sid then
+                recentCastSpellIDs[sid] = nowT + 2.5
+                for _, item in ipairs(currentSuggestions) do
+                    if item.key and item.castSpell == sid then
+                        recentCastUntil[item.key] = nowT + 2.5
+                    end
+                end
+            end
+            if sName and sName ~= "" then
+                local low = string.lower(sName)
+                recentCastSpellNames[low] = nowT + 2.5
+                for _, item in ipairs(currentSuggestions) do
+                    if item.key and type(item.name) == "string" and string.lower(item.name) == low then
+                        recentCastUntil[item.key] = nowT + 2.5
+                    end
+                end
+            end
+        end
+        FP:ScheduleBuffAdvisorRefresh(0.05)
+        if C_Timer and C_Timer.After then
+            C_Timer.After(0.8, function()
+                FP:ScheduleBuffAdvisorRefresh(0.05)
+            end)
+        end
     elseif event == "UNIT_POWER_UPDATE" then
         local now = (GetTime and SafeCall(GetTime)) or 0
         if (now - lastPowerCheck) < 1.2 then return end

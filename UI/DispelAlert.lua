@@ -127,6 +127,67 @@ local function CollectTargetUnits()
     return units
 end
 
+local function PickFallbackDispelSchool(dispelInfo)
+    if dispelInfo and dispelInfo.schools then
+        if dispelInfo.schools["Magic"] then return "Magic" end
+        local k = next(dispelInfo.schools)
+        if k then return k end
+    end
+    return "Magic"
+end
+
+local function SafeReadAuraFields(unit, aura)
+    local okI, rawInstanceID = pcall(function() return aura.auraInstanceID end)
+    if not okI then rawInstanceID = nil end
+    local okN, rawName = pcall(function() return aura.name end)
+    if not okN then rawName = nil end
+    local okIc, rawIcon = pcall(function() return aura.icon end)
+    if not okIc then rawIcon = nil end
+    local okA, rawApps = pcall(function() return aura.applications end)
+    if not okA then rawApps = nil end
+    local okD, rawDispel = pcall(function() return aura.dispelName end)
+    if not okD then rawDispel = nil end
+    local okDu, rawDur = pcall(function() return aura.duration end)
+    if not okDu then rawDur = nil end
+    local okEx, rawExp = pcall(function() return aura.expirationTime end)
+    if not okEx then rawExp = nil end
+
+    local durObj = nil
+    if rawInstanceID ~= nil and C_UnitAuras and C_UnitAuras.GetAuraDuration then
+        local okObj, obj = pcall(C_UnitAuras.GetAuraDuration, unit, rawInstanceID)
+        if okObj and obj ~= nil then
+            durObj = obj
+        end
+    end
+
+    return {
+        rawInstanceID = rawInstanceID,
+        safeInstanceID = IsAccessible(rawInstanceID) and rawInstanceID or nil,
+        safeName      = IsSafeStr(rawName) and rawName or nil,
+        rawIcon       = rawIcon,
+        safeIcon      = IsAccessible(rawIcon) and rawIcon or nil,
+        safeApps      = SafeNumber(rawApps, 0),
+        safeDispel    = IsSafeStr(rawDispel) and rawDispel or nil,
+        safeDur       = SafeNumber(rawDur, 0),
+        safeExp       = SafeNumber(rawExp, 0),
+        durationObj   = durObj,
+    }
+end
+
+local function IsInstanceDispellableByPlayer(unit, rawInstanceID)
+    if rawInstanceID == nil or not C_UnitAuras or not C_UnitAuras.IsAuraFilteredOutByInstanceID then
+        return false
+    end
+    local filters = { "HARMFUL|RAID_PLAYER_DISPELLABLE", "RAID_PLAYER_DISPELLABLE" }
+    for _, flt in ipairs(filters) do
+        local okF, filteredOut = pcall(C_UnitAuras.IsAuraFilteredOutByInstanceID, unit, rawInstanceID, flt)
+        if okF and not IsSecret(filteredOut) and filteredOut == false then
+            return true
+        end
+    end
+    return false
+end
+
 local function ScanUnitDispellables(unit, dispelInfo, outList)
     if not UnitExists or SafeBoolean(SafeCall(UnitExists, unit), false) ~= true then return end
     if UnitIsConnected and SafeBoolean(SafeCall(UnitIsConnected, unit), true) ~= true then return end
@@ -141,113 +202,125 @@ local function ScanUnitDispellables(unit, dispelInfo, outList)
     unitGUID = IsSafeStr(unitGUID) and unitGUID or unit
     local colorHex = GetClassColorHex(unit)
     local now = (GetTime and SafeCall(GetTime)) or 0
+    local fallbackSchool = PickFallbackDispelSchool(dispelInfo)
 
-    for i = 1, 24 do
-        local name, icon, count, dType, duration, expirationTime, auraInstanceID
-        local found = false
-
-        if UnitDebuff then
-            local okD, dName, dIcon, dCount, dDispel, dDur, dExp = pcall(UnitDebuff, unit, i)
-            if okD and dName and (not IsSecret or not IsSecret(dName)) then
-                name = dName
-                icon = dIcon
-                count = dCount
-                dType = dDispel
-                duration = dDur
-                expirationTime = dExp
-                found = true
-            elseif okD and not dName then
-                break
-            end
-        end
-
-        if not found and C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
-            local okC, aura = pcall(C_UnitAuras.GetAuraDataByIndex, unit, i, "HARMFUL")
-            if okC and type(aura) == "table" then
-                local okRead = pcall(function()
-                    local aName = aura.name
-                    if aName and (not IsSecret or not IsSecret(aName)) then
-                        name = aName
-                        icon = aura.icon
-                        count = aura.applications
-                        dType = aura.dispelName
-                        duration = aura.duration
-                        expirationTime = aura.expirationTime
-                        auraInstanceID = aura.auraInstanceID
-                        found = true
-                    end
-                end)
-                if not okRead then break end
-            elseif okC and not aura then
-                break
-            elseif not okC then
-                break
-            end
-        end
-
-        if not found then break end
-
-        local matchedSchool = nil
-        if IsSafeStr(dType) and dispelInfo.schools[dType] then
-            matchedSchool = dType
-        elseif auraInstanceID and C_UnitAuras and C_UnitAuras.IsAuraFilteredOutByInstanceID then
-            local filteredOut = SafeCall(C_UnitAuras.IsAuraFilteredOutByInstanceID, unit, auraInstanceID, "HARMFUL|RAID_PLAYER_DISPELLABLE")
-            if filteredOut == false then
-                matchedSchool = next(dispelInfo.schools) or "Magic"
-            end
-        end
-
-        if matchedSchool then
-            local spellInfo = dispelInfo.spellsBySchool[matchedSchool]
+    local function PushMatch(matchedSchool, f)
+        local spellInfo = dispelInfo.spellsBySchool[matchedSchool]
+        if not spellInfo then
+            spellInfo = dispelInfo.spellsBySchool[fallbackSchool]
             if not spellInfo then
                 local _, firstSpell = next(dispelInfo.spellsBySchool)
                 spellInfo = firstSpell
             end
+        end
+        if not spellInfo then return end
 
-            if spellInfo then
-                local inRange = isPlayer or IsUnitSpellInRange(spellInfo.spellID, unit)
-                local cdRem, cdDur, isReady = 0, 0, true
-                if FP.GetSpellCooldown then
-                    cdRem, cdDur, isReady = FP.GetSpellCooldown(spellInfo.spellID)
-                end
+        local inRange = isPlayer or IsUnitSpellInRange(spellInfo.spellID, unit)
+        local cdRem, cdDur, isReady, cdDurObj = 0, 0, true, nil
+        if FP.GetSpellCooldown then
+            cdRem, cdDur, isReady, cdDurObj = FP.GetSpellCooldown(spellInfo.spellID)
+        end
 
-                local expNum = SafeNumber(expirationTime, 0)
-                local remSec = (expNum > 0 and IsSafeNum(now)) and math.max(0, expNum - now) or 0
-                local stacks = SafeNumber(count, 0)
+        local remSec = (f.safeExp > 0 and IsSafeNum(now)) and math.max(0, f.safeExp - now) or 0
+        local stacks = f.safeApps or 0
 
-                local score = 0
-                if inRange then score = score + 10000 end
-                if isReady then score = score + 5000 end
-                if isPlayer then
-                    score = score + 2000
-                elseif unitRole == "TANK" then
-                    score = score + 1200
-                elseif unitRole == "HEALER" then
-                    score = score + 1000
-                end
-                score = score + math.floor((1 - hpPct) * 500) + math.min(stacks, 10) * 15
+        local score = 0
+        if inRange then score = score + 10000 end
+        if isReady then score = score + 5000 end
+        if isPlayer then
+            score = score + 2000
+        elseif unitRole == "TANK" then
+            score = score + 1200
+        elseif unitRole == "HEALER" then
+            score = score + 1000
+        end
+        score = score + math.floor((1 - hpPct) * 500) + math.min(stacks, 10) * 15
 
-                outList[#outList + 1] = {
-                    unit          = unit,
-                    unitGUID      = unitGUID,
-                    unitName      = unitName,
-                    isPlayer      = isPlayer,
-                    colorHex      = colorHex,
-                    debuffName    = IsSafeStr(name) and name or "Debuff",
-                    debuffIcon    = icon or "Interface\\Icons\\INV_Misc_QuestionMark",
-                    stacks        = stacks,
-                    remaining     = remSec,
-                    duration      = SafeNumber(duration, 0),
-                    school        = matchedSchool,
-                    spellID       = spellInfo.spellID,
-                    spellName     = spellInfo.name,
-                    spellIcon     = spellInfo.icon,
-                    inRange       = inRange,
-                    cdRemaining   = cdRem or 0,
-                    cdDuration    = cdDur or 0,
-                    isSpellReady  = isReady,
-                    score         = score,
-                }
+        outList[#outList + 1] = {
+            unit              = unit,
+            unitGUID          = unitGUID,
+            unitName          = unitName,
+            isPlayer          = isPlayer,
+            colorHex          = colorHex,
+            debuffName        = f.safeName or "Debuff",
+            debuffIcon        = f.safeIcon or "Interface\\Icons\\INV_Misc_QuestionMark",
+            rawDebuffIcon     = f.rawIcon,
+            auraInstanceID    = f.safeInstanceID,
+            debuffDurationObj = f.durationObj,
+            stacks            = stacks,
+            remaining         = remSec,
+            duration          = f.safeDur or 0,
+            school            = matchedSchool,
+            spellID           = spellInfo.spellID,
+            spellName         = spellInfo.name,
+            spellIcon         = spellInfo.icon,
+            inRange           = inRange,
+            cdRemaining       = cdRem or 0,
+            cdDuration        = cdDur or 0,
+            cdDurationObj     = cdDurObj,
+            isSpellReady      = isReady,
+            score             = score,
+        }
+    end
+
+    -- Pass 1 (Combat Midnight Secret-Value Safe): Ask C_UnitAuras directly for RAID_PLAYER_DISPELLABLE
+    local filterHitCount = 0
+    local seenInstances = {}
+    if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
+        for i = 1, 16 do
+            local okF, aura = pcall(C_UnitAuras.GetAuraDataByIndex, unit, i, "HARMFUL|RAID_PLAYER_DISPELLABLE")
+            if not okF or type(aura) ~= "table" then
+                break
+            end
+            local f = SafeReadAuraFields(unit, aura)
+            if not (f.safeInstanceID and seenInstances[f.safeInstanceID]) then
+                if f.safeInstanceID then seenInstances[f.safeInstanceID] = true end
+                local matchedSchool = (f.safeDispel and dispelInfo.schools[f.safeDispel]) and f.safeDispel or fallbackSchool
+                PushMatch(matchedSchool, f)
+                filterHitCount = filterHitCount + 1
+            end
+        end
+    end
+
+    if filterHitCount > 0 then
+        return
+    end
+
+    -- Pass 2: Full HARMFUL scan (handles secret debuffs without early break + Classic UnitDebuff)
+    if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
+        for i = 1, 24 do
+            local okC, aura = pcall(C_UnitAuras.GetAuraDataByIndex, unit, i, "HARMFUL")
+            if not okC or type(aura) ~= "table" then
+                break
+            end
+            local f = SafeReadAuraFields(unit, aura)
+            local matchedSchool = nil
+            if f.safeDispel and dispelInfo.schools[f.safeDispel] then
+                matchedSchool = f.safeDispel
+            elseif IsInstanceDispellableByPlayer(unit, f.rawInstanceID) then
+                matchedSchool = fallbackSchool
+            end
+            if matchedSchool then
+                PushMatch(matchedSchool, f)
+            end
+        end
+    elseif UnitDebuff then
+        for i = 1, 24 do
+            local okD, dName, dIcon, dCount, dDispel, dDur, dExp = pcall(UnitDebuff, unit, i)
+            if not okD or not dName then
+                break
+            end
+            local safeDispel = IsSafeStr(dDispel) and dDispel or nil
+            if safeDispel and dispelInfo.schools[safeDispel] then
+                PushMatch(safeDispel, {
+                    safeName   = IsSafeStr(dName) and dName or nil,
+                    rawIcon    = dIcon,
+                    safeIcon   = IsAccessible(dIcon) and dIcon or nil,
+                    safeApps   = SafeNumber(dCount, 0),
+                    safeDispel = safeDispel,
+                    safeDur    = SafeNumber(dDur, 0),
+                    safeExp    = SafeNumber(dExp, 0),
+                })
             end
         end
     end
@@ -364,12 +437,23 @@ debuffIcon:SetPoint("TOPLEFT", 2, -2)
 debuffIcon:SetPoint("BOTTOMRIGHT", -2, 2)
 debuffIcon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
 
-local debuffTimer = debuffBox:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmallOutline")
-debuffTimer:SetPoint("CENTER", debuffBox, "CENTER", 0, 0)
+local debuffCooldown = CreateFrame("Cooldown", nil, debuffBox, "CooldownFrameTemplate")
+debuffCooldown:SetPoint("TOPLEFT", 2, -2)
+debuffCooldown:SetPoint("BOTTOMRIGHT", -2, 2)
+if debuffCooldown.SetDrawEdge then debuffCooldown:SetDrawEdge(true) end
+if debuffCooldown.SetSwipeColor then debuffCooldown:SetSwipeColor(0, 0, 0, 0.55) end
+if debuffCooldown.SetHideCountdownNumbers then debuffCooldown:SetHideCountdownNumbers(false) end
+
+local debuffTextOverlay = CreateFrame("Frame", nil, debuffBox)
+debuffTextOverlay:SetAllPoints(debuffBox)
+debuffTextOverlay:SetFrameLevel(debuffCooldown:GetFrameLevel() + 6)
+
+local debuffTimer = debuffTextOverlay:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmallOutline")
+debuffTimer:SetPoint("CENTER", debuffTextOverlay, "CENTER", 0, 0)
 debuffTimer:SetTextColor(1, 0.95, 0.25, 1)
 
-local debuffStacks = debuffBox:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmallOutline")
-debuffStacks:SetPoint("BOTTOMRIGHT", debuffBox, "BOTTOMRIGHT", -2, 2)
+local debuffStacks = debuffTextOverlay:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmallOutline")
+debuffStacks:SetPoint("BOTTOMRIGHT", debuffTextOverlay, "BOTTOMRIGHT", -2, 2)
 
 -- Dispel Spell Icon Box (Right)
 local spellBox = CreateFrame("Frame", nil, alertFrame, "BackdropTemplate")
@@ -496,7 +580,10 @@ local function ApplyAlertVisual(entry, totalCount)
     local col = DISPEL_COLORS[entry.school] or DISPEL_COLORS.none
     alertFrame:SetBackdropBorderColor(col.r, col.g, col.b, 1.0)
     debuffBox:SetBackdropBorderColor(col.r, col.g, col.b, 1.0)
-    debuffIcon:SetTexture(entry.debuffIcon)
+    local okTex = pcall(debuffIcon.SetTexture, debuffIcon, entry.rawDebuffIcon or entry.debuffIcon)
+    if not okTex then
+        debuffIcon:SetTexture(entry.debuffIcon or "Interface\\Icons\\INV_Misc_QuestionMark")
+    end
 
     if entry.stacks and entry.stacks > 1 then
         debuffStacks:SetText(tostring(entry.stacks))
@@ -506,13 +593,22 @@ local function ApplyAlertVisual(entry, totalCount)
     end
 
     if entry.remaining and entry.remaining > 0.3 then
+        debuffCooldown:Clear()
         if entry.remaining >= 10 then
             debuffTimer:SetText(string.format("%ds", math.ceil(entry.remaining)))
         else
             debuffTimer:SetText(string.format("%.1f", entry.remaining))
         end
         debuffTimer:Show()
+    elseif entry.debuffDurationObj and debuffCooldown.SetCooldownFromDurationObject then
+        debuffTimer:Hide()
+        if debuffCooldown.SetHideCountdownNumbers then
+            pcall(debuffCooldown.SetHideCountdownNumbers, debuffCooldown, false)
+        end
+        local okObj = pcall(debuffCooldown.SetCooldownFromDurationObject, debuffCooldown, entry.debuffDurationObj)
+        if not okObj then debuffCooldown:Clear() end
     else
+        debuffCooldown:Clear()
         debuffTimer:Hide()
     end
 
@@ -538,6 +634,9 @@ local function ApplyAlertVisual(entry, totalCount)
     end
 
     if not entry.isSpellReady and entry.cdRemaining > 0 and entry.cdDuration > 0 then
+        if spellCooldown.SetHideCountdownNumbers then
+            spellCooldown:SetHideCountdownNumbers(true)
+        end
         local now = (GetTime and SafeCall(GetTime)) or 0
         local start = (now + entry.cdRemaining) - entry.cdDuration
         if start > 0 then
@@ -548,6 +647,15 @@ local function ApplyAlertVisual(entry, totalCount)
         spellIcon:SetVertexColor(0.5, 0.5, 0.5)
         spellBox:SetBackdropBorderColor(0.85, 0.5, 0.2, 0.95)
         actionText:SetText(string.format("|cffffb040%s (%.1fs)|r", entry.spellName, entry.cdRemaining))
+    elseif not entry.isSpellReady and entry.cdDurationObj and spellCooldown.SetCooldownFromDurationObject then
+        if spellCooldown.SetHideCountdownNumbers then
+            pcall(spellCooldown.SetHideCountdownNumbers, spellCooldown, false)
+        end
+        local okCdObj = pcall(spellCooldown.SetCooldownFromDurationObject, spellCooldown, entry.cdDurationObj)
+        if not okCdObj then spellCooldown:Clear() end
+        spellIcon:SetVertexColor(0.5, 0.5, 0.5)
+        spellBox:SetBackdropBorderColor(0.85, 0.5, 0.2, 0.95)
+        actionText:SetText(string.format("|cffffb040%s (CD)|r", entry.spellName))
     else
         spellCooldown:Clear()
         if not entry.inRange then
@@ -598,7 +706,8 @@ local function UpdateDispelAlert()
     local inPreview = (not locked) or (previewUntil > now)
 
     if top then
-        local alertKey = tostring(top.unitGUID) .. "|" .. tostring(top.debuffName) .. "|" .. tostring(top.school)
+        local idTag = top.auraInstanceID and tostring(top.auraInstanceID) or tostring(top.debuffName)
+        local alertKey = tostring(top.unitGUID) .. "|" .. idTag .. "|" .. tostring(top.school)
         if alertKey ~= lastAlertKey then
             lastAlertKey = alertKey
             PlayDispelCue()

@@ -477,85 +477,139 @@ local PLAYER_BUFF_SPELLS = {
     ["Water Breathing"] = true, ["Respiro Acquatico"] = true,
 }
 
+local function IsSecretVal(v)
+    return v ~= nil and (((issecretvalue and issecretvalue(v)) or (issecret and issecret(v))) == true)
+end
+
+local function IsAccessibleVal(v)
+    return v ~= nil and not IsSecretVal(v)
+end
+
+local function SafeReadDebuffAura(unit, aura)
+    local okI, rawInstanceID = pcall(function() return aura.auraInstanceID end)
+    if not okI then rawInstanceID = nil end
+    local okN, rawName = pcall(function() return aura.name end)
+    if not okN then rawName = nil end
+    local okIc, rawIcon = pcall(function() return aura.icon end)
+    if not okIc then rawIcon = nil end
+    local okC, rawApps = pcall(function() return aura.applications end)
+    if not okC then rawApps = nil end
+    local okD, rawDispel = pcall(function() return aura.dispelName end)
+    if not okD then rawDispel = nil end
+    local okDu, rawDur = pcall(function() return aura.duration end)
+    if not okDu then rawDur = nil end
+    local okEx, rawExp = pcall(function() return aura.expirationTime end)
+    if not okEx then rawExp = nil end
+    local okS, rawSpell = pcall(function() return aura.spellId end)
+    if not okS then rawSpell = nil end
+
+    return {
+        rawInstanceID  = rawInstanceID,
+        safeInstanceID = IsAccessibleVal(rawInstanceID) and rawInstanceID or nil,
+        safeName       = IsSafeStr(rawName) and rawName or "Debuff",
+        rawIcon        = rawIcon,
+        icon           = IsAccessibleVal(rawIcon) and rawIcon or "Interface\\Icons\\INV_Misc_QuestionMark",
+        count          = SafeNumber(rawApps, 0),
+        safeType       = IsSafeStr(rawDispel) and rawDispel or nil,
+        duration       = SafeNumber(rawDur, 0),
+        expirationTime = SafeNumber(rawExp, 0),
+        spellId        = SafeNumber(rawSpell, nil),
+    }
+end
+
 local function GetPartyUnitDebuffs(unit)
     local debuffs = {}
     if not unit then return debuffs end
     local okE, exists = pcall(UnitExists, unit)
     if not okE or SafeBoolean(exists, false) ~= true then return debuffs end
     local dispels, playerClass = GetPlayerDispelCapabilities()
+    local fallbackSchool = (dispels and dispels["Magic"]) and "Magic" or (next(dispels or {}) or "Magic")
 
-    for i = 1, 16 do
-        local name, icon, count, dType, duration, expirationTime, spellId, auraInstanceID
-        local found = false
-
-        -- 1. Try native Classic UnitDebuff first (safe, fast, never triggers taint error)
-        if UnitDebuff then
-            local okD, dName, dIcon, dCount, dDispel, dDur, dExp, _, _, _, dSpellId = pcall(UnitDebuff, unit, i)
-            if okD and dName and (not issecretvalue or not issecretvalue(dName)) then
-                name = dName
-                icon = dIcon
-                count = dCount
-                dType = dDispel
-                duration = dDur
-                expirationTime = dExp
-                spellId = dSpellId
-                found = true
-            elseif okD and not dName then
-                break -- End of debuffs
+    -- Collect combat-safe dispellable instance IDs from Midnight native filter first
+    local filterDispellableIDs = {}
+    local filterEntries = {}
+    if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
+        for i = 1, 16 do
+            local okF, aura = pcall(C_UnitAuras.GetAuraDataByIndex, unit, i, "HARMFUL|RAID_PLAYER_DISPELLABLE")
+            if not okF or type(aura) ~= "table" then break end
+            local f = SafeReadDebuffAura(unit, aura)
+            local dSchool = (f.safeType and dispels and dispels[f.safeType]) and f.safeType or fallbackSchool
+            if f.safeInstanceID then
+                filterDispellableIDs[f.safeInstanceID] = dSchool
             end
+            filterEntries[#filterEntries + 1] = {
+                index = i,
+                name = f.safeName,
+                icon = f.icon,
+                rawIcon = f.rawIcon,
+                count = f.count,
+                dispelType = dSchool,
+                canDispel = true,
+                duration = f.duration,
+                expirationTime = f.expirationTime,
+                spellId = f.spellId,
+            }
         end
+    end
 
-        -- 2. Fallback to C_UnitAuras.GetAuraDataByIndex (strictly wrapped in pcall against taint & secret values)
-        if not found and C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
+    local anyCanDispelFound = false
+    if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
+        for i = 1, 16 do
             local okC, aura = pcall(C_UnitAuras.GetAuraDataByIndex, unit, i, "HARMFUL")
-            if okC and type(aura) == "table" then
-                local okRead = pcall(function()
-                    local aName = aura.name
-                    if aName and (not issecretvalue or not issecretvalue(aName)) then
-                        name = aName
-                        icon = aura.icon
-                        count = aura.applications
-                        dType = aura.dispelName
-                        duration = aura.duration
-                        expirationTime = aura.expirationTime
-                        spellId = aura.spellId
-                        auraInstanceID = aura.auraInstanceID
-                        found = true
-                    end
-                end)
-                if not okRead then
-                    break -- Taint/secret error reading aura fields, stop scanning safely
-                end
-            elseif okC and not aura then
-                break -- End of debuffs
-            elseif not okC then
-                break -- GetAuraDataByIndex threw taint error, abort cleanly
-            end
-        end
-
-        if not found then break end
-
-        local safeType = IsSafeStr(dType) and dType or nil
-        local canDispel = (safeType ~= nil and dispels and dispels[safeType] == true) or false
-        if not canDispel and not safeType and auraInstanceID and C_UnitAuras and C_UnitAuras.IsAuraFilteredOutByInstanceID then
-            local filteredOut = SafeCall(C_UnitAuras.IsAuraFilteredOutByInstanceID, unit, auraInstanceID, "HARMFUL|RAID_PLAYER_DISPELLABLE")
-            if filteredOut == false then
+            if not okC or type(aura) ~= "table" then break end
+            local f = SafeReadDebuffAura(unit, aura)
+            local safeType = f.safeType
+            local canDispel = (safeType ~= nil and dispels and dispels[safeType] == true) or false
+            if not canDispel and f.safeInstanceID and filterDispellableIDs[f.safeInstanceID] then
                 canDispel = true
-                safeType = next(dispels or {}) or "Magic"
+                safeType = safeType or filterDispellableIDs[f.safeInstanceID]
+            elseif not canDispel and f.rawInstanceID ~= nil and C_UnitAuras.IsAuraFilteredOutByInstanceID then
+                local okFo, fo = pcall(C_UnitAuras.IsAuraFilteredOutByInstanceID, unit, f.rawInstanceID, "HARMFUL|RAID_PLAYER_DISPELLABLE")
+                if okFo and not IsSecretVal(fo) and fo == false then
+                    canDispel = true
+                    safeType = safeType or fallbackSchool
+                end
             end
+            if canDispel then anyCanDispelFound = true end
+            debuffs[#debuffs + 1] = {
+                index = i,
+                name = f.safeName,
+                icon = f.icon,
+                rawIcon = f.rawIcon,
+                count = f.count,
+                dispelType = safeType or "none",
+                canDispel = canDispel,
+                duration = f.duration,
+                expirationTime = f.expirationTime,
+                spellId = f.spellId,
+            }
         end
+    elseif UnitDebuff then
+        for i = 1, 16 do
+            local okD, dName, dIcon, dCount, dDispel, dDur, dExp, _, _, _, dSpellId = pcall(UnitDebuff, unit, i)
+            if not okD or not dName then break end
+            local safeType = IsSafeStr(dDispel) and dDispel or nil
+            local canDispel = (safeType ~= nil and dispels and dispels[safeType] == true) or false
+            if canDispel then anyCanDispelFound = true end
+            debuffs[#debuffs + 1] = {
+                index = i,
+                name = IsSafeStr(dName) and dName or "Debuff",
+                icon = IsAccessibleVal(dIcon) and dIcon or "Interface\\Icons\\INV_Misc_QuestionMark",
+                rawIcon = dIcon,
+                count = SafeNumber(dCount, 0),
+                dispelType = safeType or "none",
+                canDispel = canDispel,
+                duration = SafeNumber(dDur, 0),
+                expirationTime = SafeNumber(dExp, 0),
+                spellId = SafeNumber(dSpellId, nil),
+            }
+        end
+    end
 
-        debuffs[#debuffs + 1] = {
-            index = i,
-            name = (type(name) == "string" and name) or "Debuff",
-            icon = icon or "Interface\\Icons\\INV_Misc_QuestionMark",
-            count = SafeNumber(count, 0),
-            dispelType = safeType or "none",
-            canDispel = canDispel,
-            duration = SafeNumber(duration, 0),
-            expirationTime = SafeNumber(expirationTime, 0),
-            spellId = SafeNumber(spellId, nil),
-        }
+    if not anyCanDispelFound and #filterEntries > 0 then
+        for idx = #filterEntries, 1, -1 do
+            table.insert(debuffs, 1, filterEntries[idx])
+        end
     end
 
     -- Sort debuffs: dispellable debuffs FIRST
@@ -788,7 +842,10 @@ local function UpdatePartyAuras(frame)
             local debuff = debuffs[d]
             btn.unit = unit
             btn.auraIndex = debuff.index
-            btn.icon:SetTexture(debuff.icon)
+            local okTex = pcall(btn.icon.SetTexture, btn.icon, debuff.rawIcon or debuff.icon)
+            if not okTex then
+                btn.icon:SetTexture(debuff.icon)
+            end
             local col = DISPEL_COLORS[debuff.dispelType] or DISPEL_COLORS["none"]
             btn.border:SetVertexColor(col.r, col.g, col.b, 1)
             btn.border:Show()
@@ -1034,7 +1091,10 @@ local function UpdateCompactPartyAuras(frame)
             btn.unit = unit
             btn.auraIndex = debuff.index
             btn.isDebuff = true
-            btn.icon:SetTexture(debuff.icon)
+            local okTex = pcall(btn.icon.SetTexture, btn.icon, debuff.rawIcon or debuff.icon)
+            if not okTex then
+                btn.icon:SetTexture(debuff.icon)
+            end
             local col = DISPEL_COLORS[debuff.dispelType] or DISPEL_COLORS["none"]
             btn.border:SetTexture("Interface\\Buttons\\UI-Debuff-Overlays")
             btn.border:SetTexCoord(0.296875, 0.5703125, 0, 0.515625)
