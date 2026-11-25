@@ -2064,12 +2064,12 @@ for i = 1, 5 do
     hpText:SetJustifyH("RIGHT")
     btn.hpText = hpText
 
-    -- HoT / Buff Icons (3 slots in the center row; crisp 1px BackdropTemplate border, no black overlay)
+    -- HoT / Buff Icons (3 slots along the bottom row next to level; crisp 1px BackdropTemplate border)
     btn.buffSlots = {}
     for b = 1, 3 do
         local bBtn = CreateFrame("Button", nil, hpBar, "BackdropTemplate")
         bBtn:SetSize(16, 16)
-        bBtn:SetPoint("CENTER", hpBar, "CENTER", (b - 2) * 18, -3)
+        bBtn:SetPoint("BOTTOMLEFT", hpBar, "BOTTOMLEFT", 24 + (b - 1) * 18, 2)
         bBtn:SetBackdrop({
             bgFile = "Interface\\Buttons\\WHITE8x8",
             edgeFile = "Interface\\Buttons\\WHITE8x8",
