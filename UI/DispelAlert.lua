@@ -218,7 +218,11 @@ local function ScanUnitDispellables(unit, dispelInfo, outList)
         local inRange = isPlayer or IsUnitSpellInRange(spellInfo.spellID, unit)
         local cdRem, cdDur, isReady, cdDurObj = 0, 0, true, nil
         if FP.GetSpellCooldown then
-            cdRem, cdDur, isReady, cdDurObj = FP.GetSpellCooldown(spellInfo.spellID)
+            local rRem, rDur, rReady, rObj = FP.GetSpellCooldown(spellInfo.spellID)
+            cdRem = SafeNumber(rRem, 0)
+            cdDur = SafeNumber(rDur, 0)
+            isReady = SafeBoolean(rReady, true)
+            cdDurObj = rObj
         end
 
         local remSec = (f.safeExp > 0 and IsSafeNum(now)) and math.max(0, f.safeExp - now) or 0
