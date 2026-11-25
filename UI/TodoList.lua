@@ -789,15 +789,13 @@ local function GetOrCreateHudRow(idx)
     r.txt = txt
 
     r:SetScript("OnClick", function(self)
-        if self.task then
-            FP:ToggleTodoTaskDone(self.task.id, self.task.scope or "char")
-        end
+        FP:ToggleTodoList(true)
     end)
     r:SetScript("OnEnter", function(self)
         if self.task then
             GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
             GameTooltip:SetText(self.task.text or "Promemoria", 1, 1, 1, 1, true)
-            GameTooltip:AddLine("Clicca per contrassegnare come completato (spostato in archivio).", 0, 1, 0.59)
+            GameTooltip:AddLine("Clicca per aprire la finestra To-Do List.", 0, 1, 0.59)
             GameTooltip:AddLine("Trascina per spostare la finestra.", 0.6, 0.6, 0.6)
             GameTooltip:Show()
         end
