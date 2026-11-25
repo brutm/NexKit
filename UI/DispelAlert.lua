@@ -180,17 +180,9 @@ local function IsInstanceDispellableByPlayer(unit, rawInstanceID)
     if rawInstanceID == nil or not C_UnitAuras or not C_UnitAuras.IsAuraFilteredOutByInstanceID then
         return false
     end
-    local filters = {
-        "HARMFUL|RAID_PLAYER_DISPELLABLE",
-        "RAID_PLAYER_DISPELLABLE",
-        "HARMFUL|PLAYER_DISPELLABLE",
-        "PLAYER_DISPELLABLE",
-    }
-    for _, flt in ipairs(filters) do
-        local okF, filteredOut = pcall(C_UnitAuras.IsAuraFilteredOutByInstanceID, unit, rawInstanceID, flt)
-        if okF and not IsSecret(filteredOut) and filteredOut == false then
-            return true
-        end
+    local okF, filteredOut = pcall(C_UnitAuras.IsAuraFilteredOutByInstanceID, unit, rawInstanceID, "HARMFUL|RAID_PLAYER_DISPELLABLE")
+    if okF and not IsSecret(filteredOut) and filteredOut == false then
+        return true
     end
     return false
 end
@@ -219,7 +211,7 @@ local function ProbeAuraDispelColorSchool(unit, rawInstanceID, dispelInfo)
             if guessed and dispelInfo and dispelInfo.schools and dispelInfo.schools[guessed] then
                 return guessed
             end
-            return (dispelInfo and next(dispelInfo.schools or {})) or "Magic"
+            return nil
         end
     end
     return nil
@@ -304,29 +296,27 @@ local function ScanUnitDispellables(unit, dispelInfo, outList)
         }
     end
 
-    -- Pass 1 (Combat Midnight Secret-Value Safe): Ask C_UnitAuras directly for RAID_PLAYER_DISPELLABLE
+    -- Pass 1 (Combat Midnight Secret-Value Safe): Ask C_UnitAuras directly for HARMFUL|RAID_PLAYER_DISPELLABLE
     local filterHitCount = 0
     local seenInstances = {}
     if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
-        for _, passFilter in ipairs({ "HARMFUL|RAID_PLAYER_DISPELLABLE", "RAID_PLAYER_DISPELLABLE" }) do
-            for i = 1, 16 do
-                local okF, aura = pcall(C_UnitAuras.GetAuraDataByIndex, unit, i, passFilter)
-                if not okF or type(aura) ~= "table" then
-                    break
+        for i = 1, 16 do
+            local okF, aura = pcall(C_UnitAuras.GetAuraDataByIndex, unit, i, "HARMFUL|RAID_PLAYER_DISPELLABLE")
+            if not okF or type(aura) ~= "table" then
+                break
+            end
+            local f = SafeReadAuraFields(unit, aura)
+            if not (f.safeInstanceID and seenInstances[f.safeInstanceID]) then
+                if f.safeInstanceID then seenInstances[f.safeInstanceID] = true end
+                local matchedSchool = (f.safeDispel and dispelInfo.schools[f.safeDispel]) and f.safeDispel
+                    or (f.safeInstanceID and knownDebuffSchools[f.safeInstanceID] and dispelInfo.schools[knownDebuffSchools[f.safeInstanceID]] and knownDebuffSchools[f.safeInstanceID])
+                    or ProbeAuraDispelColorSchool(unit, f.rawInstanceID, dispelInfo)
+                    or fallbackSchool
+                if f.safeInstanceID and f.safeDispel then
+                    knownDebuffSchools[f.safeInstanceID] = f.safeDispel
                 end
-                local f = SafeReadAuraFields(unit, aura)
-                if not (f.safeInstanceID and seenInstances[f.safeInstanceID]) then
-                    if f.safeInstanceID then seenInstances[f.safeInstanceID] = true end
-                    local matchedSchool = (f.safeDispel and dispelInfo.schools[f.safeDispel]) and f.safeDispel
-                        or (f.safeInstanceID and knownDebuffSchools[f.safeInstanceID] and dispelInfo.schools[knownDebuffSchools[f.safeInstanceID]] and knownDebuffSchools[f.safeInstanceID])
-                        or ProbeAuraDispelColorSchool(unit, f.rawInstanceID, dispelInfo)
-                        or fallbackSchool
-                    if f.safeInstanceID and f.safeDispel then
-                        knownDebuffSchools[f.safeInstanceID] = f.safeDispel
-                    end
-                    PushMatch(matchedSchool, f)
-                    filterHitCount = filterHitCount + 1
-                end
+                PushMatch(matchedSchool, f)
+                filterHitCount = filterHitCount + 1
             end
         end
     end

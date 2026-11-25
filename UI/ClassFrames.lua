@@ -822,35 +822,33 @@ local function GetPartyUnitDebuffs(unit)
     local filterDispellableIDs = {}
     local filterEntries = {}
     if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
-        for _, passFilter in ipairs({ "HARMFUL|RAID_PLAYER_DISPELLABLE", "RAID_PLAYER_DISPELLABLE" }) do
-            for i = 1, 16 do
-                local okF, aura = pcall(C_UnitAuras.GetAuraDataByIndex, unit, i, passFilter)
-                if not okF or type(aura) ~= "table" then break end
-                local f = SafeReadDebuffAura(unit, aura)
-                if not (f.safeInstanceID and filterDispellableIDs[f.safeInstanceID]) then
-                    local dSchool = (f.safeType and dispels and dispels[f.safeType]) and f.safeType
-                        or (f.safeInstanceID and knownDebuffSchools[f.safeInstanceID] and dispels and dispels[knownDebuffSchools[f.safeInstanceID]] and knownDebuffSchools[f.safeInstanceID])
-                        or fallbackSchool
-                    if f.safeInstanceID then
-                        filterDispellableIDs[f.safeInstanceID] = dSchool
-                        if f.safeType then knownDebuffSchools[f.safeInstanceID] = f.safeType end
-                    end
-                    filterEntries[#filterEntries + 1] = {
-                        index = i,
-                        auraFilter = passFilter,
-                        rawInstanceID = f.rawInstanceID,
-                        name = f.safeName,
-                        icon = f.icon,
-                        rawIcon = f.rawIcon,
-                        count = f.count,
-                        dispelType = dSchool,
-                        canDispel = true,
-                        duration = f.duration,
-                        expirationTime = f.expirationTime,
-                        durationObj = f.durationObj,
-                        spellId = f.spellId,
-                    }
+        for i = 1, 16 do
+            local okF, aura = pcall(C_UnitAuras.GetAuraDataByIndex, unit, i, "HARMFUL|RAID_PLAYER_DISPELLABLE")
+            if not okF or type(aura) ~= "table" then break end
+            local f = SafeReadDebuffAura(unit, aura)
+            if not (f.safeInstanceID and filterDispellableIDs[f.safeInstanceID]) then
+                local dSchool = (f.safeType and dispels and dispels[f.safeType]) and f.safeType
+                    or (f.safeInstanceID and knownDebuffSchools[f.safeInstanceID] and dispels and dispels[knownDebuffSchools[f.safeInstanceID]] and knownDebuffSchools[f.safeInstanceID])
+                    or fallbackSchool
+                if f.safeInstanceID then
+                    filterDispellableIDs[f.safeInstanceID] = dSchool
+                    if f.safeType then knownDebuffSchools[f.safeInstanceID] = f.safeType end
                 end
+                filterEntries[#filterEntries + 1] = {
+                    index = i,
+                    auraFilter = "HARMFUL|RAID_PLAYER_DISPELLABLE",
+                    rawInstanceID = f.rawInstanceID,
+                    name = f.safeName,
+                    icon = f.icon,
+                    rawIcon = f.rawIcon,
+                    count = f.count,
+                    dispelType = dSchool,
+                    canDispel = true,
+                    duration = f.duration,
+                    expirationTime = f.expirationTime,
+                    durationObj = f.durationObj,
+                    spellId = f.spellId,
+                }
             end
         end
     end
@@ -870,13 +868,10 @@ local function GetPartyUnitDebuffs(unit)
                 canDispel = true
                 safeType = safeType or filterDispellableIDs[f.safeInstanceID]
             elseif not canDispel and f.rawInstanceID ~= nil and C_UnitAuras.IsAuraFilteredOutByInstanceID then
-                for _, flt in ipairs({ "HARMFUL|RAID_PLAYER_DISPELLABLE", "RAID_PLAYER_DISPELLABLE", "HARMFUL|PLAYER_DISPELLABLE", "PLAYER_DISPELLABLE" }) do
-                    local okFo, fo = pcall(C_UnitAuras.IsAuraFilteredOutByInstanceID, unit, f.rawInstanceID, flt)
-                    if okFo and not IsSecretVal(fo) and fo == false then
-                        canDispel = true
-                        safeType = safeType or fallbackSchool
-                        break
-                    end
+                local okFo, fo = pcall(C_UnitAuras.IsAuraFilteredOutByInstanceID, unit, f.rawInstanceID, "HARMFUL|RAID_PLAYER_DISPELLABLE")
+                if okFo and not IsSecretVal(fo) and fo == false then
+                    canDispel = true
+                    safeType = safeType or fallbackSchool
                 end
             end
             if canDispel then anyCanDispelFound = true end

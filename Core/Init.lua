@@ -1024,25 +1024,41 @@ function FP:GetDispelColorCurve()
     pcall(curve.SetType, curve, Enum.LuaCurveType.Step)
     local dt = Enum.AuraDispelType
     local transparent = CreateColor(0, 0, 0, 0)
-    if dt.None ~= nil then pcall(curve.AddPoint, curve, dt.None, transparent) end
-    if dt.Bleed ~= nil then pcall(curve.AddPoint, curve, dt.Bleed, transparent) end
 
     local info = self:GetPlayerDispelInfo()
     local schools = (info and info.schools) or {}
-    local function AddSchool(enumKey, schoolName)
-        local eVal = dt[enumKey]
-        if eVal == nil then return end
-        if schools[schoolName] then
-            local c = DISPEL_COLORS[schoolName] or DISPEL_COLORS.Magic
-            pcall(curve.AddPoint, curve, eVal, CreateColor(c.r, c.g, c.b, 1.0))
-        else
-            pcall(curve.AddPoint, curve, eVal, transparent)
+    local activeByVal = {}
+    for _, entry in ipairs({
+        { "Magic",   "Magic" },
+        { "Curse",   "Curse" },
+        { "Disease", "Disease" },
+        { "Poison",  "Poison" },
+    }) do
+        local eVal = dt[entry[1]]
+        if type(eVal) == "number" and schools[entry[2]] then
+            local c = DISPEL_COLORS[entry[2]] or DISPEL_COLORS.Magic
+            activeByVal[eVal] = CreateColor(c.r, c.g, c.b, 1.0)
         end
     end
-    AddSchool("Magic", "Magic")
-    AddSchool("Curse", "Curse")
-    AddSchool("Disease", "Disease")
-    AddSchool("Poison", "Poison")
+
+    -- Explicitly map every integer 0..20 (plus any higher Enum values) to transparent
+    -- unless it matches an enabled dispel school, preventing Step curves from clamping
+    -- Bleeds/Enrages/Physical roots (e.g. webs/nets) onto Poison/Disease.
+    local points = {}
+    for i = 0, 20 do
+        points[i] = activeByVal[i] or transparent
+    end
+    for _, v in pairs(dt) do
+        if type(v) == "number" and points[v] == nil then
+            points[v] = activeByVal[v] or transparent
+        end
+    end
+    local sortedKeys = {}
+    for k in pairs(points) do sortedKeys[#sortedKeys + 1] = k end
+    table.sort(sortedKeys)
+    for _, k in ipairs(sortedKeys) do
+        pcall(curve.AddPoint, curve, k, points[k])
+    end
 
     dispelColorCurveCache = curve
     return curve
