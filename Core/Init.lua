@@ -22,7 +22,7 @@ local function GetAddonVersion()
     elseif GetAddOnMetadata then
         v = GetAddOnMetadata(name, "Version") or GetAddOnMetadata("NexusKit", "Version") or GetAddOnMetadata("NexKit", "Version")
     end
-    return (v and v ~= "" and v ~= "@project-version@") and v or "0.3.5"
+    return (v and v ~= "" and v ~= "@project-version@") and v or "0.3.6"
 end
 
 FP.VERSION      = GetAddonVersion()
