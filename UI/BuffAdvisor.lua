@@ -933,6 +933,7 @@ local DUNGEON_ELIXIRS = {
 -------------------------------------------------------------------------------
 local dismissedKeys = {}
 local snoozedKeys = {}
+local preCombatMissingKeys = {}
 local recentCastUntil = {}
 local recentCastSpellIDs = {}
 local recentCastSpellNames = {}
@@ -1008,7 +1009,7 @@ local function EvaluateRecommendations()
     end
 
     local function CheckBuffSuggestion(opts)
-        if auras.restricted then return end
+        if auras.restricted and not preCombatMissingKeys[opts.key] then return end
         if opts.skipIfStealthed and ctx.isStealthed then return end
         if opts.skipIfMounted and (ctx.isMounted or ctx.isFlying) then return end
 
@@ -1880,6 +1881,17 @@ local function UpdateSlotVisuals(slot, item)
     slot.badgeText:SetText(item.badge or "")
     slot.caption:SetText(item.name or "")
 
+    if slot.keybindText then
+        local kb = (item.actionType == "spell" and item.spellID and FP.GetSpellKeybind) and FP:GetSpellKeybind(item.spellID) or nil
+        if kb and kb ~= "" then
+            slot.keybindText:SetText(kb)
+            slot.keybindText:Show()
+        else
+            slot.keybindText:SetText("")
+            slot.keybindText:Hide()
+        end
+    end
+
     if item.noResource then
         slot.icon:SetDesaturated(true)
         slot.icon:SetAlpha(0.65)
@@ -1936,6 +1948,16 @@ local function GetOrCreateSlot(index)
         badgeText:SetFont(bFont, math.max(8, (bSize or 10) - 1), "OUTLINE")
     end
     btn.badgeText = badgeText
+
+    local keybindText = iconBox:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    keybindText:SetPoint("TOPRIGHT", iconBox, "TOPRIGHT", -2, -2)
+    local kFont = keybindText:GetFont()
+    if kFont then
+        keybindText:SetFont(kFont, 9, "OUTLINE")
+    end
+    keybindText:SetTextColor(1, 0.95, 0.55, 1)
+    keybindText:Hide()
+    btn.keybindText = keybindText
 
     local caption = btn:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     caption:SetPoint("TOP", iconBox, "BOTTOM", 0, -2)
@@ -2003,7 +2025,16 @@ local function GetOrCreateSlot(index)
         end
         GameTooltip:AddLine(" ", 1, 1, 1)
         if InCombatLockdown() then
-            GameTooltip:AddLine(L["BUFF_CLICK_COMBAT_LOCK"] or "In combat: click disabled until combat ends", 1.0, 0.55, 0.35, true)
+            if item.actionType ~= "tracking" and self.boundKey == item.key then
+                GameTooltip:AddLine(L["BUFF_CLICK_COMBAT_READY"] or "Left-click: Cast (ready in combat)", 0.25, 1.0, 0.65, true)
+            else
+                local kb = (item.actionType == "spell" and item.spellID and FP.GetSpellKeybind) and FP:GetSpellKeybind(item.spellID) or nil
+                if kb and kb ~= "" then
+                    GameTooltip:AddLine(string.format(L["BUFF_CLICK_COMBAT_HOTKEY"] or "In combat: press [%s] on action bar", kb), 1.0, 0.72, 0.30, true)
+                else
+                    GameTooltip:AddLine(L["BUFF_CLICK_COMBAT_LOCK"] or "In combat: click disabled until combat ends", 1.0, 0.55, 0.35, true)
+                end
+            end
         else
             GameTooltip:AddLine(L["BUFF_CLICK_ACTIVATE"] or "Left-click: Activate / Cast", 0.25, 1.0, 0.65, true)
         end
@@ -2035,11 +2066,15 @@ local function ConfigureSlotAction(slot, item)
     slot:SetAttribute("macrotext1", nil)
     slot:SetAttribute("target-slot", nil)
     slot:SetAttribute("target-slot1", nil)
+    slot.boundKey = nil
+    slot.boundSpell = nil
 
     if item.actionType == "spell" and item.castSpell then
         slot:SetAttribute("type1", "spell")
         slot:SetAttribute("unit1", "player")
         slot:SetAttribute("spell1", item.castSpell)
+        slot.boundKey = item.key
+        slot.boundSpell = item.castSpell
     elseif item.actionType == "item" and item.itemID then
         if item.targetSlot then
             -- Use secure macro so temporary stones/oils/poisons/lures apply directly to MH/OH slot
@@ -2049,6 +2084,8 @@ local function ConfigureSlotAction(slot, item)
             slot:SetAttribute("type1", "item")
             slot:SetAttribute("item1", "item:" .. tostring(item.itemID))
         end
+        slot.boundKey = item.key
+        slot.boundSpell = nil
     end
 end
 
@@ -2121,6 +2158,16 @@ function FP:RefreshBuffAdvisor()
     end
 
     currentSuggestions = EvaluateRecommendations()
+    if not InCombatLockdown() then
+        for k in pairs(preCombatMissingKeys) do
+            preCombatMissingKeys[k] = nil
+        end
+        for _, item in ipairs(currentSuggestions) do
+            if item.key then
+                preCombatMissingKeys[item.key] = true
+            end
+        end
+    end
 
     -- Defer structural Show/Hide/Size/SetAttribute mutations cleanly if locked down in combat,
     -- while still fading out applied/dismissed buffs visually via SetAlpha (allowed in combat).
@@ -2314,6 +2361,7 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1, arg2, arg3, arg4, arg5)
                 for _, item in ipairs(currentSuggestions) do
                     if item.key and item.castSpell == sid then
                         recentCastUntil[item.key] = nowT + 2.5
+                        preCombatMissingKeys[item.key] = nil
                     end
                 end
             end
@@ -2323,6 +2371,7 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1, arg2, arg3, arg4, arg5)
                 for _, item in ipairs(currentSuggestions) do
                     if item.key and type(item.name) == "string" and string.lower(item.name) == low then
                         recentCastUntil[item.key] = nowT + 2.5
+                        preCombatMissingKeys[item.key] = nil
                     end
                 end
             end

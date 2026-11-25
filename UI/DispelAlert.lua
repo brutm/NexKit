@@ -580,7 +580,12 @@ local function ApplyAlertVisual(entry, totalCount)
     local col = DISPEL_COLORS[entry.school] or DISPEL_COLORS.none
     alertFrame:SetBackdropBorderColor(col.r, col.g, col.b, 1.0)
     debuffBox:SetBackdropBorderColor(col.r, col.g, col.b, 1.0)
-    local okTex = pcall(debuffIcon.SetTexture, debuffIcon, entry.rawDebuffIcon or entry.debuffIcon)
+    local okTex = false
+    if IsSecret(entry.rawDebuffIcon) then
+        okTex = pcall(debuffIcon.SetTexture, debuffIcon, entry.rawDebuffIcon)
+    elseif entry.rawDebuffIcon ~= nil then
+        okTex = pcall(debuffIcon.SetTexture, debuffIcon, entry.rawDebuffIcon)
+    end
     if not okTex then
         debuffIcon:SetTexture(entry.debuffIcon or "Interface\\Icons\\INV_Misc_QuestionMark")
     end
@@ -665,7 +670,13 @@ local function ApplyAlertVisual(entry, totalCount)
         else
             spellIcon:SetVertexColor(1.0, 1.0, 1.0)
             spellBox:SetBackdropBorderColor(col.r, col.g, col.b, 0.95)
-            actionText:SetText(string.format("|cff90e8ff%s: |cffffffff%s|r", L["DISPEL_USE_SPELL"] or "Cast", entry.spellName))
+            local s = GetSettings()
+            local hasGridDispel = (s.showClassColorsAndIcons ~= false and s.useGridPartyFrames ~= false)
+            if hasGridDispel then
+                actionText:SetText(string.format("|cff90e8ff%s: |cffffffff%s|r |cff88ffcc[Shift+Clic]|r", L["DISPEL_USE_SPELL"] or "Cast", entry.spellName))
+            else
+                actionText:SetText(string.format("|cff90e8ff%s: |cffffffff%s|r", L["DISPEL_USE_SPELL"] or "Cast", entry.spellName))
+            end
         end
     end
 end

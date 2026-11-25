@@ -432,49 +432,288 @@ local function GetPlayerDispelCapabilities()
 end
 
 local PLAYER_BUFF_SPELLS = {
-    -- Paladin
-    ["Blessing of Might"] = true, ["Benedizione della Potenza"] = true,
-    ["Blessing of Wisdom"] = true, ["Benedizione della Saggezza"] = true,
-    ["Blessing of Kings"] = true, ["Benedizione dei Re"] = true,
-    ["Blessing of Salvation"] = true, ["Benedizione della Salvezza"] = true,
-    ["Blessing of Light"] = true, ["Benedizione della Luce"] = true,
-    ["Blessing of Sanctuary"] = true, ["Benedizione del Rifugio"] = true,
+    -- Paladin (combat / external cooldowns & HoTs)
     ["Blessing of Protection"] = true, ["Benedizione della Protezione"] = true,
+    ["Hand of Protection"] = true, ["Mano della Protezione"] = true,
     ["Blessing of Freedom"] = true, ["Benedizione della Libertà"] = true,
+    ["Hand of Freedom"] = true, ["Mano della Libertà"] = true,
     ["Blessing of Sacrifice"] = true, ["Benedizione del Sacrificio"] = true,
+    ["Hand of Sacrifice"] = true, ["Mano del Sacrificio"] = true,
+    ["Hand of Salvation"] = true, ["Mano della Salvezza"] = true,
+    ["Sacred Shield"] = true, ["Scudo Sacro"] = true,
+    ["Beacon of Light"] = true, ["Faro di Luce"] = true,
+    ["Holy Shield"] = true, ["Scudo Benedetto"] = true,
+    ["Divine Shield"] = true, ["Scudo Divino"] = true,
+    ["Divine Protection"] = true, ["Protezione Divina"] = true,
+    ["Avenging Wrath"] = true, ["Ira Vendicatrice"] = true,
+    -- Priest
+    ["Renew"] = true, ["Rinnovamento"] = true,
+    ["Power Word: Shield"] = true, ["Parola del Potere: Scudo"] = true,
+    ["Fear Ward"] = true, ["Difesa dalla Paura"] = true,
+    ["Pain Suppression"] = true, ["Soppressione del Dolore"] = true,
+    ["Guardian Spirit"] = true, ["Spirito Guardiano"] = true,
+    ["Power Infusion"] = true, ["Infusione di Potere"] = true,
+    ["Prayer of Mending"] = true, ["Preghiera di Guarigione"] = true,
+    -- Druid
+    ["Rejuvenation"] = true, ["Ringiovanimento"] = true,
+    ["Regrowth"] = true, ["Ricrescita"] = true,
+    ["Lifebloom"] = true, ["Fiore di Vita"] = true,
+    ["Wild Growth"] = true, ["Crescita Rigogliosa"] = true,
+    ["Innervate"] = true, ["Innervazione"] = true,
+    ["Barkskin"] = true, ["Pelledura"] = true,
+    -- Shaman
+    ["Earth Shield"] = true, ["Scudo di Terra"] = true,
+    ["Riptide"] = true, ["Risacca"] = true,
+    ["Bloodlust"] = true, ["Brama di Sangue"] = true,
+    ["Heroism"] = true, ["Eroismo"] = true,
+    -- Warrior
+    ["Battle Shout"] = true, ["Urlo di Battaglia"] = true,
+    ["Commanding Shout"] = true, ["Urlo di Comando"] = true,
+    ["Shield Wall"] = true, ["Muro di Scudi"] = true,
+    ["Last Stand"] = true, ["Ultima Difesa"] = true,
+    -- Hunter / Rogue / Mage / DK
+    ["Misdirection"] = true, ["Depistaggio"] = true,
+    ["Tricks of the Trade"] = true, ["Trucchi del Mestiere"] = true,
+    ["Time Warp"] = true, ["Distorsione Temporale"] = true,
+    ["Ice Barrier"] = true, ["Barriera di Ghiaccio"] = true,
+}
+
+-- DBM-style noise filter: never clutter party/raid frames with passive toggles, auras, stances, trackers or food
+local IGNORED_PASSIVE_BUFFS = {
+    -- Gathering & Hunter tracking toggles
+    ["Find Minerals"] = true, ["Trova Minerali"] = true,
+    ["Find Herbs"] = true, ["Trova Erbe"] = true,
+    ["Find Treasure"] = true, ["Trova Tesori"] = true,
+    ["Find Fish"] = true, ["Trova Pesci"] = true,
+    ["Track Beasts"] = true, ["Traccia Bestie"] = true,
+    ["Track Humanoids"] = true, ["Traccia Umanoidi"] = true,
+    ["Track Undead"] = true, ["Traccia Non Morti"] = true,
+    ["Track Demons"] = true, ["Traccia Demoni"] = true,
+    ["Track Giants"] = true, ["Traccia Giganti"] = true,
+    ["Track Dragonkin"] = true, ["Traccia Dragoidi"] = true,
+    ["Track Elementals"] = true, ["Traccia Elementali"] = true,
+    ["Track Hidden"] = true, ["Traccia Nascosti"] = true,
+    ["Sense Undead"] = true, ["Percezione dei Non Morti"] = true,
+    ["Sense Demons"] = true, ["Percezione dei Demoni"] = true,
+    -- Paladin Auras, Seals & Righteous Fury
     ["Devotion Aura"] = true, ["Aura di Devozione"] = true,
     ["Retribution Aura"] = true, ["Aura di Ritorsione"] = true,
     ["Concentration Aura"] = true, ["Aura di Concentrazione"] = true,
     ["Shadow Resistance Aura"] = true, ["Aura di Resistenza all'Ombra"] = true,
     ["Frost Resistance Aura"] = true, ["Aura di Resistenza al Gelo"] = true,
     ["Fire Resistance Aura"] = true, ["Aura di Resistenza al Fuoco"] = true,
-    -- Priest
-    ["Power Word: Fortitude"] = true, ["Parola del Potere: Fortezza"] = true,
-    ["Shadow Protection"] = true, ["Protezione dall'Ombra"] = true,
-    ["Divine Spirit"] = true, ["Spirito Divino"] = true,
-    ["Renew"] = true, ["Rinnovamento"] = true,
-    ["Power Word: Shield"] = true, ["Parola del Potere: Scudo"] = true,
-    ["Fear Ward"] = true, ["Difesa dalla Paura"] = true,
-    -- Mage
-    ["Arcane Intellect"] = true, ["Intelletto Arcano"] = true,
-    ["Arcane Brilliance"] = true, ["Brillantezza Arcana"] = true,
-    ["Amplify Magic"] = true, ["Amplificazione Magica"] = true,
-    ["Dampen Magic"] = true, ["Attenuazione Magica"] = true,
-    -- Druid
-    ["Mark of the Wild"] = true, ["Marchio Selvaggio"] = true,
-    ["Gift of the Wild"] = true, ["Dono del Selvaggio"] = true,
-    ["Thorns"] = true, ["Spine"] = true,
-    ["Rejuvenation"] = true, ["Ringiovanimento"] = true,
-    ["Regrowth"] = true, ["Ricrescita"] = true,
-    -- Warrior
-    ["Battle Shout"] = true, ["Urlo di Battaglia"] = true,
-    -- Warlock
-    ["Unending Breath"] = true, ["Respiro Inesauribile"] = true,
-    ["Detect Invisibility"] = true, ["Individuazione dell'Invisibilità"] = true,
-    ["Fire Shield"] = true, ["Scudo di Fuoco"] = true,
-    -- Shaman
-    ["Water Walking"] = true, ["Camminata sull'Acqua"] = true,
-    ["Water Breathing"] = true, ["Respiro Acquatico"] = true,
+    ["Sanctity Aura"] = true, ["Aura di Santità"] = true,
+    ["Crusader Aura"] = true, ["Aura del Crociato"] = true,
+    ["Righteous Fury"] = true, ["Furia Giusta"] = true,
+    ["Seal of Righteousness"] = true, ["Sigillo di Rettitudine"] = true,
+    ["Seal of Command"] = true, ["Sigillo del Comando"] = true,
+    ["Seal of Light"] = true, ["Sigillo di Luce"] = true,
+    ["Seal of Wisdom"] = true, ["Sigillo di Saggezza"] = true,
+    ["Seal of Justice"] = true, ["Sigillo di Giustizia"] = true,
+    ["Seal of the Crusader"] = true, ["Sigillo del Crociato"] = true,
+    ["Seal of Vengeance"] = true, ["Sigillo della Vendetta"] = true,
+    ["Seal of Corruption"] = true, ["Sigillo della Corruzione"] = true,
+    ["Seal of Blood"] = true, ["Sigillo del Sangue"] = true,
+    ["Seal of the Martyr"] = true, ["Sigillo del Martire"] = true,
+    -- Warrior Stances & DK Presences
+    ["Battle Stance"] = true, ["Postura da Battaglia"] = true,
+    ["Defensive Stance"] = true, ["Postura Difensiva"] = true,
+    ["Berserker Stance"] = true, ["Postura Berserker"] = true,
+    ["Blood Presence"] = true, ["Presenza del Sangue"] = true,
+    ["Frost Presence"] = true, ["Presenza del Gelo"] = true,
+    ["Unholy Presence"] = true, ["Presenza Empia"] = true,
+    -- Druid Forms & Hunter Aspects
+    ["Bear Form"] = true, ["Forma d'Orso"] = true,
+    ["Dire Bear Form"] = true, ["Forma d'Orso Feroce"] = true,
+    ["Cat Form"] = true, ["Forma Felina"] = true,
+    ["Travel Form"] = true, ["Forma di Viaggio"] = true,
+    ["Aquatic Form"] = true, ["Forma Acquatica"] = true,
+    ["Moonkin Form"] = true, ["Forma di Lunagufo"] = true,
+    ["Tree of Life"] = true, ["Albero della Vita"] = true,
+    ["Flight Form"] = true, ["Forma di Volo"] = true,
+    ["Swift Flight Form"] = true, ["Forma di Volo Rapida"] = true,
+    ["Aspect of the Hawk"] = true, ["Aspetto del Falco"] = true,
+    ["Aspect of the Dragonhawk"] = true, ["Aspetto del Dragofalco"] = true,
+    ["Aspect of the Monkey"] = true, ["Aspetto della Scimmia"] = true,
+    ["Aspect of the Cheetah"] = true, ["Aspetto del Ghepardo"] = true,
+    ["Aspect of the Pack"] = true, ["Aspetto del Branco"] = true,
+    ["Aspect of the Beast"] = true, ["Aspetto della Bestia"] = true,
+    ["Aspect of the Wild"] = true, ["Aspetto della Natura"] = true,
+    ["Aspect of the Viper"] = true, ["Aspetto della Vipera"] = true,
+    ["Trueshot Aura"] = true, ["Aura di Precisione"] = true,
+    -- Self armors / forms / shields / long non-combat buffs
+    ["Shadowform"] = true, ["Forma d'Ombra"] = true,
+    ["Inner Fire"] = true, ["Fuoco Interiore"] = true,
+    ["Frost Armor"] = true, ["Armatura del Gelo"] = true,
+    ["Ice Armor"] = true, ["Armatura di Ghiaccio"] = true,
+    ["Mage Armor"] = true, ["Armatura del Mago"] = true,
+    ["Molten Armor"] = true, ["Armatura Fusa"] = true,
+    ["Demon Armor"] = true, ["Armatura Demoniaca"] = true,
+    ["Demon Skin"] = true, ["Pelle di Demone"] = true,
+    ["Fel Armor"] = true, ["Armatura Vile"] = true,
+    ["Soul Link"] = true, ["Legame dell'Anima"] = true,
+    ["Lightning Shield"] = true, ["Scudo di Fulmini"] = true,
+    ["Water Shield"] = true, ["Scudo d'Acqua"] = true,
+    ["Ghost Wolf"] = true, ["Lupo Spettrale"] = true,
+    ["Stealth"] = true, ["Furtività"] = true,
+    ["Prowl"] = true, ["Agguato"] = true,
+    ["Shadowmeld"] = true, ["Fondersi nell'Ombra"] = true,
+    ["Well Fed"] = true, ["Ben Nutrito"] = true,
+    ["Food"] = true, ["Cibo"] = true,
+    ["Drink"] = true, ["Bevanda"] = true,
+    ["Refreshment"] = true, ["Ristoro"] = true,
+    ["Honorless Target"] = true, ["Bersaglio senza Onore"] = true,
+    ["Ghost"] = true, ["Fantasma"] = true,
+}
+
+local IGNORED_PASSIVE_IDS = {
+    [2580] = true,  -- Find Minerals
+    [2383] = true,  -- Find Herbs
+    [2481] = true,  -- Find Treasure
+    [43308] = true, -- Find Fish
+    [1494] = true,  -- Track Beasts
+    [19878] = true, -- Track Demons
+    [19879] = true, -- Track Dragonkin
+    [19880] = true, -- Track Elementals
+    [19882] = true, -- Track Giants
+    [19883] = true, -- Track Humanoids
+    [19884] = true, -- Track Undead
+    [19885] = true, -- Track Hidden
+    [5500] = true,  -- Sense Demons
+    [5502] = true,  -- Sense Undead
+    [25780] = true, -- Righteous Fury
+    [19746] = true, -- Concentration Aura
+    [20218] = true, -- Sanctity Aura
+    [32223] = true, -- Crusader Aura
+}
+
+-- DBM-style priority whitelist:
+-- 100 = Major Immunities, Tank/Personal Defensives & Raid Bloodlust/Heroism
+--  90 = External Saves, Absorbs & CC/Threat Utility
+--  80 = Healer HoTs & Active Tank Mitigations
+--  65 = Encounter / Raid Shouts & Major Offensive Cooldowns
+local IMPORTANT_COMBAT_BUFFS = {
+    -- Tier 1 (100): Immunities, Major Defensives & Heroism/Bloodlust
+    ["Divine Shield"] = { prio = 100, cat = "DEFENSIVE" }, ["Scudo Divino"] = { prio = 100, cat = "DEFENSIVE" },
+    ["Divine Protection"] = { prio = 100, cat = "DEFENSIVE" }, ["Protezione Divina"] = { prio = 100, cat = "DEFENSIVE" },
+    ["Blessing of Protection"] = { prio = 100, cat = "DEFENSIVE" }, ["Benedizione della Protezione"] = { prio = 100, cat = "DEFENSIVE" },
+    ["Hand of Protection"] = { prio = 100, cat = "DEFENSIVE" }, ["Mano della Protezione"] = { prio = 100, cat = "DEFENSIVE" },
+    ["Shield Wall"] = { prio = 100, cat = "DEFENSIVE" }, ["Muro di Scudi"] = { prio = 100, cat = "DEFENSIVE" },
+    ["Last Stand"] = { prio = 100, cat = "DEFENSIVE" }, ["Ultima Difesa"] = { prio = 100, cat = "DEFENSIVE" },
+    ["Ice Block"] = { prio = 100, cat = "DEFENSIVE" }, ["Blocco di Ghiaccio"] = { prio = 100, cat = "DEFENSIVE" },
+    ["Dispersion"] = { prio = 100, cat = "DEFENSIVE" }, ["Dispersione"] = { prio = 100, cat = "DEFENSIVE" },
+    ["Pain Suppression"] = { prio = 100, cat = "DEFENSIVE" }, ["Soppressione del Dolore"] = { prio = 100, cat = "DEFENSIVE" },
+    ["Guardian Spirit"] = { prio = 100, cat = "DEFENSIVE" }, ["Spirito Guardiano"] = { prio = 100, cat = "DEFENSIVE" },
+    ["Barkskin"] = { prio = 100, cat = "DEFENSIVE" }, ["Pelledura"] = { prio = 100, cat = "DEFENSIVE" },
+    ["Survival Instincts"] = { prio = 100, cat = "DEFENSIVE" }, ["Istinto di Sopravvivenza"] = { prio = 100, cat = "DEFENSIVE" },
+    ["Anti-Magic Shell"] = { prio = 100, cat = "DEFENSIVE" }, ["Scudo Antimagia"] = { prio = 100, cat = "DEFENSIVE" },
+    ["Icebound Fortitude"] = { prio = 100, cat = "DEFENSIVE" }, ["Fermezza Glaciale"] = { prio = 100, cat = "DEFENSIVE" },
+    ["Vampiric Blood"] = { prio = 100, cat = "DEFENSIVE" }, ["Sangue Vampirico"] = { prio = 100, cat = "DEFENSIVE" },
+    ["Deterrence"] = { prio = 100, cat = "DEFENSIVE" }, ["Deterrenza"] = { prio = 100, cat = "DEFENSIVE" },
+    ["Evasion"] = { prio = 100, cat = "DEFENSIVE" }, ["Evasione"] = { prio = 100, cat = "DEFENSIVE" },
+    ["Cloak of Shadows"] = { prio = 100, cat = "DEFENSIVE" }, ["Manto d'Ombra"] = { prio = 100, cat = "DEFENSIVE" },
+    ["Ardent Defender"] = { prio = 100, cat = "DEFENSIVE" }, ["Difensore Ardente"] = { prio = 100, cat = "DEFENSIVE" },
+    ["Bloodlust"] = { prio = 100, cat = "DEFENSIVE" }, ["Brama di Sangue"] = { prio = 100, cat = "DEFENSIVE" },
+    ["Heroism"] = { prio = 100, cat = "DEFENSIVE" }, ["Eroismo"] = { prio = 100, cat = "DEFENSIVE" },
+    ["Time Warp"] = { prio = 100, cat = "DEFENSIVE" }, ["Distorsione Temporale"] = { prio = 100, cat = "DEFENSIVE" },
+    ["Limited Invulnerability Potion"] = { prio = 100, cat = "DEFENSIVE" },
+    ["Pozione d'Invulnerabilità Limitata"] = { prio = 100, cat = "DEFENSIVE" },
+
+    -- Tier 2 (90-95): Externals, Absorbs & Saves
+    ["Blessing of Sacrifice"] = { prio = 95, cat = "EXTERNAL" }, ["Benedizione del Sacrificio"] = { prio = 95, cat = "EXTERNAL" },
+    ["Hand of Sacrifice"] = { prio = 95, cat = "EXTERNAL" }, ["Mano del Sacrificio"] = { prio = 95, cat = "EXTERNAL" },
+    ["Blessing of Freedom"] = { prio = 92, cat = "EXTERNAL" }, ["Benedizione della Libertà"] = { prio = 92, cat = "EXTERNAL" },
+    ["Hand of Freedom"] = { prio = 92, cat = "EXTERNAL" }, ["Mano della Libertà"] = { prio = 92, cat = "EXTERNAL" },
+    ["Hand of Salvation"] = { prio = 90, cat = "EXTERNAL" }, ["Mano della Salvezza"] = { prio = 90, cat = "EXTERNAL" },
+    ["Power Word: Shield"] = { prio = 90, cat = "EXTERNAL" }, ["Parola del Potere: Scudo"] = { prio = 90, cat = "EXTERNAL" },
+    ["Fear Ward"] = { prio = 90, cat = "EXTERNAL" }, ["Difesa dalla Paura"] = { prio = 90, cat = "EXTERNAL" },
+    ["Innervate"] = { prio = 90, cat = "EXTERNAL" }, ["Innervazione"] = { prio = 90, cat = "EXTERNAL" },
+    ["Power Infusion"] = { prio = 90, cat = "EXTERNAL" }, ["Infusione di Potere"] = { prio = 90, cat = "EXTERNAL" },
+    ["Spell Reflection"] = { prio = 90, cat = "EXTERNAL" }, ["Riflesso dell'Incantesimo"] = { prio = 90, cat = "EXTERNAL" },
+    ["Frenzied Regeneration"] = { prio = 90, cat = "EXTERNAL" }, ["Rigenerazione Furiosa"] = { prio = 90, cat = "EXTERNAL" },
+    ["Ice Barrier"] = { prio = 90, cat = "EXTERNAL" }, ["Barriera di Ghiaccio"] = { prio = 90, cat = "EXTERNAL" },
+    ["Intervene"] = { prio = 90, cat = "EXTERNAL" }, ["Intervento"] = { prio = 90, cat = "EXTERNAL" },
+    ["Free Action Potion"] = { prio = 90, cat = "EXTERNAL" }, ["Pozione d'Azione Libera"] = { prio = 90, cat = "EXTERNAL" },
+
+    -- Tier 3 (80): Healer HoTs & Tank Maintenance Buffs
+    ["Renew"] = { prio = 80, cat = "HOT" }, ["Rinnovamento"] = { prio = 80, cat = "HOT" },
+    ["Prayer of Mending"] = { prio = 82, cat = "HOT" }, ["Preghiera di Guarigione"] = { prio = 82, cat = "HOT" },
+    ["Rejuvenation"] = { prio = 80, cat = "HOT" }, ["Ringiovanimento"] = { prio = 80, cat = "HOT" },
+    ["Regrowth"] = { prio = 80, cat = "HOT" }, ["Ricrescita"] = { prio = 80, cat = "HOT" },
+    ["Lifebloom"] = { prio = 82, cat = "HOT" }, ["Fiore di Vita"] = { prio = 82, cat = "HOT" },
+    ["Wild Growth"] = { prio = 82, cat = "HOT" }, ["Crescita Rigogliosa"] = { prio = 82, cat = "HOT" },
+    ["Earth Shield"] = { prio = 85, cat = "HOT" }, ["Scudo di Terra"] = { prio = 85, cat = "HOT" },
+    ["Riptide"] = { prio = 80, cat = "HOT" }, ["Risacca"] = { prio = 80, cat = "HOT" },
+    ["Sacred Shield"] = { prio = 85, cat = "HOT" }, ["Scudo Sacro"] = { prio = 85, cat = "HOT" },
+    ["Beacon of Light"] = { prio = 85, cat = "HOT" }, ["Faro di Luce"] = { prio = 85, cat = "HOT" },
+    ["Holy Shield"] = { prio = 80, cat = "HOT" }, ["Scudo Benedetto"] = { prio = 80, cat = "HOT" },
+    ["Shield Block"] = { prio = 82, cat = "HOT" }, ["Blocco con Scudo"] = { prio = 82, cat = "HOT" },
+    ["Inspiration"] = { prio = 78, cat = "HOT" }, ["Ispirazione"] = { prio = 78, cat = "HOT" },
+    ["Ancestral Fortitude"] = { prio = 78, cat = "HOT" }, ["Fermezza Ancestrale"] = { prio = 78, cat = "HOT" },
+    ["Abolish Poison"] = { prio = 78, cat = "HOT" }, ["Abolizione del Veleno"] = { prio = 78, cat = "HOT" },
+    ["Abolish Disease"] = { prio = 78, cat = "HOT" }, ["Abolizione della Malattia"] = { prio = 78, cat = "HOT" },
+
+    -- Tier 4 (65): Shouts, Threat Redirects & Major Active Cooldowns
+    ["Battle Shout"] = { prio = 65, cat = "COMBAT" }, ["Urlo di Battaglia"] = { prio = 65, cat = "COMBAT" },
+    ["Commanding Shout"] = { prio = 65, cat = "COMBAT" }, ["Urlo di Comando"] = { prio = 65, cat = "COMBAT" },
+    ["Misdirection"] = { prio = 72, cat = "COMBAT" }, ["Depistaggio"] = { prio = 72, cat = "COMBAT" },
+    ["Tricks of the Trade"] = { prio = 72, cat = "COMBAT" }, ["Trucchi del Mestiere"] = { prio = 72, cat = "COMBAT" },
+    ["Avenging Wrath"] = { prio = 70, cat = "COMBAT" }, ["Ira Vendicatrice"] = { prio = 70, cat = "COMBAT" },
+    ["Tranquility"] = { prio = 75, cat = "COMBAT" }, ["Tranquillità"] = { prio = 75, cat = "COMBAT" },
+    ["Divine Hymn"] = { prio = 75, cat = "COMBAT" }, ["Inno Divino"] = { prio = 75, cat = "COMBAT" },
+    ["Hymn of Hope"] = { prio = 75, cat = "COMBAT" }, ["Inno della Speranza"] = { prio = 75, cat = "COMBAT" },
+    ["Divine Plea"] = { prio = 65, cat = "COMBAT" }, ["Supplica Divina"] = { prio = 65, cat = "COMBAT" },
+    ["Evocation"] = { prio = 65, cat = "COMBAT" }, ["Evocazione"] = { prio = 65, cat = "COMBAT" },
+    ["Berserk"] = { prio = 68, cat = "COMBAT" },
+    ["Recklessness"] = { prio = 68, cat = "COMBAT" }, ["Temerarietà"] = { prio = 68, cat = "COMBAT" },
+    ["Death Wish"] = { prio = 68, cat = "COMBAT" }, ["Desiderio di Morte"] = { prio = 68, cat = "COMBAT" },
+    ["Bestial Wrath"] = { prio = 68, cat = "COMBAT" }, ["Ira Bestiale"] = { prio = 68, cat = "COMBAT" },
+    ["Rapid Fire"] = { prio = 65, cat = "COMBAT" }, ["Fuoco Rapido"] = { prio = 65, cat = "COMBAT" },
+    ["Adrenaline Rush"] = { prio = 68, cat = "COMBAT" }, ["Scarica di Adrenalina"] = { prio = 68, cat = "COMBAT" },
+    ["Icy Veins"] = { prio = 65, cat = "COMBAT" }, ["Vene Gelide"] = { prio = 65, cat = "COMBAT" },
+    ["Arcane Power"] = { prio = 65, cat = "COMBAT" }, ["Potere Arcano"] = { prio = 65, cat = "COMBAT" },
+    ["Stampeding Roar"] = { prio = 72, cat = "COMBAT" }, ["Ruggito Impetuoso"] = { prio = 72, cat = "COMBAT" },
+    ["Sprint"] = { prio = 65, cat = "COMBAT" }, ["Scatto"] = { prio = 65, cat = "COMBAT" },
+    ["Dash"] = { prio = 65, cat = "COMBAT" }, ["Scatto Felino"] = { prio = 65, cat = "COMBAT" },
+}
+
+local IMPORTANT_COMBAT_IDS = {
+    [642]   = { prio = 100, cat = "DEFENSIVE" }, -- Divine Shield
+    [498]   = { prio = 100, cat = "DEFENSIVE" }, -- Divine Protection
+    [1022]  = { prio = 100, cat = "DEFENSIVE" }, -- Blessing/Hand of Protection
+    [871]   = { prio = 100, cat = "DEFENSIVE" }, -- Shield Wall
+    [12975] = { prio = 100, cat = "DEFENSIVE" }, -- Last Stand
+    [45438] = { prio = 100, cat = "DEFENSIVE" }, -- Ice Block
+    [47585] = { prio = 100, cat = "DEFENSIVE" }, -- Dispersion
+    [33206] = { prio = 100, cat = "DEFENSIVE" }, -- Pain Suppression
+    [47788] = { prio = 100, cat = "DEFENSIVE" }, -- Guardian Spirit
+    [22812] = { prio = 100, cat = "DEFENSIVE" }, -- Barkskin
+    [61336] = { prio = 100, cat = "DEFENSIVE" }, -- Survival Instincts
+    [48707] = { prio = 100, cat = "DEFENSIVE" }, -- Anti-Magic Shell
+    [48792] = { prio = 100, cat = "DEFENSIVE" }, -- Icebound Fortitude
+    [55233] = { prio = 100, cat = "DEFENSIVE" }, -- Vampiric Blood
+    [2825]  = { prio = 100, cat = "DEFENSIVE" }, -- Bloodlust
+    [32182] = { prio = 100, cat = "DEFENSIVE" }, -- Heroism
+    [80353] = { prio = 100, cat = "DEFENSIVE" }, -- Time Warp
+    [6940]  = { prio = 95,  cat = "EXTERNAL" },  -- Hand/Blessing of Sacrifice
+    [1044]  = { prio = 92,  cat = "EXTERNAL" },  -- Hand/Blessing of Freedom
+    [1038]  = { prio = 90,  cat = "EXTERNAL" },  -- Hand of Salvation
+    [6346]  = { prio = 90,  cat = "EXTERNAL" },  -- Fear Ward
+    [29166] = { prio = 90,  cat = "EXTERNAL" },  -- Innervate
+    [10060] = { prio = 90,  cat = "EXTERNAL" },  -- Power Infusion
+    [23920] = { prio = 90,  cat = "EXTERNAL" },  -- Spell Reflection
+    [20925] = { prio = 80,  cat = "HOT" },       -- Holy Shield
+    [53601] = { prio = 85,  cat = "HOT" },       -- Sacred Shield
+    [53563] = { prio = 85,  cat = "HOT" },       -- Beacon of Light
+    [974]   = { prio = 85,  cat = "HOT" },       -- Earth Shield
+    [33763] = { prio = 82,  cat = "HOT" },       -- Lifebloom
+    [48438] = { prio = 82,  cat = "HOT" },       -- Wild Growth
+    [33076] = { prio = 82,  cat = "HOT" },       -- Prayer of Mending
+    [61295] = { prio = 80,  cat = "HOT" },       -- Riptide
+    [2565]  = { prio = 82,  cat = "HOT" },       -- Shield Block
+    [31884] = { prio = 70,  cat = "COMBAT" },    -- Avenging Wrath
+    [34477] = { prio = 72,  cat = "COMBAT" },    -- Misdirection
+    [57934] = { prio = 72,  cat = "COMBAT" },    -- Tricks of the Trade
 }
 
 local function IsSecretVal(v)
@@ -483,6 +722,47 @@ end
 
 local function IsAccessibleVal(v)
     return v ~= nil and not IsSecretVal(v)
+end
+
+local function SafeSetAuraTexture(tex, rawIcon, fallbackIcon)
+    if not tex then return end
+    local okTex = false
+    if IsSecretVal(rawIcon) then
+        okTex = pcall(tex.SetTexture, tex, rawIcon)
+    elseif rawIcon ~= nil then
+        okTex = pcall(tex.SetTexture, tex, rawIcon)
+    end
+    if not okTex then
+        tex:SetTexture(fallbackIcon or "Interface\\Icons\\INV_Misc_QuestionMark")
+    end
+end
+
+local function ApplyAuraSlotCooldown(cdFrame, auraEntry)
+    if not cdFrame then return end
+    local dur = (auraEntry and tonumber(auraEntry.duration)) or 0
+    local expTime = (auraEntry and tonumber(auraEntry.expirationTime)) or 0
+    if dur > 0 and expTime > 0 then
+        local startTime = expTime - dur
+        if startTime >= 0 then
+            local now = (GetTime and GetTime()) or 0
+            if expTime > now then
+                local okCd = pcall(cdFrame.SetCooldown, cdFrame, startTime, dur)
+                if okCd then
+                    cdFrame:Show()
+                    return
+                end
+            end
+        end
+    end
+    if auraEntry and auraEntry.durationObj and cdFrame.SetCooldownFromDurationObject then
+        local okObj = pcall(cdFrame.SetCooldownFromDurationObject, cdFrame, auraEntry.durationObj)
+        if okObj then
+            cdFrame:Show()
+            return
+        end
+    end
+    pcall(cdFrame.Clear, cdFrame)
+    cdFrame:Hide()
 end
 
 local function SafeReadDebuffAura(unit, aura)
@@ -503,6 +783,14 @@ local function SafeReadDebuffAura(unit, aura)
     local okS, rawSpell = pcall(function() return aura.spellId end)
     if not okS then rawSpell = nil end
 
+    local durObj = nil
+    if C_UnitAuras and C_UnitAuras.GetAuraDuration and unit and rawInstanceID ~= nil then
+        local okDO, resDO = pcall(C_UnitAuras.GetAuraDuration, unit, rawInstanceID)
+        if okDO and resDO ~= nil then
+            durObj = resDO
+        end
+    end
+
     return {
         rawInstanceID  = rawInstanceID,
         safeInstanceID = IsAccessibleVal(rawInstanceID) and rawInstanceID or nil,
@@ -513,6 +801,7 @@ local function SafeReadDebuffAura(unit, aura)
         safeType       = IsSafeStr(rawDispel) and rawDispel or nil,
         duration       = SafeNumber(rawDur, 0),
         expirationTime = SafeNumber(rawExp, 0),
+        durationObj    = durObj,
         spellId        = SafeNumber(rawSpell, nil),
     }
 end
@@ -539,6 +828,8 @@ local function GetPartyUnitDebuffs(unit)
             end
             filterEntries[#filterEntries + 1] = {
                 index = i,
+                auraFilter = "HARMFUL|RAID_PLAYER_DISPELLABLE",
+                rawInstanceID = f.rawInstanceID,
                 name = f.safeName,
                 icon = f.icon,
                 rawIcon = f.rawIcon,
@@ -547,6 +838,7 @@ local function GetPartyUnitDebuffs(unit)
                 canDispel = true,
                 duration = f.duration,
                 expirationTime = f.expirationTime,
+                durationObj = f.durationObj,
                 spellId = f.spellId,
             }
         end
@@ -573,6 +865,8 @@ local function GetPartyUnitDebuffs(unit)
             if canDispel then anyCanDispelFound = true end
             debuffs[#debuffs + 1] = {
                 index = i,
+                auraFilter = "HARMFUL",
+                rawInstanceID = f.rawInstanceID,
                 name = f.safeName,
                 icon = f.icon,
                 rawIcon = f.rawIcon,
@@ -581,6 +875,7 @@ local function GetPartyUnitDebuffs(unit)
                 canDispel = canDispel,
                 duration = f.duration,
                 expirationTime = f.expirationTime,
+                durationObj = f.durationObj,
                 spellId = f.spellId,
             }
         end
@@ -626,7 +921,7 @@ local function GetPartyUnitDebuffs(unit)
     return debuffs
 end
 
-local function SafeReadBuffAura(aura)
+local function SafeReadBuffAura(aura, unit)
     local okN, rawName = pcall(function() return aura.name end)
     if not okN then rawName = nil end
     local okIc, rawIcon = pcall(function() return aura.icon end)
@@ -643,6 +938,16 @@ local function SafeReadBuffAura(aura)
     if not okS then rawSpell = nil end
     local okPlr, isPlrAura = pcall(function() return aura.isFromPlayerOrPlayerPet end)
     if not okPlr then isPlrAura = nil end
+    local okInst, rawInstId = pcall(function() return aura.auraInstanceID end)
+    if not okInst then rawInstId = nil end
+
+    local durObj = nil
+    if C_UnitAuras and C_UnitAuras.GetAuraDuration and unit and rawInstId ~= nil then
+        local okDO, resDO = pcall(C_UnitAuras.GetAuraDuration, unit, rawInstId)
+        if okDO and resDO ~= nil then
+            durObj = resDO
+        end
+    end
 
     local safeName = IsSafeStr(rawName) and rawName or nil
     local safeSrc = IsSafeStr(rawSrc) and rawSrc or nil
@@ -654,16 +959,110 @@ local function SafeReadBuffAura(aura)
     end
 
     return {
+        readableName   = safeName,
         safeName       = safeName or "Buff",
         rawIcon        = rawIcon,
         icon           = IsAccessibleVal(rawIcon) and rawIcon or nil,
         count          = SafeNumber(rawApps, 0),
         duration       = SafeNumber(rawDur, 0),
         expirationTime = SafeNumber(rawExp, 0),
+        durationObj    = durObj,
         source         = safeSrc,
         isPlayerBuff   = isPlayerBuff,
         spellId        = SafeNumber(rawSpell, nil),
+        rawInstanceID  = rawInstId,
     }
+end
+
+-- Remembers pre-combat aura classifications by auraInstanceID so Secret Values in combat
+-- neither resurrect passive clutter (e.g. Auras / Find Minerals) nor drop active combat buffs.
+local knownAuraMetaByUnit = {}
+
+local function ClassifyDBMBuff(unit, f, filterPrio, filterCat)
+    local rName = f.readableName
+    local sid = f.spellId
+    local instKey = IsAccessibleVal(f.rawInstanceID) and f.rawInstanceID or nil
+    local unitMeta = unit and knownAuraMetaByUnit[unit]
+    if not unitMeta and unit then
+        unitMeta = {}
+        knownAuraMetaByUnit[unit] = unitMeta
+    end
+
+    if rName ~= nil then
+        -- Always discard passive trackers, auras, stances, forms & food unless flagged as a major defensive external
+        if (filterPrio or 0) < 95 then
+            if IGNORED_PASSIVE_BUFFS[rName] or (sid and IGNORED_PASSIVE_IDS[sid]) then
+                if unitMeta and instKey then unitMeta[instKey] = { ignored = true } end
+                return nil, nil
+            end
+        end
+
+        local match = IMPORTANT_COMBAT_BUFFS[rName] or (sid and IMPORTANT_COMBAT_IDS[sid])
+        if match then
+            local prio = math.max(filterPrio or 0, match.prio)
+            local cat = (filterPrio and filterPrio >= 95 and filterCat) or match.cat
+            if unitMeta and instKey then unitMeta[instKey] = { prio = prio, cat = cat } end
+            return prio, cat
+        end
+
+        local dur = f.duration or 0
+        if dur > 0 and dur <= 125 then
+            local prio = math.max(filterPrio or 0, 60)
+            local cat = filterCat or "COMBAT"
+            if unitMeta and instKey then unitMeta[instKey] = { prio = prio, cat = cat } end
+            return prio, cat
+        end
+        if (filterPrio or 0) >= 95 then
+            local cat = filterCat or "DEFENSIVE"
+            if unitMeta and instKey then unitMeta[instKey] = { prio = filterPrio, cat = cat } end
+            return filterPrio, cat
+        end
+        if unitMeta and instKey then unitMeta[instKey] = { ignored = true } end
+        return nil, nil
+    end
+
+    -- In combat (Midnight Secret Values): respect pre-combat knowledge first
+    local cached = unitMeta and instKey and unitMeta[instKey]
+    if cached then
+        if cached.ignored and (filterPrio or 0) < 95 then
+            return nil, nil
+        end
+        if cached.prio then
+            return math.max(filterPrio or 0, cached.prio), cached.cat or filterCat or "COMBAT"
+        end
+    end
+
+    -- Fallback if duration is still numeric while name is masked
+    local dur = f.duration or 0
+    if dur > 0 and dur <= 125 then
+        return math.max(filterPrio or 0, 60), filterCat or "COMBAT"
+    end
+
+    -- Trust Blizzard's Midnight C-side combat/defensive aura filters
+    if (filterPrio or 0) >= 75 then
+        return filterPrio, filterCat or "COMBAT"
+    end
+
+    if C_UnitAuras and C_UnitAuras.IsAuraFilteredOutByInstanceID and f.rawInstanceID ~= nil then
+        local okF1, outBig = pcall(C_UnitAuras.IsAuraFilteredOutByInstanceID, unit, f.rawInstanceID, "HELPFUL|BIG_DEFENSIVE")
+        if okF1 and IsAccessibleVal(outBig) and outBig == false then
+            return 100, "DEFENSIVE"
+        end
+        local okF2, outExt = pcall(C_UnitAuras.IsAuraFilteredOutByInstanceID, unit, f.rawInstanceID, "HELPFUL|EXTERNAL_DEFENSIVE")
+        if okF2 and IsAccessibleVal(outExt) and outExt == false then
+            return 95, "EXTERNAL"
+        end
+        local okF3, outImp = pcall(C_UnitAuras.IsAuraFilteredOutByInstanceID, unit, f.rawInstanceID, "HELPFUL|IMPORTANT")
+        if okF3 and IsAccessibleVal(outImp) and outImp == false then
+            return 80, "COMBAT"
+        end
+        local okF4, outRaid = pcall(C_UnitAuras.IsAuraFilteredOutByInstanceID, unit, f.rawInstanceID, "HELPFUL|RAID_IN_COMBAT")
+        if okF4 and IsAccessibleVal(outRaid) and outRaid == false then
+            return 75, "COMBAT"
+        end
+    end
+
+    return nil, nil
 end
 
 local function GetPartyUnitBuffs(unit)
@@ -673,25 +1072,53 @@ local function GetPartyUnitBuffs(unit)
     if not okE or SafeBoolean(exists, false) ~= true then return buffs end
 
     if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
-        for i = 1, 32 do
-            local okC, aura = pcall(C_UnitAuras.GetAuraDataByIndex, unit, i, "HELPFUL")
-            if not okC or type(aura) ~= "table" then break end
-            local f = SafeReadBuffAura(aura)
-            if f.rawIcon ~= nil or f.icon ~= nil then
-                buffs[#buffs + 1] = {
-                    index = i,
-                    name = f.safeName,
-                    icon = f.icon or "Interface\\Icons\\INV_Misc_QuestionMark",
-                    rawIcon = f.rawIcon,
-                    count = f.count,
-                    duration = f.duration,
-                    expirationTime = f.expirationTime,
-                    source = f.source,
-                    isPlayerBuff = f.isPlayerBuff,
-                    spellId = f.spellId,
-                }
+        local seenInst = {}
+        local seenByKey = {}
+        local function CollectFiltered(auraFilter, filterPrio, filterCat)
+            for i = 1, 32 do
+                local okC, aura = pcall(C_UnitAuras.GetAuraDataByIndex, unit, i, auraFilter)
+                if not okC or type(aura) ~= "table" then break end
+                local f = SafeReadBuffAura(aura, unit)
+                if IsSecretVal(f.rawIcon) or f.rawIcon ~= nil or f.icon ~= nil then
+                    local instKey = IsAccessibleVal(f.rawInstanceID) and f.rawInstanceID or nil
+                    local nameKey = (not instKey and f.readableName) and f.readableName or nil
+                    if (instKey and seenInst[instKey]) or (nameKey and seenByKey[nameKey]) then
+                        -- Already collected in a higher-priority Midnight filter pass
+                    else
+                        local prio, cat = ClassifyDBMBuff(unit, f, filterPrio, filterCat)
+                        if prio then
+                            if instKey then seenInst[instKey] = true end
+                            if nameKey then seenByKey[nameKey] = true end
+                            buffs[#buffs + 1] = {
+                                index = i,
+                                auraFilter = auraFilter,
+                                rawInstanceID = f.rawInstanceID,
+                                name = f.safeName,
+                                readableName = f.readableName,
+                                icon = f.icon or "Interface\\Icons\\INV_Misc_QuestionMark",
+                                rawIcon = f.rawIcon,
+                                count = f.count,
+                                duration = f.duration,
+                                expirationTime = f.expirationTime,
+                                durationObj = f.durationObj,
+                                source = f.source,
+                                isPlayerBuff = f.isPlayerBuff,
+                                spellId = f.spellId,
+                                priority = prio,
+                                dbmCat = cat,
+                            }
+                        end
+                    end
+                end
             end
         end
+
+        CollectFiltered("HELPFUL|BIG_DEFENSIVE", 100, "DEFENSIVE")
+        CollectFiltered("HELPFUL|EXTERNAL_DEFENSIVE", 95, "EXTERNAL")
+        CollectFiltered("HELPFUL|IMPORTANT", 80, "COMBAT")
+        CollectFiltered("HELPFUL|RAID_IN_COMBAT", 75, "COMBAT")
+        CollectFiltered("HELPFUL|PLAYER|RAID_IN_COMBAT", 75, "HOT")
+        CollectFiltered("HELPFUL", 0, nil)
     elseif UnitBuff then
         for i = 1, 32 do
             local okB, bName, bIcon, bCount, _, bDur, bExp, bSrc, _, _, bSpellId = pcall(UnitBuff, unit, i)
@@ -716,9 +1143,27 @@ local function GetPartyUnitBuffs(unit)
         end
     end
 
-    -- Sort buffs: player's own buffs FIRST, then other party buffs
+    -- Legacy UnitBuff fallback: run the same DBM importance filter
+    if not (C_UnitAuras and C_UnitAuras.GetAuraDataByIndex) and #buffs > 0 then
+        local filtered = {}
+        for _, entry in ipairs(buffs) do
+            entry.readableName = (entry.name ~= "Buff") and entry.name or nil
+            local prio, cat = ClassifyDBMBuff(unit, entry, 0, nil)
+            if prio then
+                entry.priority = prio
+                entry.dbmCat = cat
+                filtered[#filtered + 1] = entry
+            end
+        end
+        buffs = filtered
+    end
+
+    -- Sort buffs by DBM importance tier first, then player's own buffs, then aura index
     pcall(function()
         table.sort(buffs, function(a, b)
+            local ap = a.priority or 0
+            local bp = b.priority or 0
+            if ap ~= bp then return ap > bp end
             local aMine = SafeBoolean(a.isPlayerBuff, false)
             local bMine = SafeBoolean(b.isPlayerBuff, false)
             if aMine and not bMine then return true end
@@ -859,10 +1304,7 @@ local function UpdatePartyAuras(frame)
             local debuff = debuffs[d]
             btn.unit = unit
             btn.auraIndex = debuff.index
-            local okTex = pcall(btn.icon.SetTexture, btn.icon, debuff.rawIcon or debuff.icon)
-            if not okTex then
-                btn.icon:SetTexture(debuff.icon)
-            end
+            SafeSetAuraTexture(btn.icon, debuff.rawIcon, debuff.icon)
             local col = DISPEL_COLORS[debuff.dispelType] or DISPEL_COLORS["none"]
             btn.border:SetVertexColor(col.r, col.g, col.b, 1)
             btn.border:Show()
@@ -887,10 +1329,7 @@ local function UpdatePartyAuras(frame)
             btn.auraIndex = buff.index
             btn:ClearAllPoints()
             btn:SetPoint("TOPLEFT", container, "TOPLEFT", (b - 1) * 19, buffYOffset)
-            local okTex = pcall(btn.icon.SetTexture, btn.icon, buff.rawIcon or buff.icon)
-            if not okTex or not (buff.rawIcon or buff.icon) then
-                btn.icon:SetTexture(buff.icon or "Interface\\Icons\\INV_Misc_QuestionMark")
-            end
+            SafeSetAuraTexture(btn.icon, buff.rawIcon, buff.icon)
             if btn.SetBackdropBorderColor then
                 if buff.isPlayerBuff then
                     btn:SetBackdropBorderColor(1.0, 0.82, 0.0, 0.95)
@@ -1114,10 +1553,7 @@ local function UpdateCompactPartyAuras(frame)
             btn.unit = unit
             btn.auraIndex = debuff.index
             btn.isDebuff = true
-            local okTex = pcall(btn.icon.SetTexture, btn.icon, debuff.rawIcon or debuff.icon)
-            if not okTex then
-                btn.icon:SetTexture(debuff.icon)
-            end
+            SafeSetAuraTexture(btn.icon, debuff.rawIcon, debuff.icon)
             local col = DISPEL_COLORS[debuff.dispelType] or DISPEL_COLORS["none"]
             if btn.SetBackdropBorderColor then
                 btn:SetBackdropBorderColor(col.r, col.g, col.b, 1)
@@ -1144,10 +1580,7 @@ local function UpdateCompactPartyAuras(frame)
             btn.unit = unit
             btn.auraIndex = buff.index
             btn.isDebuff = false
-            local okTex = pcall(btn.icon.SetTexture, btn.icon, buff.rawIcon or buff.icon)
-            if not okTex then
-                btn.icon:SetTexture(buff.icon)
-            end
+            SafeSetAuraTexture(btn.icon, buff.rawIcon, buff.icon)
             if btn.SetBackdropBorderColor then
                 if buff.isPlayerBuff then
                     btn:SetBackdropBorderColor(1.0, 0.82, 0.0, 0.95)
@@ -1418,6 +1851,35 @@ local function CheckUnitRange(unit)
     return true
 end
 
+local function ConfigureGridDispelBinding(btn)
+    if not btn or (InCombatLockdown and InCombatLockdown()) then return end
+    local dispelInfo = FP.GetPlayerDispelInfo and FP:GetPlayerDispelInfo()
+    local pickedSpell = nil
+    if dispelInfo and dispelInfo.spellsBySchool then
+        pickedSpell = dispelInfo.spellsBySchool["Magic"]
+        if not pickedSpell then
+            local _, firstSpell = next(dispelInfo.spellsBySchool)
+            pickedSpell = firstSpell
+        end
+    end
+    if pickedSpell and pickedSpell.name then
+        pcall(btn.SetAttribute, btn, "shift-type1", "spell")
+        pcall(btn.SetAttribute, btn, "shift-spell1", pickedSpell.name)
+    else
+        pcall(btn.SetAttribute, btn, "shift-type1", nil)
+        pcall(btn.SetAttribute, btn, "shift-spell1", nil)
+    end
+end
+
+local function RefreshAllGridDispelBindings()
+    if InCombatLockdown and InCombatLockdown() then return end
+    for i = 1, 5 do
+        if gridMembers[i] then
+            ConfigureGridDispelBinding(gridMembers[i])
+        end
+    end
+end
+
 for i = 1, 5 do
     local unit = GRID_UNITS[i]
     local btn = CreateFrame("Button", "NKPartyGridMember" .. i, gridContainer, "SecureUnitButtonTemplate")
@@ -1426,6 +1888,7 @@ for i = 1, 5 do
     btn:SetAttribute("unit", unit)
     btn:RegisterForClicks("AnyUp", "AnyDown")
     btn.unit = unit
+    ConfigureGridDispelBinding(btn)
 
     btn:SetPoint("TOPLEFT", gridContainer, "TOPLEFT", 0, -((i - 1) * 47))
 
@@ -1543,14 +2006,34 @@ for i = 1, 5 do
         icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
         bBtn.icon = icon
 
-        local countFs = bBtn:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        local cd = CreateFrame("Cooldown", nil, bBtn, "CooldownFrameTemplate")
+        cd:SetPoint("TOPLEFT", bBtn, "TOPLEFT", 1, -1)
+        cd:SetPoint("BOTTOMRIGHT", bBtn, "BOTTOMRIGHT", -1, 1)
+        if cd.SetReverse then cd:SetReverse(true) end
+        if cd.SetDrawEdge then cd:SetDrawEdge(true) end
+        if cd.SetSwipeColor then cd:SetSwipeColor(0, 0, 0, 0.62) end
+        if cd.SetHideCountdownNumbers then cd:SetHideCountdownNumbers(false) end
+        cd:Hide()
+        bBtn.cd = cd
+
+        local overlay = CreateFrame("Frame", nil, bBtn)
+        overlay:SetAllPoints(bBtn)
+        overlay:SetFrameLevel(cd:GetFrameLevel() + 5)
+
+        local countFs = overlay:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
         countFs:SetPoint("BOTTOMRIGHT", bBtn, "BOTTOMRIGHT", 2, -1)
         bBtn.countFs = countFs
 
         bBtn:SetScript("OnEnter", function(self)
-            if not self.unit or not self.auraIndex then return end
+            if not self.unit then return end
             GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-            pcall(GameTooltip.SetUnitBuff, GameTooltip, self.unit, self.auraIndex)
+            local ok = false
+            if self.rawInstanceID ~= nil and GameTooltip.SetUnitBuffByAuraInstanceID then
+                ok = pcall(GameTooltip.SetUnitBuffByAuraInstanceID, GameTooltip, self.unit, self.rawInstanceID)
+            end
+            if not ok and self.auraIndex then
+                pcall(GameTooltip.SetUnitBuff, GameTooltip, self.unit, self.auraIndex, self.auraFilter)
+            end
             GameTooltip:Show()
         end)
         bBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
@@ -1581,14 +2064,34 @@ for i = 1, 5 do
         icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
         dBtn.icon = icon
 
-        local countFs = dBtn:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        local cd = CreateFrame("Cooldown", nil, dBtn, "CooldownFrameTemplate")
+        cd:SetPoint("TOPLEFT", dBtn, "TOPLEFT", 1, -1)
+        cd:SetPoint("BOTTOMRIGHT", dBtn, "BOTTOMRIGHT", -1, 1)
+        if cd.SetReverse then cd:SetReverse(true) end
+        if cd.SetDrawEdge then cd:SetDrawEdge(true) end
+        if cd.SetSwipeColor then cd:SetSwipeColor(0, 0, 0, 0.65) end
+        if cd.SetHideCountdownNumbers then cd:SetHideCountdownNumbers(false) end
+        cd:Hide()
+        dBtn.cd = cd
+
+        local overlay = CreateFrame("Frame", nil, dBtn)
+        overlay:SetAllPoints(dBtn)
+        overlay:SetFrameLevel(cd:GetFrameLevel() + 5)
+
+        local countFs = overlay:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
         countFs:SetPoint("BOTTOMRIGHT", dBtn, "BOTTOMRIGHT", 2, -1)
         dBtn.countFs = countFs
 
         dBtn:SetScript("OnEnter", function(self)
-            if not self.unit or not self.auraIndex then return end
+            if not self.unit then return end
             GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-            pcall(GameTooltip.SetUnitDebuff, GameTooltip, self.unit, self.auraIndex)
+            local ok = false
+            if self.rawInstanceID ~= nil and GameTooltip.SetUnitDebuffByAuraInstanceID then
+                ok = pcall(GameTooltip.SetUnitDebuffByAuraInstanceID, GameTooltip, self.unit, self.rawInstanceID)
+            end
+            if not ok and self.auraIndex then
+                pcall(GameTooltip.SetUnitDebuff, GameTooltip, self.unit, self.auraIndex, self.auraFilter)
+            end
             GameTooltip:Show()
         end)
         dBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
@@ -1811,7 +2314,7 @@ local function UpdateGridMember(btn)
     local inRange = CheckUnitRange(unit)
     btn:SetAlpha(inRange and 1.0 or 0.55)
 
-    -- Auras (Buffs & HoTs)
+    -- Auras (DBM-filtered Major Combat Buffs, Externals, Defensives & HoTs)
     local buffs = GetPartyUnitBuffs(unit)
     for b = 1, 3 do
         local bBtn = btn.buffSlots[b]
@@ -1819,15 +2322,24 @@ local function UpdateGridMember(btn)
             local buff = buffs[b]
             bBtn.unit = unit
             bBtn.auraIndex = buff.index
-            local okTex = pcall(bBtn.icon.SetTexture, bBtn.icon, buff.rawIcon or buff.icon)
-            if not okTex or not (buff.rawIcon or buff.icon) then
-                bBtn.icon:SetTexture(buff.icon or "Interface\\Icons\\INV_Misc_QuestionMark")
-            end
-            if buff.isPlayerBuff then
+            bBtn.auraFilter = buff.auraFilter
+            bBtn.rawInstanceID = buff.rawInstanceID
+            SafeSetAuraTexture(bBtn.icon, buff.rawIcon, buff.icon)
+            local prio = buff.priority or 0
+            if prio >= 95 then
+                -- Major Defensive / Immunity / External save (Bright Cyan DBM highlight)
+                bBtn:SetBackdropBorderColor(0.15, 0.88, 1.0, 1.0)
+            elseif buff.isPlayerBuff then
+                -- Player's own HoT / External / CD (Gold)
                 bBtn:SetBackdropBorderColor(1.0, 0.85, 0.0, 0.95)
+            elseif prio >= 78 then
+                -- Healer HoT / Shield / Active Mitigation (Emerald)
+                bBtn:SetBackdropBorderColor(0.25, 0.92, 0.45, 0.95)
             else
-                bBtn:SetBackdropBorderColor(0.45, 0.45, 0.50, 0.75)
+                -- Other active combat buff (Silver-Blue)
+                bBtn:SetBackdropBorderColor(0.65, 0.78, 0.95, 0.85)
             end
+            ApplyAuraSlotCooldown(bBtn.cd, buff)
             local bCount = SafeNumber(buff.count, 0)
             if bCount > 1 then
                 bBtn.countFs:SetText(tostring(bCount))
@@ -1837,6 +2349,11 @@ local function UpdateGridMember(btn)
             end
             bBtn:Show()
         else
+            bBtn.unit = nil
+            bBtn.auraIndex = nil
+            bBtn.auraFilter = nil
+            bBtn.rawInstanceID = nil
+            if bBtn.cd then pcall(bBtn.cd.Clear, bBtn.cd); bBtn.cd:Hide() end
             bBtn:Hide()
         end
     end
@@ -1865,12 +2382,12 @@ local function UpdateGridMember(btn)
             local debuff = debuffs[d]
             dBtn.unit = unit
             dBtn.auraIndex = debuff.index
-            local okTex = pcall(dBtn.icon.SetTexture, dBtn.icon, debuff.rawIcon or debuff.icon)
-            if not okTex or not (debuff.rawIcon or debuff.icon) then
-                dBtn.icon:SetTexture(debuff.icon or "Interface\\Icons\\INV_Misc_QuestionMark")
-            end
+            dBtn.auraFilter = debuff.auraFilter
+            dBtn.rawInstanceID = debuff.rawInstanceID
+            SafeSetAuraTexture(dBtn.icon, debuff.rawIcon, debuff.icon)
             local col = DISPEL_COLORS[debuff.dispelType] or DISPEL_COLORS["none"]
             dBtn:SetBackdropBorderColor(col.r, col.g, col.b, 1)
+            ApplyAuraSlotCooldown(dBtn.cd, debuff)
             local dCount = SafeNumber(debuff.count, 0)
             if dCount > 1 then
                 dBtn.countFs:SetText(tostring(dCount))
@@ -1880,6 +2397,11 @@ local function UpdateGridMember(btn)
             end
             dBtn:Show()
         else
+            dBtn.unit = nil
+            dBtn.auraIndex = nil
+            dBtn.auraFilter = nil
+            dBtn.rawInstanceID = nil
+            if dBtn.cd then pcall(dBtn.cd.Clear, dBtn.cd); dBtn.cd:Hide() end
             dBtn:Hide()
         end
     end
@@ -2403,19 +2925,24 @@ SafeRegisterEvent(evFrame, "UNIT_THREAT_SITUATION_UPDATE")
 SafeRegisterEvent(evFrame, "INSPECT_READY")
 SafeRegisterEvent(evFrame, "PLAYER_TALENT_UPDATE")
 SafeRegisterEvent(evFrame, "CHARACTER_POINTS_CHANGED")
+SafeRegisterEvent(evFrame, "SPELLS_CHANGED")
 SafeRegisterEvent(evFrame, "PLAYER_REGEN_ENABLED")
 
 evFrame:SetScript("OnEvent", function(self, event, arg1, ...)
     pcall(function()
         if event == "PLAYER_LOGIN" then
             HookBlizzardUnitFrames()
+            RefreshAllGridDispelBindings()
             UpdateAllPartyMembers()
             UpdateTargetFrame()
         elseif event == "PLAYER_REGEN_ENABLED" then
+            RefreshAllGridDispelBindings()
             if pendingCombatGridSync then
                 pendingCombatGridSync = false
                 UpdateAllPartyMembers()
             end
+        elseif event == "SPELLS_CHANGED" then
+            RefreshAllGridDispelBindings()
         elseif event == "PLAYER_ENTERING_WORLD" or event == "GROUP_ROSTER_UPDATE" or event == "PARTY_MEMBERS_CHANGED"
             or event == "PARTY_LEADER_CHANGED" or event == "PARTY_MEMBER_ENABLE" or event == "PARTY_MEMBER_DISABLE"
             or event == "RAID_ROSTER_UPDATE" or event == "UNIT_CONNECTION" or event == "ZONE_CHANGED_NEW_AREA" then
@@ -2482,6 +3009,7 @@ evFrame:SetScript("OnEvent", function(self, event, arg1, ...)
         elseif event == "INSPECT_READY" then
             HandleInspectReady(arg1)
         elseif event == "PLAYER_TALENT_UPDATE" or event == "CHARACTER_POINTS_CHANGED" then
+            RefreshAllGridDispelBindings()
             if currentTooltipOwner and currentTooltipUnit and UnitIsUnit(currentTooltipUnit, "player") then
                 ShowPortraitTooltip(currentTooltipOwner, currentTooltipUnit)
             end
