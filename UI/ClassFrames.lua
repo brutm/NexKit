@@ -2022,6 +2022,15 @@ for i = 1, 5 do
     nameText:SetJustifyH("LEFT")
     btn.nameText = nameText
 
+    -- Character Level Text (Bottom-left above power bar, clear of name/buffs/debuffs)
+    local levelText = hpBar:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    levelText:SetPoint("BOTTOMLEFT", hpBar, "BOTTOMLEFT", 3, 2)
+    local lFont = levelText:GetFont()
+    if lFont then levelText:SetFont(lFont, 9, "OUTLINE") end
+    levelText:SetShadowOffset(1, -1)
+    levelText:SetJustifyH("LEFT")
+    btn.levelText = levelText
+
     -- Health Deficit / Status Text
     local hpText = hpBar:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     hpText:SetPoint("TOPRIGHT", hpBar, "TOPRIGHT", -4, -3)
@@ -2209,6 +2218,20 @@ local function UpdateGridMember(btn)
         name = string.sub(name, 1, 9) .. ".."
     end
     btn.nameText:SetText(tostring(name or unit))
+
+    if btn.levelText then
+        local lvl = UnitLevel and SafeNumber(SafeCall(UnitLevel, unit), 0) or 0
+        if lvl > 0 then
+            btn.levelText:SetText(string.format("|cffffd100%d|r", lvl))
+            btn.levelText:Show()
+        elseif lvl == -1 then
+            btn.levelText:SetText("|cffff4040??|r")
+            btn.levelText:Show()
+        else
+            btn.levelText:SetText("")
+            btn.levelText:Hide()
+        end
+    end
 
     local hp = 0
     if UnitHealth then
