@@ -1950,12 +1950,10 @@ local function UpdateRotationUI()
     if isLocked ~= lastUiLocked then
         lastUiLocked = isLocked
         if isLocked then
-            unlockIcon:Hide()
             rootFrame:EnableMouse(false)
             rootFrame:SetBackdropColor(0, 0, 0, 0)
             rootFrame:SetBackdropBorderColor(0, 0, 0, 0)
         else
-            unlockIcon:Show()
             rootFrame:EnableMouse(true)
             rootFrame:SetBackdropColor(0.08, 0.08, 0.12, 0.75)
             rootFrame:SetBackdropBorderColor(1.0, 0.82, 0.0, 0.9)

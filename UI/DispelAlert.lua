@@ -751,11 +751,7 @@ local function UpdateDispelAlert()
     if locked ~= lastLocked then
         lastLocked = locked
         alertFrame:EnableMouse(not locked)
-        if locked then
-            unlockIcon:Hide()
-        else
-            unlockIcon:Show()
-        end
+        unlockIcon:Hide()
     end
 
     local scale = GetDispelAlertScale()

@@ -1742,12 +1742,6 @@ gridMover:SetBackdropColor(0.0, 0.85, 0.55, 0.14)
 gridMover:SetBackdropBorderColor(0.0, 0.90, 0.58, 0.92)
 gridMover:Hide()
 
-local gridMoverIcon = gridMover:CreateTexture(nil, "OVERLAY")
-gridMoverIcon:SetSize(16, 16)
-gridMoverIcon:SetPoint("TOPLEFT", gridMover, "TOPLEFT", -3, 3)
-gridMoverIcon:SetTexture("Interface\\Buttons\\LockButton-Unlocked-Up")
-gridMoverIcon:SetTexCoord(0.15, 0.85, 0.15, 0.85)
-
 local function SyncGridMoverToContainer()
     if InCombatLockdown and InCombatLockdown() then return end
     if gridMover.nkDragging then return end
@@ -1775,7 +1769,8 @@ local function CommitGridMoverPosition()
     end
 end
 
-gridMover:SetScript("OnDragStart", function(self)
+gridMover:SetScript("OnMouseDown", function(self, button)
+    if button ~= "LeftButton" then return end
     if InCombatLockdown and InCombatLockdown() then return end
     self.nkDragging = true
     self:ClearAllPoints()
@@ -1795,8 +1790,10 @@ gridMover:SetScript("OnDragStart", function(self)
         end
     end)
 end)
-gridMover:SetScript("OnDragStop", function()
-    CommitGridMoverPosition()
+gridMover:SetScript("OnMouseUp", function(self, button)
+    if button == "LeftButton" then
+        CommitGridMoverPosition()
+    end
 end)
 
 -- Pure C++ 4-edge texture overlay so Blizzard's ColorCurve secret RGBA values can tint borders
