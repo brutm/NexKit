@@ -1040,7 +1040,7 @@ end
 -- neither resurrect passive clutter (e.g. Auras / Find Minerals) nor drop active combat buffs.
 local knownAuraMetaByUnit = {}
 
-local function ClassifyDBMBuff(unit, f, filterPrio, filterCat)
+local function ClassifyDBMBuff(unit, f, filterPrio, filterCat, isPlayerFilter)
     local rName = f.readableName
     local sid = f.spellId
     local instKey = IsAccessibleVal(f.rawInstanceID) and f.rawInstanceID or nil
@@ -1050,13 +1050,21 @@ local function ClassifyDBMBuff(unit, f, filterPrio, filterCat)
         knownAuraMetaByUnit[unit] = unitMeta
     end
 
+    if isPlayerFilter then
+        f.isPlayerBuff = true
+    end
+
     if rName ~= nil then
-        -- Always discard passive trackers, auras, stances, forms & food unless flagged as a major defensive external
-        if (filterPrio or 0) < 95 then
-            if IGNORED_PASSIVE_BUFFS[rName] or (sid and IGNORED_PASSIVE_IDS[sid]) then
-                if unitMeta and instKey then unitMeta[instKey] = { ignored = true } end
-                return nil, nil
-            end
+        -- Always discard passive trackers, auras, stances, forms, seals & food
+        if IGNORED_PASSIVE_BUFFS[rName] or (sid and IGNORED_PASSIVE_IDS[sid]) then
+            if unitMeta and instKey then unitMeta[instKey] = { ignored = true } end
+            return nil, nil
+        end
+
+        -- Only show buffs cast by the player
+        if not f.isPlayerBuff and not isPlayerFilter then
+            if unitMeta and instKey then unitMeta[instKey] = { ignored = true } end
+            return nil, nil
         end
 
         local match = IMPORTANT_COMBAT_BUFFS[rName] or (sid and IMPORTANT_COMBAT_IDS[sid])
@@ -1074,65 +1082,47 @@ local function ClassifyDBMBuff(unit, f, filterPrio, filterCat)
             if unitMeta and instKey then unitMeta[instKey] = { prio = prio, cat = cat } end
             return prio, cat
         end
-        if f.isPlayerBuff then
-            -- Show the player's own cast party/raid buffs (e.g. Blessings, Fortitude, MotW, Intellect)
-            -- at priority 40 so active combat CDs/HoTs always appear first above them.
-            local prio = math.max(filterPrio or 0, 40)
-            local cat = filterCat or "PLAYER_BUFF"
-            if unitMeta and instKey then unitMeta[instKey] = { prio = prio, cat = cat } end
-            return prio, cat
-        end
-        if (filterPrio or 0) >= 95 then
-            local cat = filterCat or "DEFENSIVE"
-            if unitMeta and instKey then unitMeta[instKey] = { prio = filterPrio, cat = cat } end
-            return filterPrio, cat
-        end
-        if unitMeta and instKey then unitMeta[instKey] = { ignored = true } end
-        return nil, nil
+
+        -- Player-cast party buff (e.g. Blessings, Fortitude, MotW, Intellect) at prio 40
+        local prio = math.max(filterPrio or 0, 40)
+        local cat = filterCat or "PLAYER_BUFF"
+        if unitMeta and instKey then unitMeta[instKey] = { prio = prio, cat = cat } end
+        return prio, cat
     end
 
-    -- In combat (Midnight Secret Values): respect pre-combat knowledge first
+    -- In combat (Midnight Secret Values): respect pre-combat cache (blocks Devotion Aura / Find Minerals / Seals)
     local cached = unitMeta and instKey and unitMeta[instKey]
     if cached then
-        if cached.ignored and (filterPrio or 0) < 95 then
+        if cached.ignored then
             return nil, nil
         end
         if cached.prio then
-            return math.max(filterPrio or 0, cached.prio), cached.cat or filterCat or "COMBAT"
+            return math.max(filterPrio or 0, cached.prio), cached.cat or filterCat or "PLAYER_BUFF"
         end
     end
 
-    -- Fallback if duration is still numeric while name is masked
+    if not f.isPlayerBuff and not isPlayerFilter then
+        if C_UnitAuras and C_UnitAuras.IsAuraFilteredOutByInstanceID and f.rawInstanceID ~= nil then
+            local okP, outPlr = pcall(C_UnitAuras.IsAuraFilteredOutByInstanceID, unit, f.rawInstanceID, "HELPFUL|PLAYER")
+            if not (okP and IsAccessibleVal(outPlr) and outPlr == false) then
+                return nil, nil
+            end
+            f.isPlayerBuff = true
+        else
+            return nil, nil
+        end
+    end
+
     local dur = f.duration or 0
     if dur > 0 and dur <= 125 then
         return math.max(filterPrio or 0, 60), filterCat or "COMBAT"
     end
 
-    -- Trust Blizzard's Midnight C-side combat/defensive aura filters
     if (filterPrio or 0) >= 75 then
         return filterPrio, filterCat or "COMBAT"
     end
 
-    if C_UnitAuras and C_UnitAuras.IsAuraFilteredOutByInstanceID and f.rawInstanceID ~= nil then
-        local okF1, outBig = pcall(C_UnitAuras.IsAuraFilteredOutByInstanceID, unit, f.rawInstanceID, "HELPFUL|BIG_DEFENSIVE")
-        if okF1 and IsAccessibleVal(outBig) and outBig == false then
-            return 100, "DEFENSIVE"
-        end
-        local okF2, outExt = pcall(C_UnitAuras.IsAuraFilteredOutByInstanceID, unit, f.rawInstanceID, "HELPFUL|EXTERNAL_DEFENSIVE")
-        if okF2 and IsAccessibleVal(outExt) and outExt == false then
-            return 95, "EXTERNAL"
-        end
-        local okF3, outImp = pcall(C_UnitAuras.IsAuraFilteredOutByInstanceID, unit, f.rawInstanceID, "HELPFUL|IMPORTANT")
-        if okF3 and IsAccessibleVal(outImp) and outImp == false then
-            return 80, "COMBAT"
-        end
-        local okF4, outRaid = pcall(C_UnitAuras.IsAuraFilteredOutByInstanceID, unit, f.rawInstanceID, "HELPFUL|RAID_IN_COMBAT")
-        if okF4 and IsAccessibleVal(outRaid) and outRaid == false then
-            return 75, "COMBAT"
-        end
-    end
-
-    return nil, nil
+    return 40, "PLAYER_BUFF"
 end
 
 local function GetPartyUnitBuffs(unit)
@@ -1144,7 +1134,7 @@ local function GetPartyUnitBuffs(unit)
     if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
         local seenInst = {}
         local seenByKey = {}
-        local function CollectFiltered(auraFilter, filterPrio, filterCat)
+        local function CollectFiltered(auraFilter, filterPrio, filterCat, isPlayerFilter)
             for i = 1, 32 do
                 local okC, aura = pcall(C_UnitAuras.GetAuraDataByIndex, unit, i, auraFilter)
                 if not okC or type(aura) ~= "table" then break end
@@ -1155,7 +1145,7 @@ local function GetPartyUnitBuffs(unit)
                     if (instKey and seenInst[instKey]) or (nameKey and seenByKey[nameKey]) then
                         -- Already collected in a higher-priority Midnight filter pass
                     else
-                        local prio, cat = ClassifyDBMBuff(unit, f, filterPrio, filterCat)
+                        local prio, cat = ClassifyDBMBuff(unit, f, filterPrio, filterCat, isPlayerFilter)
                         if prio then
                             if instKey then seenInst[instKey] = true end
                             if nameKey then seenByKey[nameKey] = true end
@@ -1183,12 +1173,8 @@ local function GetPartyUnitBuffs(unit)
             end
         end
 
-        CollectFiltered("HELPFUL|BIG_DEFENSIVE", 100, "DEFENSIVE")
-        CollectFiltered("HELPFUL|EXTERNAL_DEFENSIVE", 95, "EXTERNAL")
-        CollectFiltered("HELPFUL|IMPORTANT", 80, "COMBAT")
-        CollectFiltered("HELPFUL|RAID_IN_COMBAT", 75, "COMBAT")
-        CollectFiltered("HELPFUL|PLAYER|RAID_IN_COMBAT", 75, "HOT")
-        CollectFiltered("HELPFUL", 0, nil)
+        CollectFiltered("HELPFUL|PLAYER|RAID_IN_COMBAT", 75, "HOT", true)
+        CollectFiltered("HELPFUL|PLAYER", 0, nil, true)
     elseif UnitBuff then
         for i = 1, 32 do
             local okB, bName, bIcon, bCount, _, bDur, bExp, bSrc, _, _, bSpellId = pcall(UnitBuff, unit, i)
