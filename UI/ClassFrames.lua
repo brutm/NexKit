@@ -470,11 +470,43 @@ local PLAYER_BUFF_SPELLS = {
     ["Commanding Shout"] = true, ["Urlo di Comando"] = true,
     ["Shield Wall"] = true, ["Muro di Scudi"] = true,
     ["Last Stand"] = true, ["Ultima Difesa"] = true,
-    -- Hunter / Rogue / Mage / DK
+    -- Hunter / Rogue / Mage / DK / Party Buffs
     ["Misdirection"] = true, ["Depistaggio"] = true,
     ["Tricks of the Trade"] = true, ["Trucchi del Mestiere"] = true,
     ["Time Warp"] = true, ["Distorsione Temporale"] = true,
     ["Ice Barrier"] = true, ["Barriera di Ghiaccio"] = true,
+    -- Core Castable Party / Raid Buffs (shown when cast by player, priority 40 below combat CDs/HoTs)
+    ["Blessing of Might"] = true, ["Benedizione della Potenza"] = true,
+    ["Greater Blessing of Might"] = true, ["Benedizione Superiore della Potenza"] = true,
+    ["Blessing of Wisdom"] = true, ["Benedizione della Saggezza"] = true,
+    ["Greater Blessing of Wisdom"] = true, ["Benedizione Superiore della Saggezza"] = true,
+    ["Blessing of Kings"] = true, ["Benedizione dei Re"] = true,
+    ["Greater Blessing of Kings"] = true, ["Benedizione Superiore dei Re"] = true,
+    ["Blessing of Salvation"] = true, ["Benedizione della Salvezza"] = true,
+    ["Greater Blessing of Salvation"] = true, ["Benedizione Superiore della Salvezza"] = true,
+    ["Blessing of Light"] = true, ["Benedizione della Luce"] = true,
+    ["Greater Blessing of Light"] = true, ["Benedizione Superiore della Luce"] = true,
+    ["Blessing of Sanctuary"] = true, ["Benedizione del Rifugio"] = true,
+    ["Greater Blessing of Sanctuary"] = true, ["Benedizione Superiore del Rifugio"] = true,
+    ["Power Word: Fortitude"] = true, ["Parola del Potere: Fortezza"] = true,
+    ["Prayer of Fortitude"] = true, ["Preghiera di Fortezza"] = true,
+    ["Divine Spirit"] = true, ["Spirito Divino"] = true,
+    ["Prayer of Spirit"] = true, ["Preghiera dello Spirito"] = true,
+    ["Shadow Protection"] = true, ["Protezione dall'Ombra"] = true,
+    ["Prayer of Shadow Protection"] = true, ["Preghiera di Protezione dall'Ombra"] = true,
+    ["Arcane Intellect"] = true, ["Intelletto Arcano"] = true,
+    ["Arcane Brilliance"] = true, ["Brillantezza Arcana"] = true,
+    ["Amplify Magic"] = true, ["Amplificazione Magica"] = true,
+    ["Dampen Magic"] = true, ["Attenuazione Magica"] = true,
+    ["Mark of the Wild"] = true, ["Marchio Selvaggio"] = true,
+    ["Gift of the Wild"] = true, ["Dono del Selvaggio"] = true,
+    ["Thorns"] = true, ["Spine"] = true,
+    ["Unending Breath"] = true, ["Respiro Inesauribile"] = true,
+    ["Detect Invisibility"] = true, ["Individuazione dell'Invisibilità"] = true,
+    ["Fire Shield"] = true, ["Scudo di Fuoco"] = true,
+    ["Soulstone Resurrection"] = true, ["Resurrezione con Pietra dell'Anima"] = true,
+    ["Water Walking"] = true, ["Camminata sull'Acqua"] = true,
+    ["Water Breathing"] = true, ["Respiro Acquatico"] = true,
 }
 
 -- DBM-style noise filter: never clutter party/raid frames with passive toggles, auras, stances, trackers or food
@@ -1039,6 +1071,14 @@ local function ClassifyDBMBuff(unit, f, filterPrio, filterCat)
         if dur > 0 and dur <= 125 then
             local prio = math.max(filterPrio or 0, 60)
             local cat = filterCat or "COMBAT"
+            if unitMeta and instKey then unitMeta[instKey] = { prio = prio, cat = cat } end
+            return prio, cat
+        end
+        if f.isPlayerBuff then
+            -- Show the player's own cast party/raid buffs (e.g. Blessings, Fortitude, MotW, Intellect)
+            -- at priority 40 so active combat CDs/HoTs always appear first above them.
+            local prio = math.max(filterPrio or 0, 40)
+            local cat = filterCat or "PLAYER_BUFF"
             if unitMeta and instKey then unitMeta[instKey] = { prio = prio, cat = cat } end
             return prio, cat
         end
