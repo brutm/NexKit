@@ -176,6 +176,13 @@ local function SafeReadAuraFields(unit, aura)
 end
 
 local knownDebuffSchools = {}
+local NON_DISPELLABLE_DEBUFFS = {
+    ["Weakened Soul"] = true, ["Anima Indebolita"] = true,
+    ["Forbearance"] = true, ["Astinenza"] = true,
+    ["Exhaustion"] = true, ["Sated"] = true, ["Temporal Displacement"] = true,
+    ["Resurrection Sickness"] = true, ["Debolezza da Resurrezione"] = true,
+    ["Deserter"] = true, ["Disertore"] = true,
+}
 
 local function IsInstanceDispellableByPlayer(unit, rawInstanceID)
     if rawInstanceID == nil or not C_UnitAuras or not C_UnitAuras.IsAuraFilteredOutByInstanceID then
@@ -277,16 +284,34 @@ local function ScanUnitDispellables(unit, dispelInfo, outList)
                 break
             end
             local f = SafeReadAuraFields(unit, aura)
-            if not (f.safeInstanceID and seenInstances[f.safeInstanceID]) then
+            if f.safeName and NON_DISPELLABLE_DEBUFFS[f.safeName] then
+                if f.safeInstanceID then knownDebuffSchools[f.safeInstanceID] = false end
+            elseif not (f.safeInstanceID and seenInstances[f.safeInstanceID]) then
                 if f.safeInstanceID then seenInstances[f.safeInstanceID] = true end
-                local matchedSchool = (f.safeDispel and dispelInfo.schools[f.safeDispel]) and f.safeDispel
-                    or (f.safeInstanceID and knownDebuffSchools[f.safeInstanceID] and dispelInfo.schools[knownDebuffSchools[f.safeInstanceID]] and knownDebuffSchools[f.safeInstanceID])
-                    or fallbackSchool
-                if f.safeInstanceID and f.safeDispel then
-                    knownDebuffSchools[f.safeInstanceID] = f.safeDispel
+                if not f.dispelIsSecret then
+                    -- Readable dispelName: enforce strict school match and remember non-dispellable instances
+                    if f.safeInstanceID then
+                        knownDebuffSchools[f.safeInstanceID] = f.safeDispel or false
+                    end
+                    if f.safeDispel and dispelInfo.schools[f.safeDispel] then
+                        PushMatch(f.safeDispel, f)
+                        filterHitCount = filterHitCount + 1
+                    elseif not f.safeDispel then
+                        -- Client ignored RAID_PLAYER_DISPELLABLE and returned a non-dispellable debuff (e.g. Weakened Soul)
+                        FP.nkRaidDispelFilterBroken = true
+                    end
+                else
+                    local cached = f.safeInstanceID and knownDebuffSchools[f.safeInstanceID] or nil
+                    if cached == false then
+                        -- Known undispellable from pre-combat
+                    elseif cached and dispelInfo.schools[cached] then
+                        PushMatch(cached, f)
+                        filterHitCount = filterHitCount + 1
+                    elseif not FP.nkRaidDispelFilterBroken then
+                        PushMatch(fallbackSchool, f)
+                        filterHitCount = filterHitCount + 1
+                    end
                 end
-                PushMatch(matchedSchool, f)
-                filterHitCount = filterHitCount + 1
             end
         end
     end
@@ -303,20 +328,24 @@ local function ScanUnitDispellables(unit, dispelInfo, outList)
                 break
             end
             local f = SafeReadAuraFields(unit, aura)
-            if f.safeInstanceID and f.safeDispel then
-                knownDebuffSchools[f.safeInstanceID] = f.safeDispel
+            if f.safeName and NON_DISPELLABLE_DEBUFFS[f.safeName] then
+                if f.safeInstanceID then knownDebuffSchools[f.safeInstanceID] = false end
+            else
+            if not f.dispelIsSecret and f.safeInstanceID then
+                knownDebuffSchools[f.safeInstanceID] = f.safeDispel or false
             end
             local cachedSchool = f.safeInstanceID and knownDebuffSchools[f.safeInstanceID] or nil
             local matchedSchool = nil
             if f.safeDispel and dispelInfo.schools[f.safeDispel] then
                 matchedSchool = f.safeDispel
-            elseif f.dispelIsSecret and cachedSchool and dispelInfo.schools[cachedSchool] then
+            elseif f.dispelIsSecret and cachedSchool and cachedSchool ~= false and dispelInfo.schools[cachedSchool] then
                 matchedSchool = cachedSchool
-            elseif f.dispelIsSecret and IsInstanceDispellableByPlayer(unit, f.rawInstanceID) then
-                matchedSchool = cachedSchool or fallbackSchool
+            elseif f.dispelIsSecret and cachedSchool ~= false and not FP.nkRaidDispelFilterBroken and IsInstanceDispellableByPlayer(unit, f.rawInstanceID) then
+                matchedSchool = fallbackSchool
             end
             if matchedSchool then
                 PushMatch(matchedSchool, f)
+            end
             end
         end
     elseif UnitDebuff then

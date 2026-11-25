@@ -798,6 +798,7 @@ local function SafeReadDebuffAura(unit, aura)
         icon           = IsAccessibleVal(rawIcon) and rawIcon or "Interface\\Icons\\INV_Misc_QuestionMark",
         count          = SafeNumber(rawApps, 0),
         safeType       = IsSafeStr(rawDispel) and rawDispel or nil,
+        dispelIsSecret = IsSecretVal(rawDispel) and true or false,
         duration       = SafeNumber(rawDur, 0),
         expirationTime = SafeNumber(rawExp, 0),
         durationObj    = durObj,
@@ -827,28 +828,44 @@ local function GetPartyUnitDebuffs(unit)
             if not okF or type(aura) ~= "table" then break end
             local f = SafeReadDebuffAura(unit, aura)
             if not (f.safeInstanceID and filterDispellableIDs[f.safeInstanceID]) then
-                local dSchool = (f.safeType and dispels and dispels[f.safeType]) and f.safeType
-                    or (f.safeInstanceID and knownDebuffSchools[f.safeInstanceID] and dispels and dispels[knownDebuffSchools[f.safeInstanceID]] and knownDebuffSchools[f.safeInstanceID])
-                    or fallbackSchool
-                if f.safeInstanceID then
-                    filterDispellableIDs[f.safeInstanceID] = dSchool
-                    if f.safeType then knownDebuffSchools[f.safeInstanceID] = f.safeType end
+                local dSchool = nil
+                if not f.dispelIsSecret then
+                    if f.safeInstanceID then
+                        knownDebuffSchools[f.safeInstanceID] = f.safeType or false
+                    end
+                    if f.safeType and dispels and dispels[f.safeType] then
+                        dSchool = f.safeType
+                    elseif not f.safeType then
+                        FP.nkRaidDispelFilterBroken = true
+                    end
+                else
+                    local cached = f.safeInstanceID and knownDebuffSchools[f.safeInstanceID] or nil
+                    if cached and cached ~= false and dispels and dispels[cached] then
+                        dSchool = cached
+                    elseif cached ~= false and not FP.nkRaidDispelFilterBroken then
+                        dSchool = fallbackSchool
+                    end
                 end
-                filterEntries[#filterEntries + 1] = {
-                    index = i,
-                    auraFilter = "HARMFUL|RAID_PLAYER_DISPELLABLE",
-                    rawInstanceID = f.rawInstanceID,
-                    name = f.safeName,
-                    icon = f.icon,
-                    rawIcon = f.rawIcon,
-                    count = f.count,
-                    dispelType = dSchool,
-                    canDispel = true,
-                    duration = f.duration,
-                    expirationTime = f.expirationTime,
-                    durationObj = f.durationObj,
-                    spellId = f.spellId,
-                }
+                if dSchool then
+                    if f.safeInstanceID then
+                        filterDispellableIDs[f.safeInstanceID] = dSchool
+                    end
+                    filterEntries[#filterEntries + 1] = {
+                        index = i,
+                        auraFilter = "HARMFUL|RAID_PLAYER_DISPELLABLE",
+                        rawInstanceID = f.rawInstanceID,
+                        name = f.safeName,
+                        icon = f.icon,
+                        rawIcon = f.rawIcon,
+                        count = f.count,
+                        dispelType = dSchool,
+                        canDispel = true,
+                        duration = f.duration,
+                        expirationTime = f.expirationTime,
+                        durationObj = f.durationObj,
+                        spellId = f.spellId,
+                    }
+                end
             end
         end
     end
@@ -859,15 +876,16 @@ local function GetPartyUnitDebuffs(unit)
             local okC, aura = pcall(C_UnitAuras.GetAuraDataByIndex, unit, i, "HARMFUL")
             if not okC or type(aura) ~= "table" then break end
             local f = SafeReadDebuffAura(unit, aura)
-            if f.safeInstanceID and f.safeType then
-                knownDebuffSchools[f.safeInstanceID] = f.safeType
+            if not f.dispelIsSecret and f.safeInstanceID then
+                knownDebuffSchools[f.safeInstanceID] = f.safeType or false
             end
-            local safeType = f.safeType or (f.safeInstanceID and knownDebuffSchools[f.safeInstanceID]) or nil
+            local cached = f.safeInstanceID and knownDebuffSchools[f.safeInstanceID] or nil
+            local safeType = f.safeType or (cached and cached ~= false and cached or nil)
             local canDispel = (safeType ~= nil and dispels and dispels[safeType] == true) or false
-            if not canDispel and f.safeInstanceID and filterDispellableIDs[f.safeInstanceID] then
+            if not canDispel and f.dispelIsSecret and f.safeInstanceID and filterDispellableIDs[f.safeInstanceID] then
                 canDispel = true
                 safeType = safeType or filterDispellableIDs[f.safeInstanceID]
-            elseif not canDispel and f.rawInstanceID ~= nil and C_UnitAuras.IsAuraFilteredOutByInstanceID then
+            elseif not canDispel and f.dispelIsSecret and cached ~= false and not FP.nkRaidDispelFilterBroken and f.rawInstanceID ~= nil and C_UnitAuras.IsAuraFilteredOutByInstanceID then
                 local okFo, fo = pcall(C_UnitAuras.IsAuraFilteredOutByInstanceID, unit, f.rawInstanceID, "HARMFUL|RAID_PLAYER_DISPELLABLE")
                 if okFo and not IsSecretVal(fo) and fo == false then
                     canDispel = true
