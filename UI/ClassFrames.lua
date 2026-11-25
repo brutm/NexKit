@@ -2440,7 +2440,7 @@ local function UpdatePartyGrid()
 
         if isLocked then
             dragBar:Hide()
-            if gridHandle then gridHandle:Show() end
+            if gridHandle then gridHandle:Hide() end
         else
             dragBar:Show()
             if gridHandle then gridHandle:Hide() end
@@ -3063,7 +3063,7 @@ function FP:RefreshPartyGridLock()
     if dragBar then
         if s.gridPartyLocked ~= false then
             dragBar:Hide()
-            if gridHandle then gridHandle:Show() end
+            if gridHandle then gridHandle:Hide() end
         else
             dragBar:Show()
             if gridHandle then gridHandle:Hide() end

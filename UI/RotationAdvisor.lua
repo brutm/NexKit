@@ -1781,6 +1781,7 @@ rotHandle:SetScript("OnLeave", function(self)
     self:SetBackdropBorderColor(0.85, 0.68, 0.20, 0.65)
     rotHandleText:SetText("|cffaaaaaaSposta|r")
 end)
+rotHandle:Hide()
 
 rootFrame:RegisterForDrag("LeftButton")
 rootFrame:SetScript("OnDragStart", function(self)
@@ -1983,11 +1984,13 @@ local function UpdateRotationUI()
         lastUiLocked = isLocked
         if isLocked then
             dragTitle:Hide()
+            rotHandle:Hide()
             rootFrame:EnableMouse(false)
             rootFrame:SetBackdropColor(0, 0, 0, 0)
             rootFrame:SetBackdropBorderColor(0, 0, 0, 0)
         else
             dragTitle:Show()
+            rotHandle:Show()
             rootFrame:EnableMouse(true)
             rootFrame:SetBackdropColor(0.08, 0.08, 0.12, 0.75)
             rootFrame:SetBackdropBorderColor(1.0, 0.82, 0.0, 0.9)
