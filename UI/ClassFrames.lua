@@ -1742,33 +1742,11 @@ gridMover:SetBackdropColor(0.0, 0.85, 0.55, 0.14)
 gridMover:SetBackdropBorderColor(0.0, 0.90, 0.58, 0.92)
 gridMover:Hide()
 
-local gridMoverIconBtn = CreateFrame("Button", nil, gridMover)
-gridMoverIconBtn:SetSize(16, 16)
-gridMoverIconBtn:SetPoint("TOPLEFT", gridMover, "TOPLEFT", -3, 3)
-gridMoverIconBtn:SetNormalTexture("Interface\\Buttons\\LockButton-Unlocked-Up")
-gridMoverIconBtn:SetHighlightTexture("Interface\\Buttons\\LockButton-Highlight")
-if FP.CropButtonTextures then FP:CropButtonTextures(gridMoverIconBtn, 0.15) end
-gridMoverIconBtn:RegisterForDrag("LeftButton")
-gridMoverIconBtn:SetScript("OnDragStart", function(self)
-    if InCombatLockdown and InCombatLockdown() then return end
-    self.wasDragged = true
-    local fn = gridMover:GetScript("OnDragStart")
-    if fn then fn(gridMover) end
-end)
-gridMoverIconBtn:SetScript("OnDragStop", function(self)
-    local fn = gridMover:GetScript("OnDragStop")
-    if fn then fn(gridMover) end
-end)
-gridMoverIconBtn:SetScript("OnClick", function(self)
-    if self.wasDragged then
-        self.wasDragged = false
-        return
-    end
-    if InCombatLockdown and InCombatLockdown() then return end
-    GetSettings().gridPartyLocked = true
-    FP:RefreshPartyGridLock()
-    if FP.RefreshSettingsUI then FP:RefreshSettingsUI() end
-end)
+local gridMoverIcon = gridMover:CreateTexture(nil, "OVERLAY")
+gridMoverIcon:SetSize(16, 16)
+gridMoverIcon:SetPoint("TOPLEFT", gridMover, "TOPLEFT", -3, 3)
+gridMoverIcon:SetTexture("Interface\\Buttons\\LockButton-Unlocked-Up")
+gridMoverIcon:SetTexCoord(0.15, 0.85, 0.15, 0.85)
 
 local function SyncGridMoverToContainer()
     if InCombatLockdown and InCombatLockdown() then return end
