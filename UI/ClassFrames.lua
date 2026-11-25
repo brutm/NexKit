@@ -1014,9 +1014,9 @@ local function SafeReadBuffAura(aura, unit)
     local safeName = IsSafeStr(rawName) and rawName or nil
     local safeSrc = IsSafeStr(rawSrc) and rawSrc or nil
     local isPlayerBuff = false
-    if IsAccessibleVal(isPlrAura) and isPlrAura == true then
-        isPlayerBuff = true
-    elseif safeSrc == "player" or (safeSrc == nil and safeName and PLAYER_BUFF_SPELLS and PLAYER_BUFF_SPELLS[safeName]) then
+    if IsAccessibleVal(isPlrAura) then
+        isPlayerBuff = (isPlrAura == true)
+    elseif safeSrc == "player" then
         isPlayerBuff = true
     end
 
@@ -1037,14 +1037,19 @@ local function SafeReadBuffAura(aura, unit)
 end
 
 -- Remembers pre-combat aura classifications by auraInstanceID so Secret Values in combat
--- neither resurrect passive clutter (e.g. Auras / Find Minerals) nor drop active combat buffs.
+-- neither resurrect passive clutter (e.g. Auras / Find Minerals) nor drop active player buffs.
 local knownAuraMetaByUnit = {}
+local lastGuidByUnit = {}
 
 local function ClassifyDBMBuff(unit, f, filterPrio, filterCat, isPlayerFilter)
     local rName = f.readableName
     local sid = f.spellId
     local instKey = IsAccessibleVal(f.rawInstanceID) and f.rawInstanceID or nil
-    local guidKey = SafeUnitGUID(unit) or unit
+    local liveGuid = SafeUnitGUID(unit)
+    if liveGuid and unit then
+        lastGuidByUnit[unit] = liveGuid
+    end
+    local guidKey = liveGuid or (unit and lastGuidByUnit[unit]) or nil
     local unitMeta = guidKey and knownAuraMetaByUnit[guidKey]
     if not unitMeta and guidKey then
         unitMeta = {}
@@ -1091,7 +1096,7 @@ local function ClassifyDBMBuff(unit, f, filterPrio, filterCat, isPlayerFilter)
         return prio, cat
     end
 
-    -- In combat (Midnight Secret Values): respect pre-combat cache (blocks Devotion Aura / Find Minerals / Seals)
+    -- In combat (Midnight Secret Values): respect pre-combat cache for this exact player GUID
     local cached = unitMeta and instKey and unitMeta[instKey]
     if cached then
         if cached.ignored then
@@ -1137,7 +1142,7 @@ local function GetPartyUnitBuffs(unit)
         local seenInst = {}
         local seenByKey = {}
         local function CollectFiltered(auraFilter, filterPrio, filterCat, isPlayerFilter)
-            for i = 1, 32 do
+            for i = 1, 40 do
                 local okC, aura = pcall(C_UnitAuras.GetAuraDataByIndex, unit, i, auraFilter)
                 if not okC or type(aura) ~= "table" then break end
                 local f = SafeReadBuffAura(aura, unit)
@@ -1179,12 +1184,12 @@ local function GetPartyUnitBuffs(unit)
         CollectFiltered("HELPFUL|PLAYER", 0, nil, true)
         CollectFiltered("HELPFUL", 0, nil, false)
     elseif UnitBuff then
-        for i = 1, 32 do
+        for i = 1, 40 do
             local okB, bName, bIcon, bCount, _, bDur, bExp, bSrc, _, _, bSpellId = pcall(UnitBuff, unit, i)
             if not okB or not bName then break end
             local safeName = IsSafeStr(bName) and bName or nil
             local safeSrc = IsSafeStr(bSrc) and bSrc or nil
-            local isPlayerBuff = (safeSrc == "player") or (safeSrc == nil and safeName and PLAYER_BUFF_SPELLS and PLAYER_BUFF_SPELLS[safeName]) or false
+            local isPlayerBuff = (safeSrc == "player")
             if IsAccessibleVal(bIcon) or bIcon ~= nil then
                 buffs[#buffs + 1] = {
                     index = i,
@@ -2072,7 +2077,7 @@ for i = 1, 5 do
     for b = 1, 3 do
         local bBtn = CreateFrame("Button", nil, hpBar, "BackdropTemplate")
         bBtn:SetSize(16, 16)
-        bBtn:SetFrameLevel(hpBar:GetFrameLevel() + 4)
+        bBtn:SetFrameLevel(hpBar:GetFrameLevel() + 5)
         bBtn:SetPoint("BOTTOMLEFT", hpBar, "BOTTOMLEFT", 24 + (b - 1) * 18, 2)
         bBtn:SetBackdrop({
             bgFile = "Interface\\Buttons\\WHITE8x8",
@@ -2219,6 +2224,65 @@ end
 
 local pendingCombatGridSync = false
 
+local function ReadUnitBarValues(unit, valFn, maxFn)
+    local rawVal, rawMax = nil, nil
+    if valFn then
+        local ok, v = pcall(valFn, unit)
+        if ok and v ~= nil then rawVal = v end
+    end
+    if maxFn then
+        local ok, v = pcall(maxFn, unit)
+        if ok and v ~= nil then rawMax = v end
+    end
+    local isSafe = (rawVal ~= nil and rawMax ~= nil)
+        and (not IsSecretVal(rawVal))
+        and (not IsSecretVal(rawMax))
+    if isSafe then
+        local okDiff = pcall(function()
+            return type(rawVal) == "number" and type(rawMax) == "number" and (rawMax - rawVal)
+        end)
+        if not okDiff or type(rawVal) ~= "number" or type(rawMax) ~= "number" then
+            isSafe = false
+        end
+    end
+    return rawVal, rawMax, isSafe
+end
+
+-- StatusBar:SetMinMaxValues and SetValue accept WoW Midnight 12.0 secret numbers natively,
+-- allowing live health/power bar animation in combat without exposing secret arithmetic.
+local function ApplyUnitStatusBarValues(bar, unit, rawVal, rawMax, isSafe, forceEmpty, fallbackFull, pctFn)
+    if forceEmpty then
+        bar:SetMinMaxValues(0, 1)
+        bar:SetValue(0)
+        return
+    end
+    if isSafe then
+        bar:SetMinMaxValues(0, (rawMax > 0) and rawMax or 1)
+        bar:SetValue(rawVal)
+        return
+    end
+    local okBar = false
+    if rawVal ~= nil and rawMax ~= nil then
+        local okMM = pcall(bar.SetMinMaxValues, bar, 0, rawMax)
+        if okMM then
+            okBar = pcall(bar.SetValue, bar, rawVal)
+        end
+    end
+    if not okBar and pctFn then
+        local okP, pct = pcall(pctFn, unit)
+        if okP and pct ~= nil then
+            local okP1 = pcall(bar.SetMinMaxValues, bar, 0, 1)
+            if okP1 then
+                okBar = pcall(bar.SetValue, bar, pct)
+            end
+        end
+    end
+    if not okBar then
+        bar:SetMinMaxValues(0, 1)
+        bar:SetValue(fallbackFull and 1 or 0)
+    end
+end
+
 local function UpdateGridMember(btn)
     if not btn then return end
     local unit = btn.unit
@@ -2263,32 +2327,7 @@ local function UpdateGridMember(btn)
         end
     end
 
-    local hp = 0
-    if UnitHealth then
-        local ok, v = pcall(UnitHealth, unit)
-        if ok and v then hp = v end
-    end
-    local maxHp = 1
-    if UnitHealthMax then
-        local ok, v = pcall(UnitHealthMax, unit)
-        if ok and v then maxHp = v end
-    end
-
-    local isSafeHp = true
-    if issecretvalue and issecretvalue(hp) then isSafeHp = false end
-    if issecretvalue and issecretvalue(maxHp) then isSafeHp = false end
-    if isSafeHp then
-        local okDiff = pcall(function() return maxHp - hp end)
-        if not okDiff then isSafeHp = false end
-    end
-    if not isSafeHp then
-        hp = 1
-        maxHp = 1
-    end
-    if maxHp <= 0 then maxHp = 1 end
-
-    btn.hpBar:SetMinMaxValues(0, maxHp)
-    btn.hpBar:SetValue(hp)
+    local rawHp, rawMaxHp, isSafeHp = ReadUnitBarValues(unit, UnitHealth, UnitHealthMax)
 
     local isDead = false
     local isGhost = false
@@ -2309,17 +2348,20 @@ local function UpdateGridMember(btn)
     end
 
     if not isConnected then
+        ApplyUnitStatusBarValues(btn.hpBar, unit, rawHp, rawMaxHp, isSafeHp, true, false, UnitHealthPercent)
         btn.hpBar:SetStatusBarColor(0.4, 0.4, 0.4)
         btn.hpBg:SetVertexColor(0.15, 0.15, 0.15, 0.9)
         btn.hpText:SetText("|cff888888Off|r")
     elseif isDead then
+        ApplyUnitStatusBarValues(btn.hpBar, unit, rawHp, rawMaxHp, isSafeHp, true, false, UnitHealthPercent)
         btn.hpBar:SetStatusBarColor(0.25, 0.25, 0.25)
         btn.hpBg:SetVertexColor(0.1, 0.1, 0.1, 0.9)
         btn.hpText:SetText(isGhost and "|cffaaaaaaFantasma|r" or "|cffff2020Morto|r")
     else
+        ApplyUnitStatusBarValues(btn.hpBar, unit, rawHp, rawMaxHp, isSafeHp, false, true, UnitHealthPercent)
         btn.hpBar:SetStatusBarColor(color.r, color.g, color.b)
         btn.hpBg:SetVertexColor(color.r * 0.22, color.g * 0.22, color.b * 0.22, 0.9)
-        local deficit = (isSafeHp and (maxHp - hp)) or 0
+        local deficit = (isSafeHp and (rawMaxHp - rawHp)) or 0
         if isSafeHp and deficit > 0 then
             if deficit >= 1000 then
                 btn.hpText:SetText(string.format("-%.1fk", deficit / 1000))
@@ -2332,31 +2374,8 @@ local function UpdateGridMember(btn)
         end
     end
 
-    local power = 0
-    if UnitPower then
-        local ok, v = pcall(UnitPower, unit)
-        if ok and v then power = v end
-    end
-    local maxPower = 1
-    if UnitPowerMax then
-        local ok, v = pcall(UnitPowerMax, unit)
-        if ok and v then maxPower = v end
-    end
-    local isSafePower = true
-    if issecretvalue and issecretvalue(power) then isSafePower = false end
-    if issecretvalue and issecretvalue(maxPower) then isSafePower = false end
-    if isSafePower then
-        local okDiff = pcall(function() return maxPower - power end)
-        if not okDiff then isSafePower = false end
-    end
-    if not isSafePower then
-        power = 0
-        maxPower = 1
-    end
-    if maxPower <= 0 then maxPower = 1 end
-
-    btn.powerBar:SetMinMaxValues(0, maxPower)
-    btn.powerBar:SetValue(power)
+    local rawPower, rawMaxPower, isSafePower = ReadUnitBarValues(unit, UnitPower, UnitPowerMax)
+    ApplyUnitStatusBarValues(btn.powerBar, unit, rawPower, rawMaxPower, isSafePower, (not isConnected or isDead), false, UnitPowerPercent)
 
     local powerType = 0
     if UnitPowerType then
@@ -3070,6 +3089,9 @@ evFrame:SetScript("OnEvent", function(self, event, arg1, ...)
         elseif event == "PLAYER_ENTERING_WORLD" or event == "GROUP_ROSTER_UPDATE" or event == "PARTY_MEMBERS_CHANGED"
             or event == "PARTY_LEADER_CHANGED" or event == "PARTY_MEMBER_ENABLE" or event == "PARTY_MEMBER_DISABLE"
             or event == "RAID_ROSTER_UPDATE" or event == "UNIT_CONNECTION" or event == "ZONE_CHANGED_NEW_AREA" then
+            if event == "GROUP_ROSTER_UPDATE" or event == "PARTY_MEMBERS_CHANGED" or event == "RAID_ROSTER_UPDATE" or event == "PLAYER_ENTERING_WORLD" then
+                lastGuidByUnit = {}
+            end
             UpdateAllPartyMembers()
             UpdateTargetFrame()
         elseif event == "UNIT_PORTRAIT_UPDATE" then
