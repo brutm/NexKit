@@ -2066,6 +2066,9 @@ frame:SetScript("OnEvent", function(self, event, arg1, arg2)
         local blockedAddon = tostring(arg1 or "nil")
         if blockedAddon == addonName or blockedAddon == "NexusKit" or blockedAddon == "NexKit" then
             local blockedFunc = tostring(arg2 or "nil")
+            if blockedFunc:find("SetPassThroughButtons", 1, true) then
+                return
+            end
             local stack = (debugstack and debugstack(2, 6, 6)) or ""
             if DEFAULT_CHAT_FRAME then
                 DEFAULT_CHAT_FRAME:AddMessage(string.format("|cffff2040[NexusKit Diagnostica]|r %s! Addon: %s | Action: %s", event, blockedAddon, blockedFunc))
