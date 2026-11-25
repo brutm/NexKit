@@ -1013,11 +1013,11 @@ local function SafeReadBuffAura(aura, unit)
 
     local safeName = IsSafeStr(rawName) and rawName or nil
     local safeSrc = IsSafeStr(rawSrc) and rawSrc or nil
-    local isPlayerBuff = false
+    local playerVerified = nil
     if IsAccessibleVal(isPlrAura) then
-        isPlayerBuff = (isPlrAura == true)
-    elseif safeSrc == "player" then
-        isPlayerBuff = true
+        playerVerified = (isPlrAura == true)
+    elseif safeSrc ~= nil then
+        playerVerified = (safeSrc == "player")
     end
 
     return {
@@ -1030,7 +1030,8 @@ local function SafeReadBuffAura(aura, unit)
         expirationTime = SafeNumber(rawExp, 0),
         durationObj    = durObj,
         source         = safeSrc,
-        isPlayerBuff   = isPlayerBuff,
+        isPlayerBuff   = (playerVerified == true),
+        playerVerified = playerVerified,
         spellId        = SafeNumber(rawSpell, nil),
         rawInstanceID  = rawInstId,
     }
@@ -1056,7 +1057,19 @@ local function ClassifyDBMBuff(unit, f, filterPrio, filterCat, isPlayerFilter)
         knownAuraMetaByUnit[guidKey] = unitMeta
     end
 
-    if isPlayerFilter then
+    -- Never allow an aura explicitly flagged as non-player, even if a compound filter
+    -- ("HELPFUL|PLAYER") failed to filter it out on this client/server.
+    if f.playerVerified == false then
+        if isPlayerFilter then
+            FP.nkPlayerBuffFilterBroken = true
+        end
+        if unitMeta and instKey then
+            unitMeta[instKey] = { ignored = true }
+        end
+        return nil, nil
+    end
+
+    if f.playerVerified == true then
         f.isPlayerBuff = true
     end
 
@@ -1067,11 +1080,13 @@ local function ClassifyDBMBuff(unit, f, filterPrio, filterCat, isPlayerFilter)
             return nil, nil
         end
 
-        -- Only show buffs cast by the player
-        if not f.isPlayerBuff and not isPlayerFilter then
+        -- Only allow confirmed player-cast buffs
+        local allowByFilter = isPlayerFilter and not FP.nkPlayerBuffFilterBroken and (f.playerVerified == nil)
+        if not f.isPlayerBuff and not allowByFilter then
             if unitMeta and instKey then unitMeta[instKey] = { ignored = true } end
             return nil, nil
         end
+        f.isPlayerBuff = true
 
         local match = IMPORTANT_COMBAT_BUFFS[rName] or (sid and IMPORTANT_COMBAT_IDS[sid])
         if match then
@@ -1108,16 +1123,23 @@ local function ClassifyDBMBuff(unit, f, filterPrio, filterCat, isPlayerFilter)
         end
     end
 
-    if not f.isPlayerBuff and not isPlayerFilter then
-        if C_UnitAuras and C_UnitAuras.IsAuraFilteredOutByInstanceID and f.rawInstanceID ~= nil then
+    if f.playerVerified == true then
+        f.isPlayerBuff = true
+    elseif not FP.nkPlayerBuffFilterBroken then
+        if isPlayerFilter then
+            f.isPlayerBuff = true
+        elseif C_UnitAuras and C_UnitAuras.IsAuraFilteredOutByInstanceID and f.rawInstanceID ~= nil then
             local okP, outPlr = pcall(C_UnitAuras.IsAuraFilteredOutByInstanceID, unit, f.rawInstanceID, "HELPFUL|PLAYER")
-            if not (okP and IsAccessibleVal(outPlr) and outPlr == false) then
+            if okP and IsAccessibleVal(outPlr) and outPlr == false then
+                f.isPlayerBuff = true
+            else
                 return nil, nil
             end
-            f.isPlayerBuff = true
         else
             return nil, nil
         end
+    else
+        return nil, nil
     end
 
     local dur = f.duration or 0
@@ -2072,13 +2094,13 @@ for i = 1, 5 do
     hpText:SetJustifyH("RIGHT")
     btn.hpText = hpText
 
-    -- HoT / Buff Icons (3 slots along the bottom row next to level; crisp 1px BackdropTemplate border)
+    -- Player Buff Icons (3 slots placed cleanly OUTSIDE to the right of the health bar)
     btn.buffSlots = {}
     for b = 1, 3 do
-        local bBtn = CreateFrame("Button", nil, hpBar, "BackdropTemplate")
-        bBtn:SetSize(16, 16)
-        bBtn:SetFrameLevel(hpBar:GetFrameLevel() + 5)
-        bBtn:SetPoint("BOTTOMLEFT", hpBar, "BOTTOMLEFT", 24 + (b - 1) * 18, 2)
+        local bBtn = CreateFrame("Button", nil, btn, "BackdropTemplate")
+        bBtn:SetSize(18, 18)
+        bBtn:SetFrameLevel(btn:GetFrameLevel() + 5)
+        bBtn:SetPoint("LEFT", btn, "RIGHT", 5 + (b - 1) * 20, 0)
         bBtn:SetBackdrop({
             bgFile = "Interface\\Buttons\\WHITE8x8",
             edgeFile = "Interface\\Buttons\\WHITE8x8",
