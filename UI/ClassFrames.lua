@@ -1044,10 +1044,11 @@ local function ClassifyDBMBuff(unit, f, filterPrio, filterCat, isPlayerFilter)
     local rName = f.readableName
     local sid = f.spellId
     local instKey = IsAccessibleVal(f.rawInstanceID) and f.rawInstanceID or nil
-    local unitMeta = unit and knownAuraMetaByUnit[unit]
-    if not unitMeta and unit then
+    local guidKey = SafeUnitGUID(unit) or unit
+    local unitMeta = guidKey and knownAuraMetaByUnit[guidKey]
+    if not unitMeta and guidKey then
         unitMeta = {}
-        knownAuraMetaByUnit[unit] = unitMeta
+        knownAuraMetaByUnit[guidKey] = unitMeta
     end
 
     if isPlayerFilter then
@@ -1071,7 +1072,7 @@ local function ClassifyDBMBuff(unit, f, filterPrio, filterCat, isPlayerFilter)
         if match then
             local prio = math.max(filterPrio or 0, match.prio)
             local cat = (filterPrio and filterPrio >= 95 and filterCat) or match.cat
-            if unitMeta and instKey then unitMeta[instKey] = { prio = prio, cat = cat } end
+            if unitMeta and instKey then unitMeta[instKey] = { prio = prio, cat = cat, mine = true } end
             return prio, cat
         end
 
@@ -1079,14 +1080,14 @@ local function ClassifyDBMBuff(unit, f, filterPrio, filterCat, isPlayerFilter)
         if dur > 0 and dur <= 125 then
             local prio = math.max(filterPrio or 0, 60)
             local cat = filterCat or "COMBAT"
-            if unitMeta and instKey then unitMeta[instKey] = { prio = prio, cat = cat } end
+            if unitMeta and instKey then unitMeta[instKey] = { prio = prio, cat = cat, mine = true } end
             return prio, cat
         end
 
         -- Player-cast party buff (e.g. Blessings, Fortitude, MotW, Intellect) at prio 40
         local prio = math.max(filterPrio or 0, 40)
         local cat = filterCat or "PLAYER_BUFF"
-        if unitMeta and instKey then unitMeta[instKey] = { prio = prio, cat = cat } end
+        if unitMeta and instKey then unitMeta[instKey] = { prio = prio, cat = cat, mine = true } end
         return prio, cat
     end
 
@@ -1096,7 +1097,8 @@ local function ClassifyDBMBuff(unit, f, filterPrio, filterCat, isPlayerFilter)
         if cached.ignored then
             return nil, nil
         end
-        if cached.prio then
+        if cached.mine and cached.prio then
+            f.isPlayerBuff = true
             return math.max(filterPrio or 0, cached.prio), cached.cat or filterCat or "PLAYER_BUFF"
         end
     end
@@ -1175,6 +1177,7 @@ local function GetPartyUnitBuffs(unit)
 
         CollectFiltered("HELPFUL|PLAYER|RAID_IN_COMBAT", 75, "HOT", true)
         CollectFiltered("HELPFUL|PLAYER", 0, nil, true)
+        CollectFiltered("HELPFUL", 0, nil, false)
     elseif UnitBuff then
         for i = 1, 32 do
             local okB, bName, bIcon, bCount, _, bDur, bExp, bSrc, _, _, bSpellId = pcall(UnitBuff, unit, i)
@@ -2069,6 +2072,7 @@ for i = 1, 5 do
     for b = 1, 3 do
         local bBtn = CreateFrame("Button", nil, hpBar, "BackdropTemplate")
         bBtn:SetSize(16, 16)
+        bBtn:SetFrameLevel(hpBar:GetFrameLevel() + 4)
         bBtn:SetPoint("BOTTOMLEFT", hpBar, "BOTTOMLEFT", 24 + (b - 1) * 18, 2)
         bBtn:SetBackdrop({
             bgFile = "Interface\\Buttons\\WHITE8x8",
