@@ -650,33 +650,44 @@ local function InspectUnitTooltip(unit, lowerName)
     end
 
     local lines = {}
-    if C_TooltipInfo and C_TooltipInfo.GetUnit then
+    local hasModernTooltipAPI = (C_TooltipInfo and type(C_TooltipInfo.GetUnit) == "function")
+    if hasModernTooltipAPI then
         local data = SafeCall(C_TooltipInfo.GetUnit, unit)
-        if type(data) == "table" and type(data.lines) == "table" and #data.lines > 0 then
+        if type(data) == "table" and type(data.lines) == "table" then
             for lineIdx, line in ipairs(data.lines) do
                 if lineIdx > 1 and type(line) == "table" and Plain(line.leftText) and line.leftText ~= "" then
+                    local safeId = IsAccessible(line.id) and line.id or nil
+                    local safeCompleted = IsAccessible(line.completed) and (line.completed == true) or false
                     lines[#lines + 1] = {
                         text = line.leftText,
-                        lineType = line.type,
-                        lineQid = (type(line.id) == "number" and line.id > 0) and line.id or nil,
-                        completed = (line.completed == true),
+                        lineType = IsAccessible(line.type) and line.type or nil,
+                        lineQid = (type(safeId) == "number" and safeId > 0) and safeId or nil,
+                        completed = safeCompleted,
                     }
                 end
             end
         end
     end
 
-    if #lines == 0 then
-        local st = GetScanTooltip()
-        st:ClearLines()
-        local ok = pcall(st.SetUnit, st, unit)
-        if ok then
-            local n = st:NumLines() or 0
-            for i = 2, n do
-                local fs = _G["NexusKitScanTooltipTextLeft" .. i]
-                local txt = fs and fs:GetText()
-                if txt and txt ~= "" then
-                    lines[#lines + 1] = { text = txt }
+    -- Legacy scan tooltip fallback is strictly for clients without C_TooltipInfo.GetUnit.
+    -- On Retail/Midnight 12.0+, GameTooltip:SetUnit drives TooltipDataHandler/StatusBar:SetWatch
+    -- on potentially <secret string> GUIDs, causing Blizzard taint inside securecallfunction.
+    if #lines == 0 and not hasModernTooltipAPI and not (InCombatLockdown and InCombatLockdown()) then
+        local unitGuid = UnitGUID and SafeCall(UnitGUID, unit)
+        if Plain(unitGuid) then
+            local st = GetScanTooltip()
+            st:ClearLines()
+            local ok = pcall(st.SetUnit, st, unit)
+            if ok then
+                local n = st:NumLines()
+                if IsAccessible(n) and IsSafeNum(n) then
+                    for i = 2, n do
+                        local fs = _G["NexusKitScanTooltipTextLeft" .. i]
+                        local txt = fs and fs:GetText()
+                        if Plain(txt) and txt ~= "" then
+                            lines[#lines + 1] = { text = txt }
+                        end
+                    end
                 end
             end
         end
