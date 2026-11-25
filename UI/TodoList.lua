@@ -479,12 +479,13 @@ local function GetOrCreateTaskRow(index)
     end)
     row.editBtn = editBtn
 
-    -- Task text
+    -- Task text (wraps cleanly across multiple lines for long notes)
     local textFs = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     textFs:SetPoint("LEFT", checkBtn, "RIGHT", 8, 0)
     textFs:SetPoint("RIGHT", editBtn, "LEFT", -4, 0)
     textFs:SetJustifyH("LEFT")
-    textFs:SetWordWrap(false)
+    textFs:SetJustifyV("MIDDLE")
+    textFs:SetWordWrap(true)
     row.textFs = textFs
 
     -- Inline EditBox
@@ -905,6 +906,7 @@ function FP:RefreshTodoListUI()
         emptyFs:Hide()
     end
 
+    local yOffset = 0
     for i, t in ipairs(filtered) do
         local row = GetOrCreateTaskRow(i)
         row.task = t
@@ -914,6 +916,14 @@ function FP:RefreshTodoListUI()
             row.textFs:Show()
         end
         row.textFs:SetText(t.text or "?")
+
+        local textH = row.textFs:GetStringHeight() or 14
+        local rowH = math.max(26, math.ceil(textH) + 10)
+        row:ClearAllPoints()
+        row:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 0, -yOffset)
+        row:SetPoint("RIGHT", scrollChild, "RIGHT", 0, 0)
+        row:SetHeight(rowH)
+        yOffset = yOffset + rowH + 2
 
         if t.done then
             row.checkMark:Show()
@@ -950,7 +960,7 @@ function FP:RefreshTodoListUI()
         taskRows[i]:Hide()
     end
 
-    local totalHeight = math.max(1, #filtered * 28)
+    local totalHeight = math.max(1, yOffset)
     scrollChild:SetHeight(totalHeight)
 
     self:RefreshTodoHUD()
