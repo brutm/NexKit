@@ -440,6 +440,7 @@ local DISPEL_COLORS = {
 local keybindCache = {}
 local actionSlotCache = {}
 local dispelCache = nil
+local dispelColorCurveCache = nil
 
 function FP:InvalidateSpellKeybindCache()
     for k in pairs(keybindCache) do
@@ -452,6 +453,7 @@ end
 
 function FP:InvalidateDispelCache()
     dispelCache = nil
+    dispelColorCurveCache = nil
 end
 
 local function ScanActionBarForSpell(spellID)
@@ -1004,6 +1006,86 @@ function FP:GetPlayerDispelInfo()
         canDispelAny   = (next(schools) ~= nil),
     }
     return dispelCache
+end
+
+function FP:GetDispelColorCurve()
+    if dispelColorCurveCache ~= nil then
+        return dispelColorCurveCache or nil
+    end
+    if not (C_CurveUtil and C_CurveUtil.CreateColorCurve and Enum and Enum.LuaCurveType and Enum.LuaCurveType.Step and Enum.AuraDispelType and CreateColor) then
+        dispelColorCurveCache = false
+        return nil
+    end
+    local ok, curve = pcall(C_CurveUtil.CreateColorCurve)
+    if not ok or not curve then
+        dispelColorCurveCache = false
+        return nil
+    end
+    pcall(curve.SetType, curve, Enum.LuaCurveType.Step)
+    local dt = Enum.AuraDispelType
+    local transparent = CreateColor(0, 0, 0, 0)
+    if dt.None ~= nil then pcall(curve.AddPoint, curve, dt.None, transparent) end
+    if dt.Bleed ~= nil then pcall(curve.AddPoint, curve, dt.Bleed, transparent) end
+
+    local info = self:GetPlayerDispelInfo()
+    local schools = (info and info.schools) or {}
+    local function AddSchool(enumKey, schoolName)
+        local eVal = dt[enumKey]
+        if eVal == nil then return end
+        if schools[schoolName] then
+            local c = DISPEL_COLORS[schoolName] or DISPEL_COLORS.Magic
+            pcall(curve.AddPoint, curve, eVal, CreateColor(c.r, c.g, c.b, 1.0))
+        else
+            pcall(curve.AddPoint, curve, eVal, transparent)
+        end
+    end
+    AddSchool("Magic", "Magic")
+    AddSchool("Curse", "Curse")
+    AddSchool("Disease", "Disease")
+    AddSchool("Poison", "Poison")
+
+    dispelColorCurveCache = curve
+    return curve
+end
+
+function FP:AreAllHUDsUnlocked()
+    local s = NexusKitDB and NexusKitDB.settings
+    if not s then return false end
+    return s.gridPartyLocked == false
+        and s.rotationLocked == false
+        and s.dispelAlertLocked == false
+end
+
+function FP:SetAllHUDsUnlocked(unlocked)
+    local s = NexusKitDB and NexusKitDB.settings
+    if not s then return end
+    if unlocked and InCombatLockdown and InCombatLockdown() then
+        FP:Print("|cffff5555Non puoi sbloccare e spostare tutte le finestre durante il combattimento.|r")
+        return
+    end
+    local locked = not (unlocked == true)
+    s.locked = locked
+    s.arrowLocked = locked
+    s.reagentHudLocked = locked
+    s.gridPartyLocked = locked
+    s.rotationLocked = locked
+    s.dispelAlertLocked = locked
+
+    if self.RefreshTracker then self:RefreshTracker() end
+    if self.RefreshArrowLockVisual then self:RefreshArrowLockVisual() end
+    if self.RefreshBuffAdvisor then self:RefreshBuffAdvisor() end
+    if self.RefreshReagentHudLock then self:RefreshReagentHudLock() end
+    if self.RefreshPartyGridLock then self:RefreshPartyGridLock() end
+    if self.RefreshClassFrames then self:RefreshClassFrames() end
+    if self.RefreshRotationAdvisor then self:RefreshRotationAdvisor() end
+    if self.RefreshDispelAlert then self:RefreshDispelAlert() end
+    if self.RefreshSettingsUI then self:RefreshSettingsUI() end
+
+    if unlocked then
+        FP:Print("|cff00ff96Modalità Sposta Finestre: ATTIVA.|r Trascina le finestre dall'icona o dal riquadro, poi riblocca dal menu sulla minimappa.")
+    else
+        FP:Print("|cffffaa00Modalità Sposta Finestre: BLOCCATA.|r Tutte le finestre sono state fissate.")
+    end
 end
 
 local sharedCacheFrame = CreateFrame("Frame")

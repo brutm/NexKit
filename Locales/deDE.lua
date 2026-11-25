@@ -419,6 +419,7 @@ FP.Locales["deDE"] = {
     MINIMAP_MENU_CFG_PROF            = "Berufe konfigurieren...",
     MINIMAP_MENU_ROTATION            = "Zauber-Rotationsberater",
     MINIMAP_MENU_SEC_CONFIG          = "KONFIGURATION",
+    MINIMAP_MENU_UNLOCK_ALL          = "Fenster entsperren / verschieben",
     MINIMAP_MENU_SEC_WIDGETS         = "AKTIVE WIDGETS & HUDS",
     MINIMAP_MENU_SEC_WINDOWS         = "FENSTER & GUIDES",
     MINIMAP_MENU_TODO                = "To-Do-Liste / Notizen",

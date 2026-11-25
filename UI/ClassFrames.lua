@@ -814,32 +814,44 @@ local function GetPartyUnitDebuffs(unit)
     local fallbackSchool = (dispels and dispels["Magic"]) and "Magic" or (next(dispels or {}) or "Magic")
 
     -- Collect combat-safe dispellable instance IDs from Midnight native filter first
+    local knownDebuffSchools = FP.nkKnownDebuffSchools
+    if not knownDebuffSchools then
+        knownDebuffSchools = {}
+        FP.nkKnownDebuffSchools = knownDebuffSchools
+    end
     local filterDispellableIDs = {}
     local filterEntries = {}
     if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
-        for i = 1, 16 do
-            local okF, aura = pcall(C_UnitAuras.GetAuraDataByIndex, unit, i, "HARMFUL|RAID_PLAYER_DISPELLABLE")
-            if not okF or type(aura) ~= "table" then break end
-            local f = SafeReadDebuffAura(unit, aura)
-            local dSchool = (f.safeType and dispels and dispels[f.safeType]) and f.safeType or fallbackSchool
-            if f.safeInstanceID then
-                filterDispellableIDs[f.safeInstanceID] = dSchool
+        for _, passFilter in ipairs({ "HARMFUL|RAID_PLAYER_DISPELLABLE", "RAID_PLAYER_DISPELLABLE" }) do
+            for i = 1, 16 do
+                local okF, aura = pcall(C_UnitAuras.GetAuraDataByIndex, unit, i, passFilter)
+                if not okF or type(aura) ~= "table" then break end
+                local f = SafeReadDebuffAura(unit, aura)
+                if not (f.safeInstanceID and filterDispellableIDs[f.safeInstanceID]) then
+                    local dSchool = (f.safeType and dispels and dispels[f.safeType]) and f.safeType
+                        or (f.safeInstanceID and knownDebuffSchools[f.safeInstanceID] and dispels and dispels[knownDebuffSchools[f.safeInstanceID]] and knownDebuffSchools[f.safeInstanceID])
+                        or fallbackSchool
+                    if f.safeInstanceID then
+                        filterDispellableIDs[f.safeInstanceID] = dSchool
+                        if f.safeType then knownDebuffSchools[f.safeInstanceID] = f.safeType end
+                    end
+                    filterEntries[#filterEntries + 1] = {
+                        index = i,
+                        auraFilter = passFilter,
+                        rawInstanceID = f.rawInstanceID,
+                        name = f.safeName,
+                        icon = f.icon,
+                        rawIcon = f.rawIcon,
+                        count = f.count,
+                        dispelType = dSchool,
+                        canDispel = true,
+                        duration = f.duration,
+                        expirationTime = f.expirationTime,
+                        durationObj = f.durationObj,
+                        spellId = f.spellId,
+                    }
+                end
             end
-            filterEntries[#filterEntries + 1] = {
-                index = i,
-                auraFilter = "HARMFUL|RAID_PLAYER_DISPELLABLE",
-                rawInstanceID = f.rawInstanceID,
-                name = f.safeName,
-                icon = f.icon,
-                rawIcon = f.rawIcon,
-                count = f.count,
-                dispelType = dSchool,
-                canDispel = true,
-                duration = f.duration,
-                expirationTime = f.expirationTime,
-                durationObj = f.durationObj,
-                spellId = f.spellId,
-            }
         end
     end
 
@@ -849,16 +861,22 @@ local function GetPartyUnitDebuffs(unit)
             local okC, aura = pcall(C_UnitAuras.GetAuraDataByIndex, unit, i, "HARMFUL")
             if not okC or type(aura) ~= "table" then break end
             local f = SafeReadDebuffAura(unit, aura)
-            local safeType = f.safeType
+            if f.safeInstanceID and f.safeType then
+                knownDebuffSchools[f.safeInstanceID] = f.safeType
+            end
+            local safeType = f.safeType or (f.safeInstanceID and knownDebuffSchools[f.safeInstanceID]) or nil
             local canDispel = (safeType ~= nil and dispels and dispels[safeType] == true) or false
             if not canDispel and f.safeInstanceID and filterDispellableIDs[f.safeInstanceID] then
                 canDispel = true
                 safeType = safeType or filterDispellableIDs[f.safeInstanceID]
             elseif not canDispel and f.rawInstanceID ~= nil and C_UnitAuras.IsAuraFilteredOutByInstanceID then
-                local okFo, fo = pcall(C_UnitAuras.IsAuraFilteredOutByInstanceID, unit, f.rawInstanceID, "HARMFUL|RAID_PLAYER_DISPELLABLE")
-                if okFo and not IsSecretVal(fo) and fo == false then
-                    canDispel = true
-                    safeType = safeType or fallbackSchool
+                for _, flt in ipairs({ "HARMFUL|RAID_PLAYER_DISPELLABLE", "RAID_PLAYER_DISPELLABLE", "HARMFUL|PLAYER_DISPELLABLE", "PLAYER_DISPELLABLE" }) do
+                    local okFo, fo = pcall(C_UnitAuras.IsAuraFilteredOutByInstanceID, unit, f.rawInstanceID, flt)
+                    if okFo and not IsSecretVal(fo) and fo == false then
+                        canDispel = true
+                        safeType = safeType or fallbackSchool
+                        break
+                    end
                 end
             end
             if canDispel then anyCanDispelFound = true end
@@ -1700,126 +1718,137 @@ local gridMembers = {}
 local gridContainer = CreateFrame("Frame", "NexusKitPartyGrid", UIParent)
 gridContainer:SetSize(114, 240)
 gridContainer:SetClampedToScreen(true)
-gridContainer:SetMovable(true)
 gridContainer:EnableMouse(false)
 gridContainer:SetPoint("LEFT", UIParent, "LEFT", 30, 40)
 gridContainer:Hide()
 
-local function CommitGridMove()
-    gridContainer:StopMovingOrSizing()
-    local point, _, relPoint, x, y = gridContainer:GetPoint()
-    if point and relPoint and x and y then
-        local s = GetSettings()
-        s.gridPartyPos = { point = point, relPoint = relPoint, x = x, y = y }
-        gridContainer.posLoaded = true
-    end
-end
-
--- Unlocked full drag bar
-local dragBar = CreateFrame("Frame", nil, gridContainer, "BackdropTemplate")
-dragBar:SetSize(114, 18)
-dragBar:SetPoint("BOTTOMLEFT", gridContainer, "TOPLEFT", 0, 2)
-dragBar:SetBackdrop({
+-- Unprotected mover overlay (parented to UIParent with ZERO SecureUnitButtonTemplate children)
+-- so dragging NEVER calls StartMoving/StopMovingOrSizing on NexusKitPartyGrid itself.
+local gridMover = CreateFrame("Frame", "NKPartyGridMover", UIParent, "BackdropTemplate")
+gridMover:SetSize(114, 44)
+gridMover:SetPoint("TOPLEFT", gridContainer, "TOPLEFT", 0, 0)
+gridMover:SetFrameStrata("DIALOG")
+gridMover:SetFrameLevel(40)
+gridMover:SetClampedToScreen(true)
+gridMover:SetMovable(true)
+gridMover:EnableMouse(true)
+gridMover:RegisterForDrag("LeftButton")
+gridMover:SetBackdrop({
     bgFile = "Interface\\Buttons\\WHITE8x8",
     edgeFile = "Interface\\Buttons\\WHITE8x8",
-    edgeSize = 1,
+    edgeSize = 1.5,
 })
-dragBar:SetBackdropColor(0.08, 0.08, 0.08, 0.90)
-dragBar:SetBackdropBorderColor(0.0, 0.85, 0.55, 0.95)
+gridMover:SetBackdropColor(0.0, 0.85, 0.55, 0.14)
+gridMover:SetBackdropBorderColor(0.0, 0.90, 0.58, 0.92)
+gridMover:Hide()
 
-local dragText = dragBar:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-dragText:SetPoint("LEFT", dragBar, "LEFT", 5, 0)
-dragText:SetText("Party [Trascina]")
-dragText:SetTextColor(0, 1, 0.6, 1)
-
-local lockQuickBtn = CreateFrame("Button", nil, dragBar, "BackdropTemplate")
-lockQuickBtn:SetSize(34, 14)
-lockQuickBtn:SetPoint("RIGHT", dragBar, "RIGHT", -2, 0)
-lockQuickBtn:SetBackdrop({
-    bgFile = "Interface\\Buttons\\WHITE8x8",
-    edgeFile = "Interface\\Buttons\\WHITE8x8",
-    edgeSize = 1,
-})
-lockQuickBtn:SetBackdropColor(0.16, 0.22, 0.28, 0.95)
-lockQuickBtn:SetBackdropBorderColor(0.35, 0.45, 0.55, 1)
-local lockQuickTxt = lockQuickBtn:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-lockQuickTxt:SetPoint("CENTER", 0, 0)
-lockQuickTxt:SetText("Blocca")
-local lqFont = lockQuickTxt:GetFont()
-if lqFont then lockQuickTxt:SetFont(lqFont, 8, "OUTLINE") end
-lockQuickBtn:SetScript("OnClick", function()
+local gridMoverIconBtn = CreateFrame("Button", nil, gridMover)
+gridMoverIconBtn:SetSize(16, 16)
+gridMoverIconBtn:SetPoint("TOPLEFT", gridMover, "TOPLEFT", -3, 3)
+gridMoverIconBtn:SetNormalTexture("Interface\\Buttons\\LockButton-Unlocked-Up")
+gridMoverIconBtn:SetHighlightTexture("Interface\\Buttons\\LockButton-Highlight")
+if FP.CropButtonTextures then FP:CropButtonTextures(gridMoverIconBtn, 0.15) end
+gridMoverIconBtn:SetScript("OnClick", function()
     if InCombatLockdown and InCombatLockdown() then return end
     GetSettings().gridPartyLocked = true
     FP:RefreshPartyGridLock()
     if FP.RefreshSettingsUI then FP:RefreshSettingsUI() end
 end)
 
-dragBar:EnableMouse(true)
-dragBar:RegisterForDrag("LeftButton")
-dragBar:SetScript("OnDragStart", function()
+local function SyncGridMoverToContainer()
     if InCombatLockdown and InCombatLockdown() then return end
-    gridContainer:StartMoving()
-end)
-dragBar:SetScript("OnDragStop", function()
-    CommitGridMove()
-end)
-dragBar:Hide()
+    if gridMover.nkDragging then return end
+    gridMover:ClearAllPoints()
+    gridMover:SetSize(gridContainer:GetWidth() or 114, gridContainer:GetHeight() or 44)
+    gridMover:SetScale(gridContainer:GetScale() or 1.0)
+    gridMover:SetPoint("TOPLEFT", gridContainer, "TOPLEFT", 0, 0)
+end
 
--- Compact always-accessible top handle pill (allows dragging the party grid immediately out of combat!)
-local gridHandle = CreateFrame("Button", nil, gridContainer, "BackdropTemplate")
-gridHandle:SetSize(44, 13)
-gridHandle:SetPoint("BOTTOMLEFT", gridContainer, "TOPLEFT", 0, 2)
-gridHandle:SetBackdrop({
-    bgFile = "Interface\\Buttons\\WHITE8x8",
-    edgeFile = "Interface\\Buttons\\WHITE8x8",
-    edgeSize = 1,
-})
-gridHandle:SetBackdropColor(0.06, 0.08, 0.12, 0.80)
-gridHandle:SetBackdropBorderColor(0.35, 0.70, 0.95, 0.75)
-gridHandle:SetAlpha(0.45)
-
-local handleTxt = gridHandle:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-handleTxt:SetPoint("CENTER", 0, 0)
-handleTxt:SetText("Sposta")
-local hFont = handleTxt:GetFont()
-if hFont then handleTxt:SetFont(hFont, 8, "OUTLINE") end
-handleTxt:SetTextColor(0.85, 0.95, 1.0, 1)
-
-gridHandle:RegisterForDrag("LeftButton")
-gridHandle:SetScript("OnEnter", function(self)
-    self:SetAlpha(1.0)
-    if GameTooltip and not (GameTooltip.IsForbidden and GameTooltip:IsForbidden()) then
-        GameTooltip:SetOwner(self, "ANCHOR_TOPLEFT")
-        GameTooltip:SetText("Griglia Party", 0.2, 0.85, 1.0)
-        GameTooltip:AddLine("Trascina con il tasto sinistro per spostare.", 1, 1, 1)
-        GameTooltip:AddLine("Clicca per mostrare/nascondere la barra fissa.", 0.75, 0.8, 0.85)
-        GameTooltip:Show()
-    end
-end)
-gridHandle:SetScript("OnLeave", function(self)
-    self:SetAlpha(0.45)
-    if GameTooltip then GameTooltip:Hide() end
-end)
-gridHandle:SetScript("OnDragStart", function(self)
-    if InCombatLockdown and InCombatLockdown() then return end
-    self.lastDragAt = GetTime and GetTime() or 0
-    gridContainer:StartMoving()
-end)
-gridHandle:SetScript("OnDragStop", function(self)
-    self.lastDragAt = GetTime and GetTime() or 0
-    CommitGridMove()
-end)
-gridHandle:SetScript("OnClick", function(self)
-    local now = GetTime and GetTime() or 0
-    if self.lastDragAt and (now - self.lastDragAt) < 0.25 then
-        return
+local function CommitGridMoverPosition()
+    if gridMover.nkDragging then
+        gridMover:SetScript("OnUpdate", nil)
+        gridMover.nkDragging = false
+        pcall(gridMover.StopMovingOrSizing, gridMover)
     end
     if InCombatLockdown and InCombatLockdown() then return end
-    local s = GetSettings()
-    s.gridPartyLocked = not (s.gridPartyLocked ~= false)
-    FP:RefreshPartyGridLock()
-    if FP.RefreshSettingsUI then FP:RefreshSettingsUI() end
+    local left, top = gridMover:GetLeft(), gridMover:GetTop()
+    if left and top then
+        local s = GetSettings()
+        s.gridPartyPos = { point = "TOPLEFT", relPoint = "BOTTOMLEFT", x = left, y = top }
+        gridContainer.posLoaded = true
+        gridContainer:ClearAllPoints()
+        gridContainer:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", left, top)
+        SyncGridMoverToContainer()
+    end
+end
+
+gridMover:SetScript("OnDragStart", function(self)
+    if InCombatLockdown and InCombatLockdown() then return end
+    self.nkDragging = true
+    self:ClearAllPoints()
+    self:StartMoving()
+    self:SetScript("OnUpdate", function(mv)
+        if InCombatLockdown and InCombatLockdown() then
+            mv:SetScript("OnUpdate", nil)
+            mv.nkDragging = false
+            pcall(mv.StopMovingOrSizing, mv)
+            mv:Hide()
+            return
+        end
+        local l, t = mv:GetLeft(), mv:GetTop()
+        if l and t then
+            gridContainer:ClearAllPoints()
+            gridContainer:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", l, t)
+        end
+    end)
 end)
+gridMover:SetScript("OnDragStop", function()
+    CommitGridMoverPosition()
+end)
+
+-- Pure C++ 4-edge texture overlay so Blizzard's ColorCurve secret RGBA values can tint borders
+-- via Texture:SetVertexColor() without running Backdrop.lua Lua comparisons.
+local function CreateEdgeBorderOverlay(parent, thickness, outset, frameLevel)
+    local holder = CreateFrame("Frame", nil, parent)
+    holder:SetPoint("TOPLEFT", parent, "TOPLEFT", -outset, outset)
+    holder:SetPoint("BOTTOMRIGHT", parent, "BOTTOMRIGHT", outset, -outset)
+    holder:SetFrameLevel(frameLevel)
+    local t = holder:CreateTexture(nil, "OVERLAY")
+    t:SetTexture("Interface\\Buttons\\WHITE8x8")
+    t:SetPoint("TOPLEFT", holder, "TOPLEFT", 0, 0)
+    t:SetPoint("TOPRIGHT", holder, "TOPRIGHT", 0, 0)
+    t:SetHeight(thickness)
+    local b = holder:CreateTexture(nil, "OVERLAY")
+    b:SetTexture("Interface\\Buttons\\WHITE8x8")
+    b:SetPoint("BOTTOMLEFT", holder, "BOTTOMLEFT", 0, 0)
+    b:SetPoint("BOTTOMRIGHT", holder, "BOTTOMRIGHT", 0, 0)
+    b:SetHeight(thickness)
+    local l = holder:CreateTexture(nil, "OVERLAY")
+    l:SetTexture("Interface\\Buttons\\WHITE8x8")
+    l:SetPoint("TOPLEFT", holder, "TOPLEFT", 0, 0)
+    l:SetPoint("BOTTOMLEFT", holder, "BOTTOMLEFT", 0, 0)
+    l:SetWidth(thickness)
+    local r = holder:CreateTexture(nil, "OVERLAY")
+    r:SetTexture("Interface\\Buttons\\WHITE8x8")
+    r:SetPoint("TOPRIGHT", holder, "TOPRIGHT", 0, 0)
+    r:SetPoint("BOTTOMRIGHT", holder, "BOTTOMRIGHT", 0, 0)
+    r:SetWidth(thickness)
+    holder.edges = { t, b, l, r }
+    holder:Hide()
+    return holder
+end
+
+local function ApplySecretBorderColor(overlay, colorObj)
+    if not overlay then return end
+    if colorObj and colorObj.GetRGBA then
+        for _, edge in ipairs(overlay.edges) do
+            pcall(edge.SetVertexColor, edge, colorObj:GetRGBA())
+        end
+        overlay:Show()
+    else
+        overlay:Hide()
+    end
+end
 
 local function CheckUnitRange(unit)
     if not unit then return false end
@@ -1935,6 +1964,11 @@ for i = 1, 5 do
     dispelBorder:SetBackdropBorderColor(0.20, 0.65, 1.00, 1.00)
     dispelBorder:Hide()
     btn.dispelBorder = dispelBorder
+
+    btn.secretDispelLayers = {}
+    for dl = 1, 4 do
+        btn.secretDispelLayers[dl] = CreateEdgeBorderOverlay(btn, 2.5, 2, btn:GetFrameLevel() + 7 + dl)
+    end
 
     -- Health Bar
     local hpBar = CreateFrame("StatusBar", nil, btn)
@@ -2078,6 +2112,7 @@ for i = 1, 5 do
         local countFs = overlay:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
         countFs:SetPoint("BOTTOMRIGHT", dBtn, "BOTTOMRIGHT", 2, -1)
         dBtn.countFs = countFs
+        dBtn.secretOverlay = CreateEdgeBorderOverlay(dBtn, 1.5, 0, overlay:GetFrameLevel() + 2)
 
         dBtn:SetScript("OnEnter", function(self)
             if not self.unit then return end
@@ -2364,13 +2399,32 @@ local function UpdateGridMember(btn)
             break
         end
     end
+    local dispelCurve = FP.GetDispelColorCurve and FP:GetDispelColorCurve() or nil
     if btn.dispelBorder then
         if firstDispellable then
             local dCol = DISPEL_COLORS[firstDispellable.dispelType] or DISPEL_COLORS["Magic"]
             btn.dispelBorder:SetBackdropBorderColor(dCol.r, dCol.g, dCol.b, 1.0)
             btn.dispelBorder:Show()
+            if btn.secretDispelLayers then
+                for dl = 1, #btn.secretDispelLayers do btn.secretDispelLayers[dl]:Hide() end
+            end
         else
             btn.dispelBorder:Hide()
+            if btn.secretDispelLayers then
+                for dl = 1, #btn.secretDispelLayers do
+                    local deb = debuffs[dl]
+                    if deb and deb.rawInstanceID ~= nil and dispelCurve and C_UnitAuras and C_UnitAuras.GetAuraDispelTypeColor then
+                        local okC, colObj = pcall(C_UnitAuras.GetAuraDispelTypeColor, unit, deb.rawInstanceID, dispelCurve)
+                        if okC and colObj then
+                            ApplySecretBorderColor(btn.secretDispelLayers[dl], colObj)
+                        else
+                            btn.secretDispelLayers[dl]:Hide()
+                        end
+                    else
+                        btn.secretDispelLayers[dl]:Hide()
+                    end
+                end
+            end
         end
     end
     for d = 1, 2 do
@@ -2384,6 +2438,14 @@ local function UpdateGridMember(btn)
             SafeSetAuraTexture(dBtn.icon, debuff.rawIcon, debuff.icon)
             local col = DISPEL_COLORS[debuff.dispelType] or DISPEL_COLORS["none"]
             dBtn:SetBackdropBorderColor(col.r, col.g, col.b, 1)
+            if dBtn.secretOverlay then
+                if not debuff.canDispel and debuff.rawInstanceID ~= nil and dispelCurve and C_UnitAuras and C_UnitAuras.GetAuraDispelTypeColor then
+                    local okC, colObj = pcall(C_UnitAuras.GetAuraDispelTypeColor, unit, debuff.rawInstanceID, dispelCurve)
+                    ApplySecretBorderColor(dBtn.secretOverlay, okC and colObj or nil)
+                else
+                    dBtn.secretOverlay:Hide()
+                end
+            end
             ApplyAuraSlotCooldown(dBtn.cd, debuff)
             local dCount = SafeNumber(debuff.count, 0)
             if dCount > 1 then
@@ -2398,6 +2460,7 @@ local function UpdateGridMember(btn)
             dBtn.auraIndex = nil
             dBtn.auraFilter = nil
             dBtn.rawInstanceID = nil
+            if dBtn.secretOverlay then dBtn.secretOverlay:Hide() end
             if dBtn.cd then pcall(dBtn.cd.Clear, dBtn.cd); dBtn.cd:Hide() end
             dBtn:Hide()
         end
@@ -2417,33 +2480,40 @@ local function UpdatePartyGrid()
         or (GetNumGroupMembers and SafeNumber(SafeCall(GetNumGroupMembers), 0) > 0)
         or (GetNumPartyMembers and SafeNumber(SafeCall(GetNumPartyMembers), 0) > 0)
 
-    local showSolo = GetSettings().gridPartyShowSolo == true
+    local s = GetSettings()
+    local isLocked = (s.gridPartyLocked ~= false)
+    if s.gridPartyPos and not gridContainer.posLoaded and not inCombat then
+        gridContainer.posLoaded = true
+        gridContainer:ClearAllPoints()
+        gridContainer:SetPoint(s.gridPartyPos.point, UIParent, s.gridPartyPos.relPoint, s.gridPartyPos.x, s.gridPartyPos.y)
+    end
+
+    local showSolo = s.gridPartyShowSolo == true
     if not inGrp and not showSolo then
         if gridContainer:IsShown() then
             if not inCombat then gridContainer:Hide() else pendingCombatGridSync = true end
         end
+        if not inCombat and gridMover then
+            if isLocked then
+                gridMover:Hide()
+            else
+                SyncGridMoverToContainer()
+                gridMover:Show()
+            end
+        end
         return
     end
 
-    local s = GetSettings()
-    local isLocked = (s.gridPartyLocked ~= false)
     if not inCombat then
         gridContainer:Show()
         local scale = s.gridPartyScale or 1.0
         gridContainer:SetScale(scale)
 
-        if s.gridPartyPos and not gridContainer.posLoaded then
-            gridContainer.posLoaded = true
-            gridContainer:ClearAllPoints()
-            gridContainer:SetPoint(s.gridPartyPos.point, UIParent, s.gridPartyPos.relPoint, s.gridPartyPos.x, s.gridPartyPos.y)
-        end
-
         if isLocked then
-            dragBar:Hide()
-            if gridHandle then gridHandle:Hide() end
+            gridMover:Hide()
         else
-            dragBar:Show()
-            if gridHandle then gridHandle:Hide() end
+            SyncGridMoverToContainer()
+            gridMover:Show()
         end
     elseif not gridContainer:IsShown() then
         pendingCombatGridSync = true
@@ -2469,6 +2539,9 @@ local function UpdatePartyGrid()
 
     if not inCombat then
         gridContainer:SetHeight(math.max(44, activeCount * 47))
+        if not isLocked and gridMover:IsShown() then
+            SyncGridMoverToContainer()
+        end
         for i = 1, 4 do
             local f = _G["PartyMemberFrame" .. i]
             if f and f:IsShown() then
@@ -2488,9 +2561,12 @@ local function UpdateAllPartyMembers()
         if gridContainer and gridContainer:IsShown() then
             if not inCombat then
                 gridContainer:Hide()
+                if gridMover then gridMover:Hide() end
             else
                 pendingCombatGridSync = true
             end
+        elseif not inCombat and gridMover and gridMover:IsShown() then
+            gridMover:Hide()
         end
         for i = 1, 4 do
             local frame = _G["PartyMemberFrame" .. i]
@@ -2923,6 +2999,7 @@ SafeRegisterEvent(evFrame, "INSPECT_READY")
 SafeRegisterEvent(evFrame, "PLAYER_TALENT_UPDATE")
 SafeRegisterEvent(evFrame, "CHARACTER_POINTS_CHANGED")
 SafeRegisterEvent(evFrame, "SPELLS_CHANGED")
+SafeRegisterEvent(evFrame, "PLAYER_REGEN_DISABLED")
 SafeRegisterEvent(evFrame, "PLAYER_REGEN_ENABLED")
 
 evFrame:SetScript("OnEvent", function(self, event, arg1, ...)
@@ -2932,8 +3009,15 @@ evFrame:SetScript("OnEvent", function(self, event, arg1, ...)
             RefreshAllGridDispelBindings()
             UpdateAllPartyMembers()
             UpdateTargetFrame()
+        elseif event == "PLAYER_REGEN_DISABLED" then
+            if gridMover then
+                gridMover:SetScript("OnUpdate", nil)
+                gridMover.nkDragging = false
+                gridMover:Hide()
+            end
         elseif event == "PLAYER_REGEN_ENABLED" then
             RefreshAllGridDispelBindings()
+            if FP.RefreshPartyGridLock then FP:RefreshPartyGridLock() end
             if pendingCombatGridSync then
                 pendingCombatGridSync = false
                 UpdateAllPartyMembers()
@@ -3060,13 +3144,12 @@ function FP:RefreshPartyGridLock()
         return
     end
     local s = GetSettings()
-    if dragBar then
-        if s.gridPartyLocked ~= false then
-            dragBar:Hide()
-            if gridHandle then gridHandle:Hide() end
+    if gridMover then
+        if s.gridPartyLocked ~= false or not IsGridPartyEnabled() then
+            gridMover:Hide()
         else
-            dragBar:Show()
-            if gridHandle then gridHandle:Hide() end
+            SyncGridMoverToContainer()
+            gridMover:Show()
         end
     end
 end

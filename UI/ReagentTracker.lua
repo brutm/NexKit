@@ -2729,6 +2729,10 @@ local function UpdateHudLockVisual()
     end
 end
 
+function FP:RefreshReagentHudLock()
+    UpdateHudLockVisual()
+end
+
 hudLockBtn:SetScript("OnClick", function()
     local s = GetSettings()
     local cur = s.reagentHudLocked

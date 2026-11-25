@@ -419,6 +419,7 @@ FP.Locales["frFR"] = {
     MINIMAP_MENU_CFG_PROF            = "Configurer Métiers...",
     MINIMAP_MENU_ROTATION            = "Conseiller Rotation de Sorts",
     MINIMAP_MENU_SEC_CONFIG          = "CONFIGURATION",
+    MINIMAP_MENU_UNLOCK_ALL          = "Déverrouiller / Déplacer fenêtres",
     MINIMAP_MENU_SEC_WIDGETS         = "WIDGETS & HUDS ACTIFS",
     MINIMAP_MENU_SEC_WINDOWS         = "FENÊTRES & GUIDES",
     MINIMAP_MENU_TODO                = "Liste des tâches / Notes",

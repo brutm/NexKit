@@ -1742,46 +1742,13 @@ rootFrame:SetBackdrop({
 rootFrame:SetBackdropColor(0, 0, 0, 0)
 rootFrame:SetBackdropBorderColor(0, 0, 0, 0)
 
--- Drag Title Bar (Visible when unlocked)
-local dragTitle = rootFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-dragTitle:SetPoint("BOTTOM", rootFrame, "TOP", 0, 3)
-dragTitle:SetText("|cffffd100[Rotazione Spell]|r (Trascina)")
-dragTitle:Hide()
-
--- Compact always-available drag handle above the rotation frame (no Settings unlock needed)
-local rotHandle = CreateFrame("Frame", nil, rootFrame, "BackdropTemplate")
-rotHandle:SetSize(46, 13)
-rotHandle:SetPoint("BOTTOMLEFT", rootFrame, "TOPLEFT", 2, 2)
-rotHandle:SetBackdrop({
-    bgFile = "Interface\\Buttons\\WHITE8x8",
-    edgeFile = "Interface\\Buttons\\WHITE8x8",
-    edgeSize = 1,
-})
-rotHandle:SetBackdropColor(0.08, 0.10, 0.14, 0.72)
-rotHandle:SetBackdropBorderColor(0.85, 0.68, 0.20, 0.65)
-rotHandle:EnableMouse(true)
-rotHandle:RegisterForDrag("LeftButton")
-rotHandle:SetScript("OnDragStart", function()
-    rootFrame:StartMoving()
-end)
-rotHandle:SetScript("OnDragStop", function()
-    rootFrame:StopMovingOrSizing()
-    local point, _, relPoint, x, y = rootFrame:GetPoint()
-    local s = GetSettings()
-    s.rotationPos = { point = point, relPoint = relPoint, x = x, y = y }
-end)
-local rotHandleText = rotHandle:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-rotHandleText:SetPoint("CENTER", 0, 0)
-rotHandleText:SetText("|cffaaaaaaSposta|r")
-rotHandle:SetScript("OnEnter", function(self)
-    self:SetBackdropBorderColor(1.0, 0.85, 0.25, 1.0)
-    rotHandleText:SetText("|cffffffffSposta|r")
-end)
-rotHandle:SetScript("OnLeave", function(self)
-    self:SetBackdropBorderColor(0.85, 0.68, 0.20, 0.65)
-    rotHandleText:SetText("|cffaaaaaaSposta|r")
-end)
-rotHandle:Hide()
+-- Crisp unlocked move-mode padlock icon badge (only shown when unlocked)
+local unlockIcon = rootFrame:CreateTexture(nil, "OVERLAY")
+unlockIcon:SetSize(15, 15)
+unlockIcon:SetPoint("TOPLEFT", rootFrame, "TOPLEFT", -3, 3)
+unlockIcon:SetTexture("Interface\\Buttons\\LockButton-Unlocked-Up")
+unlockIcon:SetTexCoord(0.15, 0.85, 0.15, 0.85)
+unlockIcon:Hide()
 
 rootFrame:RegisterForDrag("LeftButton")
 rootFrame:SetScript("OnDragStart", function(self)
@@ -1983,14 +1950,12 @@ local function UpdateRotationUI()
     if isLocked ~= lastUiLocked then
         lastUiLocked = isLocked
         if isLocked then
-            dragTitle:Hide()
-            rotHandle:Hide()
+            unlockIcon:Hide()
             rootFrame:EnableMouse(false)
             rootFrame:SetBackdropColor(0, 0, 0, 0)
             rootFrame:SetBackdropBorderColor(0, 0, 0, 0)
         else
-            dragTitle:Show()
-            rotHandle:Show()
+            unlockIcon:Show()
             rootFrame:EnableMouse(true)
             rootFrame:SetBackdropColor(0.08, 0.08, 0.12, 0.75)
             rootFrame:SetBackdropBorderColor(1.0, 0.82, 0.0, 0.9)
@@ -2078,7 +2043,7 @@ local function UpdateRotationUI()
         mainIcon:SetTexture("Interface\\Icons\\INV_Sword_04")
         mainIcon:SetVertexColor(0.9, 0.9, 0.9)
         mainSlot:SetBackdropBorderColor(1.0, 0.82, 0.0, 0.9)
-        mainBadge:SetText("SPOSTA")
+        mainBadge:SetText("")
         mainKeybind:Hide()
         mainCooldown:Clear()
         mainTimerText:SetText("")
@@ -2370,8 +2335,9 @@ function FP:SetRotationAdvisorLocked(isLocked)
     local s = GetSettings()
     s.rotationLocked = isLocked
     UpdateRotationUI()
-    local st = s.rotationLocked and "|cff00ff00BLOCCATO|r" or "|cffffd100SBLOCCATO (Trascina per spostare)|r"
+    local st = s.rotationLocked and "|cff00ff00BLOCCATO|r" or "|cffffd100SBLOCCATO|r"
     FP:Print("Rotazione Spell: " .. st)
+    if self.RefreshSettingsUI then self:RefreshSettingsUI() end
 end
 
 function FP:ResetRotationAdvisorPos()

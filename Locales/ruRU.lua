@@ -419,6 +419,7 @@ FP.Locales["ruRU"] = {
     MINIMAP_MENU_CFG_PROF            = "Настроить профессии...",
     MINIMAP_MENU_ROTATION            = "Советник ротации заклинаний",
     MINIMAP_MENU_SEC_CONFIG          = "НАСТРОЙКИ",
+    MINIMAP_MENU_UNLOCK_ALL          = "Разблокировать / Переместить окна",
     MINIMAP_MENU_SEC_WIDGETS         = "АКТИВНЫЕ ВИДЖЕТЫ И HUD",
     MINIMAP_MENU_SEC_WINDOWS         = "ОКНА И СПРАВОЧНИКИ",
     MINIMAP_MENU_TODO                = "Список задач / Заметки",

@@ -419,6 +419,7 @@ FP.Locales["esES"] = {
     MINIMAP_MENU_CFG_PROF            = "Configurar Profesiones...",
     MINIMAP_MENU_ROTATION            = "Asesor de Rotación de Hechizos",
     MINIMAP_MENU_SEC_CONFIG          = "CONFIGURACIÓN",
+    MINIMAP_MENU_UNLOCK_ALL          = "Desbloquear / Mover ventanas",
     MINIMAP_MENU_SEC_WIDGETS         = "WIDGETS Y HUDS ACTIVOS",
     MINIMAP_MENU_SEC_WINDOWS         = "VENTANAS Y GUÍAS",
     MINIMAP_MENU_TODO                = "Lista de Tareas / Notas",

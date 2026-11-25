@@ -332,6 +332,7 @@ FP.Locales["itIT"] = {
     MINIMAP_MENU_SEC_WINDOWS = "FINESTRE & GUIDE",
     MINIMAP_MENU_SEC_WIDGETS = "WIDGET & HUD ATTIVI",
     MINIMAP_MENU_SEC_CONFIG  = "CONFIGURAZIONE",
+    MINIMAP_MENU_UNLOCK_ALL  = "Sblocca / Sposta Finestre",
     MINIMAP_MENU_CFG_PROF    = "Configura Professioni...",
     MINIMAP_MENU_CFG_BUFFS   = "Configura Buff & Interfaccia...",
     BUFF_ENABLED_MSG         = "|cff00ff00Consigliere Buff e Tracking abilitato.|r",

@@ -174,11 +174,18 @@ local function SafeReadAuraFields(unit, aura)
     }
 end
 
+local knownDebuffSchools = {}
+
 local function IsInstanceDispellableByPlayer(unit, rawInstanceID)
     if rawInstanceID == nil or not C_UnitAuras or not C_UnitAuras.IsAuraFilteredOutByInstanceID then
         return false
     end
-    local filters = { "HARMFUL|RAID_PLAYER_DISPELLABLE", "RAID_PLAYER_DISPELLABLE" }
+    local filters = {
+        "HARMFUL|RAID_PLAYER_DISPELLABLE",
+        "RAID_PLAYER_DISPELLABLE",
+        "HARMFUL|PLAYER_DISPELLABLE",
+        "PLAYER_DISPELLABLE",
+    }
     for _, flt in ipairs(filters) do
         local okF, filteredOut = pcall(C_UnitAuras.IsAuraFilteredOutByInstanceID, unit, rawInstanceID, flt)
         if okF and not IsSecret(filteredOut) and filteredOut == false then
@@ -186,6 +193,36 @@ local function IsInstanceDispellableByPlayer(unit, rawInstanceID)
         end
     end
     return false
+end
+
+local function MatchColorToSchool(r, g, b)
+    if b > 0.75 and r < 0.4 then return "Magic" end
+    if r > 0.55 and b > 0.75 then return "Curse" end
+    if g > 0.65 and r < 0.35 then return "Poison" end
+    if r > 0.65 and g > 0.30 and b < 0.35 then return "Disease" end
+    return nil
+end
+
+local function ProbeAuraDispelColorSchool(unit, rawInstanceID, dispelInfo)
+    if rawInstanceID == nil or not C_UnitAuras or not C_UnitAuras.GetAuraDispelTypeColor then
+        return nil
+    end
+    local curve = FP.GetDispelColorCurve and FP:GetDispelColorCurve()
+    if not curve then return nil end
+    local okC, colObj = pcall(C_UnitAuras.GetAuraDispelTypeColor, unit, rawInstanceID, curve)
+    if okC and colObj and IsAccessible(colObj) and colObj.GetRGBA then
+        local okRGBA, r, g, b, a = pcall(colObj.GetRGBA, colObj)
+        if okRGBA and IsAccessible(a) and not IsSecret(a) and type(a) == "number" and a > 0.25
+            and IsAccessible(r) and IsAccessible(g) and IsAccessible(b)
+        then
+            local guessed = MatchColorToSchool(r, g, b)
+            if guessed and dispelInfo and dispelInfo.schools and dispelInfo.schools[guessed] then
+                return guessed
+            end
+            return (dispelInfo and next(dispelInfo.schools or {})) or "Magic"
+        end
+    end
+    return nil
 end
 
 local function ScanUnitDispellables(unit, dispelInfo, outList)
@@ -271,17 +308,25 @@ local function ScanUnitDispellables(unit, dispelInfo, outList)
     local filterHitCount = 0
     local seenInstances = {}
     if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
-        for i = 1, 16 do
-            local okF, aura = pcall(C_UnitAuras.GetAuraDataByIndex, unit, i, "HARMFUL|RAID_PLAYER_DISPELLABLE")
-            if not okF or type(aura) ~= "table" then
-                break
-            end
-            local f = SafeReadAuraFields(unit, aura)
-            if not (f.safeInstanceID and seenInstances[f.safeInstanceID]) then
-                if f.safeInstanceID then seenInstances[f.safeInstanceID] = true end
-                local matchedSchool = (f.safeDispel and dispelInfo.schools[f.safeDispel]) and f.safeDispel or fallbackSchool
-                PushMatch(matchedSchool, f)
-                filterHitCount = filterHitCount + 1
+        for _, passFilter in ipairs({ "HARMFUL|RAID_PLAYER_DISPELLABLE", "RAID_PLAYER_DISPELLABLE" }) do
+            for i = 1, 16 do
+                local okF, aura = pcall(C_UnitAuras.GetAuraDataByIndex, unit, i, passFilter)
+                if not okF or type(aura) ~= "table" then
+                    break
+                end
+                local f = SafeReadAuraFields(unit, aura)
+                if not (f.safeInstanceID and seenInstances[f.safeInstanceID]) then
+                    if f.safeInstanceID then seenInstances[f.safeInstanceID] = true end
+                    local matchedSchool = (f.safeDispel and dispelInfo.schools[f.safeDispel]) and f.safeDispel
+                        or (f.safeInstanceID and knownDebuffSchools[f.safeInstanceID] and dispelInfo.schools[knownDebuffSchools[f.safeInstanceID]] and knownDebuffSchools[f.safeInstanceID])
+                        or ProbeAuraDispelColorSchool(unit, f.rawInstanceID, dispelInfo)
+                        or fallbackSchool
+                    if f.safeInstanceID and f.safeDispel then
+                        knownDebuffSchools[f.safeInstanceID] = f.safeDispel
+                    end
+                    PushMatch(matchedSchool, f)
+                    filterHitCount = filterHitCount + 1
+                end
             end
         end
     end
@@ -290,7 +335,7 @@ local function ScanUnitDispellables(unit, dispelInfo, outList)
         return
     end
 
-    -- Pass 2: Full HARMFUL scan (handles secret debuffs without early break + Classic UnitDebuff)
+    -- Pass 2: Full HARMFUL scan (handles secret debuffs via filters/color-curve + pre-combat cache + Classic UnitDebuff)
     if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
         for i = 1, 24 do
             local okC, aura = pcall(C_UnitAuras.GetAuraDataByIndex, unit, i, "HARMFUL")
@@ -298,11 +343,19 @@ local function ScanUnitDispellables(unit, dispelInfo, outList)
                 break
             end
             local f = SafeReadAuraFields(unit, aura)
+            if f.safeInstanceID and f.safeDispel then
+                knownDebuffSchools[f.safeInstanceID] = f.safeDispel
+            end
+            local cachedSchool = f.safeInstanceID and knownDebuffSchools[f.safeInstanceID] or nil
             local matchedSchool = nil
             if f.safeDispel and dispelInfo.schools[f.safeDispel] then
                 matchedSchool = f.safeDispel
+            elseif cachedSchool and dispelInfo.schools[cachedSchool] then
+                matchedSchool = cachedSchool
             elseif IsInstanceDispellableByPlayer(unit, f.rawInstanceID) then
-                matchedSchool = fallbackSchool
+                matchedSchool = ProbeAuraDispelColorSchool(unit, f.rawInstanceID, dispelInfo) or fallbackSchool
+            else
+                matchedSchool = ProbeAuraDispelColorSchool(unit, f.rawInstanceID, dispelInfo)
             end
             if matchedSchool then
                 PushMatch(matchedSchool, f)
@@ -404,18 +457,21 @@ alertFrame:SetBackdropColor(0.05, 0.06, 0.09, 0.94)
 alertFrame:SetBackdropBorderColor(0.20, 0.65, 1.00, 1.00)
 alertFrame:Hide()
 
-local dragLabel = alertFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-dragLabel:SetPoint("BOTTOM", alertFrame, "TOP", 0, 3)
-dragLabel:SetText("|cff33aaff[Dispel Alert]|r (Trascina)")
-dragLabel:Hide()
+local unlockIcon = alertFrame:CreateTexture(nil, "OVERLAY")
+unlockIcon:SetSize(15, 15)
+unlockIcon:SetPoint("TOPLEFT", alertFrame, "TOPLEFT", -3, 3)
+unlockIcon:SetTexture("Interface\\Buttons\\LockButton-Unlocked-Up")
+unlockIcon:SetTexCoord(0.15, 0.85, 0.15, 0.85)
+unlockIcon:Hide()
 
 alertFrame:RegisterForDrag("LeftButton")
 alertFrame:SetScript("OnDragStart", function(self)
-    if not IsDispelAlertLocked() then
+    if not IsDispelAlertLocked() and not (InCombatLockdown and InCombatLockdown()) then
         self:StartMoving()
     end
 end)
 alertFrame:SetScript("OnDragStop", function(self)
+    if InCombatLockdown and InCombatLockdown() then return end
     self:StopMovingOrSizing()
     local point, _, relPoint, x, y = self:GetPoint()
     local s = GetSettings()
@@ -696,10 +752,9 @@ local function UpdateDispelAlert()
         lastLocked = locked
         alertFrame:EnableMouse(not locked)
         if locked then
-            dragLabel:Hide()
+            unlockIcon:Hide()
         else
-            dragLabel:SetText(L["DISPEL_DRAG_TITLE"] or "|cff33aaff[Dispel Alert]|r (Drag)")
-            dragLabel:Show()
+            unlockIcon:Show()
         end
     end
 

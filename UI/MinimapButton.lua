@@ -282,6 +282,16 @@ function FP:OpenMinimapLauncherMenu(anchorBtn)
             isHeader = true,
         },
         {
+            text = L["MINIMAP_MENU_UNLOCK_ALL"] or "Sblocca / Sposta Finestre",
+            checked = function() return (FP.AreAllHUDsUnlocked and FP:AreAllHUDsUnlocked()) or false end,
+            keepOpen = true,
+            func = function()
+                if FP.SetAllHUDsUnlocked and FP.AreAllHUDsUnlocked then
+                    FP:SetAllHUDsUnlocked(not FP:AreAllHUDsUnlocked())
+                end
+            end,
+        },
+        {
             text = L["MINIMAP_MENU_CFG_PROF"] or "Configura Professioni...",
             func = function()
                 if FP.ToggleSettingsFrame then FP:ToggleSettingsFrame("prof") end

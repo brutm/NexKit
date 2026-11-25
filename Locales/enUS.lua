@@ -342,6 +342,7 @@ local enUS = {
     MINIMAP_MENU_SEC_WINDOWS = "WINDOWS & GUIDES",
     MINIMAP_MENU_SEC_WIDGETS = "ACTIVE WIDGETS & HUDS",
     MINIMAP_MENU_SEC_CONFIG  = "CONFIGURATION",
+    MINIMAP_MENU_UNLOCK_ALL  = "Unlock / Move Windows",
     MINIMAP_MENU_CFG_PROF    = "Configure Professions...",
     MINIMAP_MENU_CFG_BUFFS   = "Configure Buffs & UI...",
     BUFF_ENABLED_MSG         = "|cff00ff00Buff & Tracking Advisor enabled.|r",
