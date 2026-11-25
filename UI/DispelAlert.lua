@@ -457,13 +457,6 @@ alertFrame:SetBackdropColor(0.05, 0.06, 0.09, 0.94)
 alertFrame:SetBackdropBorderColor(0.20, 0.65, 1.00, 1.00)
 alertFrame:Hide()
 
-local unlockIcon = alertFrame:CreateTexture(nil, "OVERLAY")
-unlockIcon:SetSize(15, 15)
-unlockIcon:SetPoint("TOPLEFT", alertFrame, "TOPLEFT", -3, 3)
-unlockIcon:SetTexture("Interface\\Buttons\\LockButton-Unlocked-Up")
-unlockIcon:SetTexCoord(0.15, 0.85, 0.15, 0.85)
-unlockIcon:Hide()
-
 alertFrame:RegisterForDrag("LeftButton")
 alertFrame:SetScript("OnDragStart", function(self)
     if not IsDispelAlertLocked() and not (InCombatLockdown and InCombatLockdown()) then
@@ -751,7 +744,6 @@ local function UpdateDispelAlert()
     if locked ~= lastLocked then
         lastLocked = locked
         alertFrame:EnableMouse(not locked)
-        unlockIcon:Hide()
     end
 
     local scale = GetDispelAlertScale()

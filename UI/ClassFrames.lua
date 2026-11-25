@@ -1732,7 +1732,6 @@ gridMover:SetFrameLevel(40)
 gridMover:SetClampedToScreen(true)
 gridMover:SetMovable(true)
 gridMover:EnableMouse(true)
-gridMover:RegisterForDrag("LeftButton")
 gridMover:SetBackdrop({
     bgFile = "Interface\\Buttons\\WHITE8x8",
     edgeFile = "Interface\\Buttons\\WHITE8x8",
@@ -1772,8 +1771,12 @@ end
 gridMover:SetScript("OnMouseDown", function(self, button)
     if button ~= "LeftButton" then return end
     if InCombatLockdown and InCombatLockdown() then return end
+    local startL, startT = self:GetLeft(), self:GetTop()
+    if startL and startT then
+        self:ClearAllPoints()
+        self:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", startL, startT)
+    end
     self.nkDragging = true
-    self:ClearAllPoints()
     self:StartMoving()
     self:SetScript("OnUpdate", function(mv)
         if InCombatLockdown and InCombatLockdown() then
@@ -1793,6 +1796,13 @@ end)
 gridMover:SetScript("OnMouseUp", function(self, button)
     if button == "LeftButton" then
         CommitGridMoverPosition()
+    end
+end)
+gridMover:SetScript("OnHide", function(self)
+    if self.nkDragging then
+        self:SetScript("OnUpdate", nil)
+        self.nkDragging = false
+        pcall(self.StopMovingOrSizing, self)
     end
 end)
 

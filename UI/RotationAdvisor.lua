@@ -1742,14 +1742,6 @@ rootFrame:SetBackdrop({
 rootFrame:SetBackdropColor(0, 0, 0, 0)
 rootFrame:SetBackdropBorderColor(0, 0, 0, 0)
 
--- Crisp unlocked move-mode padlock icon badge (only shown when unlocked)
-local unlockIcon = rootFrame:CreateTexture(nil, "OVERLAY")
-unlockIcon:SetSize(15, 15)
-unlockIcon:SetPoint("TOPLEFT", rootFrame, "TOPLEFT", -3, 3)
-unlockIcon:SetTexture("Interface\\Buttons\\LockButton-Unlocked-Up")
-unlockIcon:SetTexCoord(0.15, 0.85, 0.15, 0.85)
-unlockIcon:Hide()
-
 rootFrame:RegisterForDrag("LeftButton")
 rootFrame:SetScript("OnDragStart", function(self)
     if not IsRotationLocked() then
