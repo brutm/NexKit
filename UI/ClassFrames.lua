@@ -257,9 +257,8 @@ end
 local function RequestInspectUnit(unit)
     if not SafeUnitExists(unit) or not SafeUnitIsPlayer(unit) then return end
     if SafeUnitIsUnit(unit, "player") then return end
-    if not CanInspect or not SafeBoolean(SafeCall(CanInspect, unit), false) then return end
+    if not CanInspect or not SafeBoolean(SafeCall(CanInspect, unit, false), false) then return end
     if InCombatLockdown and InCombatLockdown() then return end
-    if CheckInteractDistance and not SafeBoolean(SafeCall(CheckInteractDistance, unit, 1), false) then return end
 
     local now = (GetTime and SafeCall(GetTime)) or 0
     if (now - lastInspectTime) < 1.0 then return end
@@ -1832,18 +1831,16 @@ local function CheckUnitRange(unit)
         local okU, isSelf = pcall(UnitIsUnit, unit, "player")
         if okU and SafeBoolean(isSelf, false) == true then return true end
     end
-    if CheckInteractDistance then
-        local okD, inDist = pcall(CheckInteractDistance, unit, 4)
-        if okD then
-            local b = SafeBoolean(inDist, nil)
-            if b ~= nil then return b end
-        end
-    end
+    -- Note: Never call CheckInteractDistance(unit, 4) automatically on unit frames:
+    -- in WoW 12.0 / Midnight it is a protected/restricted API that triggers ADDON_ACTION_BLOCKED.
     if UnitInRange then
         local okR, inRange, checked = pcall(UnitInRange, unit)
         if okR then
-            local isChecked = SafeBoolean(checked, false)
-            if isChecked then
+            local isChecked = SafeBoolean(checked, nil)
+            if isChecked == true then
+                return SafeBoolean(inRange, true)
+            elseif isChecked == nil then
+                -- Classic / Midnight fallback if 2nd return value is omitted or secret
                 return SafeBoolean(inRange, true)
             end
         end
