@@ -766,8 +766,8 @@ local function CreateSlotOverlay(hostFrame, iconSize, showTrackBtn, showBadge)
         local btn = CreateFrame("Button", nil, hostFrame)
         BuildSolidTrackButton(btn, 16, 16)
         btn:SetSize(16, 16)
-        btn:SetFrameStrata("DIALOG")
-        btn:SetFrameLevel(60)
+        btn:SetFrameStrata(hostFrame:GetFrameStrata() or "MEDIUM")
+        btn:SetFrameLevel(10)
         btn:RegisterForClicks("LeftButtonUp")
         btn.ownerOverlay = ov
 
@@ -865,17 +865,77 @@ local function IsRegionVisible(region)
     return false
 end
 
+local function GetScaledRect(frame)
+    if not frame or IsForbiddenObj(frame) or not frame.GetLeft then return nil end
+    local l, r, t, b = frame:GetLeft(), frame:GetRight(), frame:GetTop(), frame:GetBottom()
+    local s = (frame.GetEffectiveScale and frame:GetEffectiveScale()) or 1
+    if not (IsSafeNum(l) and IsSafeNum(r) and IsSafeNum(t) and IsSafeNum(b) and IsSafeNum(s) and s > 0) then
+        return nil
+    end
+    return l * s, r * s, t * s, b * s
+end
+
+local function IsWorldMapMaximized()
+    if not WorldMapFrame or IsForbiddenObj(WorldMapFrame) or not IsRegionVisible(WorldMapFrame) then
+        return false
+    end
+    if WorldMapFrame.IsMaximized then
+        local okM, isMax = pcall(WorldMapFrame.IsMaximized, WorldMapFrame)
+        if okM and isMax == true then
+            return true
+        end
+    end
+    local ml, mr, mt, mb = GetScaledRect(WorldMapFrame)
+    local ul, ur, ut, ub = GetScaledRect(UIParent)
+    if ml and ul and (ur - ul) > 0 and (ut - ub) > 0 then
+        if (mr - ml) >= (ur - ul) * 0.72 and (mt - mb) >= (ut - ub) * 0.72 then
+            return true
+        end
+    end
+    return false
+end
+
+local function IsWorldMapBlockingTarget(targetRegion, targetStrata)
+    if not WorldMapFrame or IsForbiddenObj(WorldMapFrame) or not IsRegionVisible(WorldMapFrame) then
+        return false
+    end
+    if IsWorldMapMaximized() then
+        return true
+    end
+    local mStrata = (WorldMapFrame.GetFrameStrata and WorldMapFrame:GetFrameStrata()) or "HIGH"
+    local mRank = STRATA_RANK[mStrata] or 4
+    local tRank = STRATA_RANK[targetStrata or "MEDIUM"] or 3
+    if mRank < tRank then
+        return false
+    end
+    local ml, mr, mt, mb = GetScaledRect(WorldMapFrame)
+    local rl, rr, rt, rb = GetScaledRect(targetRegion)
+    if ml and rl then
+        return (rr > ml and rl < mr and rt > mb and rb < mt)
+    end
+    return false
+end
+
 local function PositionFrameOverTarget(frame, hostFrame, targetRegion, parentWindow, levelOffset, minLevel)
     if not frame or not hostFrame or IsForbiddenObj(targetRegion) or not IsRegionVisible(targetRegion) then
         return false
     end
 
-    local strata = "DIALOG"
-    local lvl = 45
+    local tStrata = (targetRegion.GetFrameStrata and targetRegion:GetFrameStrata()) or nil
+    local wStrata = (parentWindow and not IsForbiddenObj(parentWindow) and parentWindow.GetFrameStrata and parentWindow:GetFrameStrata()) or nil
+    local strata = (tStrata or wStrata) and PickHigherStrata(tStrata, wStrata) or "MEDIUM"
+
+    if IsWorldMapBlockingTarget(targetRegion, strata) then
+        return false
+    end
+
+    local tLvl = (targetRegion.GetFrameLevel and targetRegion:GetFrameLevel()) or 1
+    local safeTargetLvl = IsSafeNum(tLvl) and tLvl or 1
+    local lvl = math.max(minLevel or 2, safeTargetLvl + (levelOffset or 6))
 
     if hostFrame ~= UIParent then
         hostFrame:SetFrameStrata(strata)
-        hostFrame:SetFrameLevel(40)
+        hostFrame:SetFrameLevel(math.max(1, lvl - 2))
         if not hostFrame:IsShown() then
             hostFrame:Show()
         end
@@ -896,7 +956,7 @@ local function PositionFrameOverTarget(frame, hostFrame, targetRegion, parentWin
 end
 
 local function SyncOverlayToTarget(ov, hostFrame, targetRegion, parentWindow)
-    local ok, w, h, strata, lvl = PositionFrameOverTarget(ov, hostFrame, targetRegion, parentWindow, 22, 24)
+    local ok, w, h, strata, lvl = PositionFrameOverTarget(ov, hostFrame, targetRegion, parentWindow, 6, 4)
     if not ok then
         return false
     end
@@ -908,8 +968,8 @@ local function SyncOverlayToTarget(ov, hostFrame, targetRegion, parentWindow)
         ov.trackBtn:SetSize(16, 16)
         ov.trackBtn:ClearAllPoints()
         ov.trackBtn:SetPoint("TOPRIGHT", targetRegion, "TOPRIGHT", -1, -1)
-        ov.trackBtn:SetFrameStrata("DIALOG")
-        ov.trackBtn:SetFrameLevel(65)
+        ov.trackBtn:SetFrameStrata(strata)
+        ov.trackBtn:SetFrameLevel(lvl + 4)
     end
     ov.targetRef = targetRegion
     ov.windowRef = parentWindow
@@ -935,8 +995,8 @@ local function ApplyReagentOverlayState(ov, itemID, itemName, itemIcon, itemLink
     if ov.badge then ov.badge:Hide() end
     if ov.badgeBg then ov.badgeBg:Hide() end
 
-    local currentStrata = ov:GetFrameStrata() or "HIGH"
-    local currentLevel = ov:GetFrameLevel() or 20
+    local currentStrata = (ov.GetFrameStrata and ov:GetFrameStrata()) or "MEDIUM"
+    local currentLevel = (ov.GetFrameLevel and ov:GetFrameLevel()) or 8
 
     if isTracked then
         ov:SetBackdropBorderColor(TRACKED.r, TRACKED.g, TRACKED.b, 0.95)
@@ -967,8 +1027,8 @@ local function ApplyReagentOverlayState(ov, itemID, itemName, itemIcon, itemLink
     if ov.trackBtn then
         if showBtn and (ov.itemID or ov.itemName) then
             ApplyTrackButtonVisual(ov)
-            ov.trackBtn:SetFrameStrata("DIALOG")
-            ov.trackBtn:SetFrameLevel(60)
+            ov.trackBtn:SetFrameStrata(currentStrata)
+            ov.trackBtn:SetFrameLevel(currentLevel + 4)
             ov.shouldShowBtn = true
             ov.trackBtn:Show()
         else
@@ -983,7 +1043,7 @@ local function CreateOverlayHost(name, poolTbl, onVisibleTick)
     local host = CreateFrame("Frame", name, UIParent)
     host:SetAllPoints(UIParent)
     host:EnableMouse(false)
-    host:SetFrameStrata("DIALOG")
+    host:SetFrameStrata("MEDIUM")
     host.accum = 0
     host:SetScript("OnUpdate", function(self, elapsed)
         self.accum = self.accum + elapsed
@@ -993,9 +1053,9 @@ local function CreateOverlayHost(name, poolTbl, onVisibleTick)
             if ov:IsShown() or (ov.trackBtn and ov.trackBtn:IsShown()) or (ov.targetRef and ov.windowRef) then
                 local tr = ov.targetRef
                 local wr = ov.windowRef
-                if not tr or not wr or (wr.IsShown and not wr:IsShown()) then
+                if not tr or not wr or not IsRegionVisible(wr) then
                     HideSlotOverlay(ov)
-                elseif tr.IsVisible and not tr:IsVisible() then
+                elseif not IsRegionVisible(tr) or IsWorldMapMaximized() then
                     ov:Hide()
                     if ov.trackBtn then ov.trackBtn:Hide() end
                 else
@@ -1866,19 +1926,22 @@ local function IsValidVisibleFrame(f)
 end
 
 local function IsAnyBagFrameVisible()
-    if ContainerFrameCombinedBags and not IsForbiddenObj(ContainerFrameCombinedBags) and ContainerFrameCombinedBags:IsShown() then
+    if IsWorldMapMaximized() then
+        return false
+    end
+    if IsRegionVisible(ContainerFrameCombinedBags) then
         return true
     end
     local numContainers = NUM_CONTAINER_FRAMES or 13
     for i = 1, numContainers do
         local cf = _G["ContainerFrame" .. i]
-        if cf and not IsForbiddenObj(cf) and cf:IsShown() then
+        if IsRegionVisible(cf) then
             return true
         end
     end
     if ContainerFrameContainer and type(ContainerFrameContainer.ContainerFrames) == "table" then
         for _, cf in ipairs(ContainerFrameContainer.ContainerFrames) do
-            if cf and not IsForbiddenObj(cf) and cf:IsShown() then
+            if IsRegionVisible(cf) then
                 return true
             end
         end
@@ -1889,7 +1952,7 @@ end
 local function ForEachVisibleBagFrame(fn)
     local seen = {}
     local function Check(cf)
-        if cf and not IsForbiddenObj(cf) and cf:IsShown() and not seen[cf] then
+        if IsRegionVisible(cf) and not seen[cf] then
             seen[cf] = true
             fn(cf)
         end
@@ -3325,19 +3388,19 @@ end
 
 local function GetOpenBagsSignature()
     local sig = ""
-    if ContainerFrameCombinedBags and not IsForbiddenObj(ContainerFrameCombinedBags) and ContainerFrameCombinedBags:IsShown() then
+    if IsRegionVisible(ContainerFrameCombinedBags) then
         sig = sig .. "C1:"
     end
     local numC = NUM_CONTAINER_FRAMES or 13
     for i = 1, numC do
         local cf = _G["ContainerFrame" .. i]
-        if cf and not IsForbiddenObj(cf) and cf:IsShown() then
+        if IsRegionVisible(cf) then
             sig = sig .. i .. ":"
         end
     end
     if ContainerFrameContainer and type(ContainerFrameContainer.ContainerFrames) == "table" then
         for idx, cf in ipairs(ContainerFrameContainer.ContainerFrames) do
-            if cf and not IsForbiddenObj(cf) and cf:IsShown() then
+            if IsRegionVisible(cf) then
                 sig = sig .. "CC" .. idx .. ":"
             end
         end
