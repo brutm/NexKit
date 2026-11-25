@@ -2011,8 +2011,8 @@ for i = 1, 5 do
         cd:SetPoint("BOTTOMRIGHT", bBtn, "BOTTOMRIGHT", -1, 1)
         if cd.SetReverse then cd:SetReverse(true) end
         if cd.SetDrawEdge then cd:SetDrawEdge(true) end
-        if cd.SetSwipeColor then cd:SetSwipeColor(0, 0, 0, 0.62) end
-        if cd.SetHideCountdownNumbers then cd:SetHideCountdownNumbers(false) end
+        if cd.SetSwipeColor then cd:SetSwipeColor(0, 0, 0, 0.48) end
+        if cd.SetHideCountdownNumbers then cd:SetHideCountdownNumbers(true) end
         cd:Hide()
         bBtn.cd = cd
 
@@ -2069,8 +2069,8 @@ for i = 1, 5 do
         cd:SetPoint("BOTTOMRIGHT", dBtn, "BOTTOMRIGHT", -1, 1)
         if cd.SetReverse then cd:SetReverse(true) end
         if cd.SetDrawEdge then cd:SetDrawEdge(true) end
-        if cd.SetSwipeColor then cd:SetSwipeColor(0, 0, 0, 0.65) end
-        if cd.SetHideCountdownNumbers then cd:SetHideCountdownNumbers(false) end
+        if cd.SetSwipeColor then cd:SetSwipeColor(0, 0, 0, 0.48) end
+        if cd.SetHideCountdownNumbers then cd:SetHideCountdownNumbers(true) end
         cd:Hide()
         dBtn.cd = cd
 
