@@ -159,7 +159,7 @@ end)
 local filterBtns = {}
 local function CreateFilterBtn(key, label, pointTo, xOff)
     local btn = CreateFrame("Button", nil, todoFrame, "BackdropTemplate")
-    btn:SetSize(80, 20)
+    btn:SetSize(56, 20)
     btn:SetPoint("LEFT", pointTo, "RIGHT", xOff or 4, 0)
     btn:SetBackdrop({
         bgFile   = "Interface\\Buttons\\WHITE8x8",
