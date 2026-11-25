@@ -766,8 +766,8 @@ local function CreateSlotOverlay(hostFrame, iconSize, showTrackBtn, showBadge)
         local btn = CreateFrame("Button", nil, hostFrame)
         BuildSolidTrackButton(btn, 16, 16)
         btn:SetSize(16, 16)
-        btn:SetFrameStrata(hostFrame:GetFrameStrata() or "MEDIUM")
-        btn:SetFrameLevel(10)
+        btn:SetFrameStrata(hostFrame:GetFrameStrata() or "HIGH")
+        btn:SetFrameLevel(60)
         btn:RegisterForClicks("LeftButtonUp")
         btn.ownerOverlay = ov
 
@@ -895,7 +895,7 @@ local function IsWorldMapMaximized()
     return false
 end
 
-local function IsWorldMapBlockingTarget(targetRegion, targetStrata)
+local function IsWorldMapBlockingTarget(targetRegion, windowStrata)
     if not WorldMapFrame or IsForbiddenObj(WorldMapFrame) or not IsRegionVisible(WorldMapFrame) then
         return false
     end
@@ -904,8 +904,8 @@ local function IsWorldMapBlockingTarget(targetRegion, targetStrata)
     end
     local mStrata = (WorldMapFrame.GetFrameStrata and WorldMapFrame:GetFrameStrata()) or "HIGH"
     local mRank = STRATA_RANK[mStrata] or 4
-    local tRank = STRATA_RANK[targetStrata or "MEDIUM"] or 3
-    if mRank < tRank then
+    local wRank = STRATA_RANK[windowStrata or "MEDIUM"] or 3
+    if mRank < wRank then
         return false
     end
     local ml, mr, mt, mb = GetScaledRect(WorldMapFrame)
@@ -923,19 +923,22 @@ local function PositionFrameOverTarget(frame, hostFrame, targetRegion, parentWin
 
     local tStrata = (targetRegion.GetFrameStrata and targetRegion:GetFrameStrata()) or nil
     local wStrata = (parentWindow and not IsForbiddenObj(parentWindow) and parentWindow.GetFrameStrata and parentWindow:GetFrameStrata()) or nil
-    local strata = (tStrata or wStrata) and PickHigherStrata(tStrata, wStrata) or "MEDIUM"
+    local baseStrata = (tStrata or wStrata) and PickHigherStrata(tStrata, wStrata) or "MEDIUM"
 
-    if IsWorldMapBlockingTarget(targetRegion, strata) then
+    if IsWorldMapBlockingTarget(targetRegion, baseStrata) then
         return false
     end
 
+    -- Stay strictly above Blizzard's toplevel="true" MEDIUM ContainerFrames so overlays and '+'
+    -- buttons are never buried when bags are clicked/focused, while still remaining below DIALOG.
+    local strata = PickHigherStrata("HIGH", baseStrata)
     local tLvl = (targetRegion.GetFrameLevel and targetRegion:GetFrameLevel()) or 1
     local safeTargetLvl = IsSafeNum(tLvl) and tLvl or 1
-    local lvl = math.max(minLevel or 2, safeTargetLvl + (levelOffset or 6))
+    local lvl = math.max(minLevel or 24, safeTargetLvl + (levelOffset or 22), 45)
 
     if hostFrame ~= UIParent then
         hostFrame:SetFrameStrata(strata)
-        hostFrame:SetFrameLevel(math.max(1, lvl - 2))
+        hostFrame:SetFrameLevel(math.max(1, lvl - 5))
         if not hostFrame:IsShown() then
             hostFrame:Show()
         end
@@ -956,7 +959,7 @@ local function PositionFrameOverTarget(frame, hostFrame, targetRegion, parentWin
 end
 
 local function SyncOverlayToTarget(ov, hostFrame, targetRegion, parentWindow)
-    local ok, w, h, strata, lvl = PositionFrameOverTarget(ov, hostFrame, targetRegion, parentWindow, 6, 4)
+    local ok, w, h, strata, lvl = PositionFrameOverTarget(ov, hostFrame, targetRegion, parentWindow, 22, 24)
     if not ok then
         return false
     end
@@ -969,7 +972,7 @@ local function SyncOverlayToTarget(ov, hostFrame, targetRegion, parentWindow)
         ov.trackBtn:ClearAllPoints()
         ov.trackBtn:SetPoint("TOPRIGHT", targetRegion, "TOPRIGHT", -1, -1)
         ov.trackBtn:SetFrameStrata(strata)
-        ov.trackBtn:SetFrameLevel(lvl + 4)
+        ov.trackBtn:SetFrameLevel(lvl + 20)
     end
     ov.targetRef = targetRegion
     ov.windowRef = parentWindow
@@ -995,8 +998,8 @@ local function ApplyReagentOverlayState(ov, itemID, itemName, itemIcon, itemLink
     if ov.badge then ov.badge:Hide() end
     if ov.badgeBg then ov.badgeBg:Hide() end
 
-    local currentStrata = (ov.GetFrameStrata and ov:GetFrameStrata()) or "MEDIUM"
-    local currentLevel = (ov.GetFrameLevel and ov:GetFrameLevel()) or 8
+    local currentStrata = (ov.GetFrameStrata and ov:GetFrameStrata()) or "HIGH"
+    local currentLevel = (ov.GetFrameLevel and ov:GetFrameLevel()) or 45
 
     if isTracked then
         ov:SetBackdropBorderColor(TRACKED.r, TRACKED.g, TRACKED.b, 0.95)
@@ -1028,7 +1031,7 @@ local function ApplyReagentOverlayState(ov, itemID, itemName, itemIcon, itemLink
         if showBtn and (ov.itemID or ov.itemName) then
             ApplyTrackButtonVisual(ov)
             ov.trackBtn:SetFrameStrata(currentStrata)
-            ov.trackBtn:SetFrameLevel(currentLevel + 4)
+            ov.trackBtn:SetFrameLevel(currentLevel + 20)
             ov.shouldShowBtn = true
             ov.trackBtn:Show()
         else
@@ -1043,7 +1046,7 @@ local function CreateOverlayHost(name, poolTbl, onVisibleTick)
     local host = CreateFrame("Frame", name, UIParent)
     host:SetAllPoints(UIParent)
     host:EnableMouse(false)
-    host:SetFrameStrata("MEDIUM")
+    host:SetFrameStrata("HIGH")
     host.accum = 0
     host:SetScript("OnUpdate", function(self, elapsed)
         self.accum = self.accum + elapsed

@@ -1031,6 +1031,7 @@ local function SafeReadBuffAura(aura, unit)
         durationObj    = durObj,
         source         = safeSrc,
         isPlayerBuff   = (playerVerified == true),
+        isVerifiedMine = (playerVerified == true),
         playerVerified = playerVerified,
         spellId        = SafeNumber(rawSpell, nil),
         rawInstanceID  = rawInstId,
@@ -1071,6 +1072,7 @@ local function ClassifyDBMBuff(unit, f, filterPrio, filterCat, isPlayerFilter)
 
     if f.playerVerified == true then
         f.isPlayerBuff = true
+        f.isVerifiedMine = true
     end
 
     if rName ~= nil then
@@ -1080,19 +1082,19 @@ local function ClassifyDBMBuff(unit, f, filterPrio, filterCat, isPlayerFilter)
             return nil, nil
         end
 
-        -- Only allow confirmed player-cast buffs
+        -- Only allow confirmed player-cast buffs, or filter-matched unverified buffs if filter not broken
         local allowByFilter = isPlayerFilter and not FP.nkPlayerBuffFilterBroken and (f.playerVerified == nil)
-        if not f.isPlayerBuff and not allowByFilter then
+        if not f.isVerifiedMine and not allowByFilter then
             if unitMeta and instKey then unitMeta[instKey] = { ignored = true } end
             return nil, nil
         end
-        f.isPlayerBuff = true
+        f.isPlayerBuff = f.isVerifiedMine
 
         local match = IMPORTANT_COMBAT_BUFFS[rName] or (sid and IMPORTANT_COMBAT_IDS[sid])
         if match then
             local prio = math.max(filterPrio or 0, match.prio)
             local cat = (filterPrio and filterPrio >= 95 and filterCat) or match.cat
-            if unitMeta and instKey then unitMeta[instKey] = { prio = prio, cat = cat, mine = true } end
+            if unitMeta and instKey then unitMeta[instKey] = { prio = prio, cat = cat, mine = f.isVerifiedMine } end
             return prio, cat
         end
 
@@ -1100,14 +1102,14 @@ local function ClassifyDBMBuff(unit, f, filterPrio, filterCat, isPlayerFilter)
         if dur > 0 and dur <= 125 then
             local prio = math.max(filterPrio or 0, 60)
             local cat = filterCat or "COMBAT"
-            if unitMeta and instKey then unitMeta[instKey] = { prio = prio, cat = cat, mine = true } end
+            if unitMeta and instKey then unitMeta[instKey] = { prio = prio, cat = cat, mine = f.isVerifiedMine } end
             return prio, cat
         end
 
         -- Player-cast party buff (e.g. Blessings, Fortitude, MotW, Intellect) at prio 40
         local prio = math.max(filterPrio or 0, 40)
         local cat = filterCat or "PLAYER_BUFF"
-        if unitMeta and instKey then unitMeta[instKey] = { prio = prio, cat = cat, mine = true } end
+        if unitMeta and instKey then unitMeta[instKey] = { prio = prio, cat = cat, mine = f.isVerifiedMine } end
         return prio, cat
     end
 
@@ -1119,19 +1121,25 @@ local function ClassifyDBMBuff(unit, f, filterPrio, filterCat, isPlayerFilter)
         end
         if cached.mine and cached.prio then
             f.isPlayerBuff = true
+            f.isVerifiedMine = true
             return math.max(filterPrio or 0, cached.prio), cached.cat or filterCat or "PLAYER_BUFF"
         end
     end
 
     if f.playerVerified == true then
         f.isPlayerBuff = true
+        f.isVerifiedMine = true
     elseif not FP.nkPlayerBuffFilterBroken then
         if isPlayerFilter then
-            f.isPlayerBuff = true
+            -- Returned by HELPFUL|PLAYER while ownership fields are secret: keep visible
+            -- ONLY as unverified (steel-blue border, sorted after verified green player buffs).
+            f.isPlayerBuff = false
+            f.isVerifiedMine = false
         elseif C_UnitAuras and C_UnitAuras.IsAuraFilteredOutByInstanceID and f.rawInstanceID ~= nil then
             local okP, outPlr = pcall(C_UnitAuras.IsAuraFilteredOutByInstanceID, unit, f.rawInstanceID, "HELPFUL|PLAYER")
             if okP and IsAccessibleVal(outPlr) and outPlr == false then
-                f.isPlayerBuff = true
+                f.isPlayerBuff = false
+                f.isVerifiedMine = false
             else
                 return nil, nil
             end
@@ -1192,6 +1200,7 @@ local function GetPartyUnitBuffs(unit)
                                 durationObj = f.durationObj,
                                 source = f.source,
                                 isPlayerBuff = f.isPlayerBuff,
+                                isVerifiedMine = f.isVerifiedMine,
                                 spellId = f.spellId,
                                 priority = prio,
                                 dbmCat = cat,
@@ -1223,6 +1232,8 @@ local function GetPartyUnitBuffs(unit)
                     expirationTime = SafeNumber(bExp, 0),
                     source = safeSrc,
                     isPlayerBuff = isPlayerBuff,
+                    isVerifiedMine = isPlayerBuff,
+                    playerVerified = (safeSrc ~= nil) and (safeSrc == "player") or nil,
                     spellId = SafeNumber(bSpellId, nil),
                 }
             end
@@ -1244,9 +1255,13 @@ local function GetPartyUnitBuffs(unit)
         buffs = filtered
     end
 
-    -- Sort buffs by DBM importance tier first, then player's own buffs, then aura index
+    -- Sort buffs: confirmed player-cast buffs FIRST, then DBM importance tier, then aura index
     pcall(function()
         table.sort(buffs, function(a, b)
+            local aVerified = SafeBoolean(a.isVerifiedMine, false)
+            local bVerified = SafeBoolean(b.isVerifiedMine, false)
+            if aVerified and not bVerified then return true end
+            if not aVerified and bVerified then return false end
             local ap = a.priority or 0
             local bp = b.priority or 0
             if ap ~= bp then return ap > bp end
@@ -2465,18 +2480,18 @@ local function UpdateGridMember(btn)
             bBtn.rawInstanceID = buff.rawInstanceID
             SafeSetAuraTexture(bBtn.icon, buff.rawIcon, buff.icon)
             local prio = buff.priority or 0
-            if prio >= 95 then
-                -- Major Defensive / Immunity / External save (Bright Cyan DBM highlight)
+            if buff.isVerifiedMine then
+                -- Confirmed player-cast buff (Bright Emerald Green)
+                bBtn:SetBackdropBorderColor(0.15, 1.00, 0.45, 1.0)
+            elseif prio >= 95 then
+                -- Major Defensive / Immunity / External save (Bright Cyan)
                 bBtn:SetBackdropBorderColor(0.15, 0.88, 1.0, 1.0)
             elseif buff.isPlayerBuff then
-                -- Player's own HoT / External / CD (Gold)
+                -- Player buff (Bright Gold)
                 bBtn:SetBackdropBorderColor(1.0, 0.85, 0.0, 0.95)
-            elseif prio >= 78 then
-                -- Healer HoT / Shield / Active Mitigation (Emerald)
-                bBtn:SetBackdropBorderColor(0.25, 0.92, 0.45, 0.95)
             else
-                -- Other active combat buff (Silver-Blue)
-                bBtn:SetBackdropBorderColor(0.65, 0.78, 0.95, 0.85)
+                -- Other / unverified buff when source is hidden in combat (Steel-Blue)
+                bBtn:SetBackdropBorderColor(0.45, 0.58, 0.82, 0.85)
             end
             ApplyAuraSlotCooldown(bBtn.cd, buff)
             local bCount = SafeNumber(buff.count, 0)
