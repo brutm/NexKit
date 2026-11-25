@@ -2394,32 +2394,16 @@ local function UpdateGridMember(btn)
             break
         end
     end
-    local dispelCurve = FP.GetDispelColorCurve and FP:GetDispelColorCurve() or nil
     if btn.dispelBorder then
         if firstDispellable then
             local dCol = DISPEL_COLORS[firstDispellable.dispelType] or DISPEL_COLORS["Magic"]
             btn.dispelBorder:SetBackdropBorderColor(dCol.r, dCol.g, dCol.b, 1.0)
             btn.dispelBorder:Show()
-            if btn.secretDispelLayers then
-                for dl = 1, #btn.secretDispelLayers do btn.secretDispelLayers[dl]:Hide() end
-            end
         else
             btn.dispelBorder:Hide()
-            if btn.secretDispelLayers then
-                for dl = 1, #btn.secretDispelLayers do
-                    local deb = debuffs[dl]
-                    if deb and deb.rawInstanceID ~= nil and dispelCurve and C_UnitAuras and C_UnitAuras.GetAuraDispelTypeColor then
-                        local okC, colObj = pcall(C_UnitAuras.GetAuraDispelTypeColor, unit, deb.rawInstanceID, dispelCurve)
-                        if okC and colObj then
-                            ApplySecretBorderColor(btn.secretDispelLayers[dl], colObj)
-                        else
-                            btn.secretDispelLayers[dl]:Hide()
-                        end
-                    else
-                        btn.secretDispelLayers[dl]:Hide()
-                    end
-                end
-            end
+        end
+        if btn.secretDispelLayers then
+            for dl = 1, #btn.secretDispelLayers do btn.secretDispelLayers[dl]:Hide() end
         end
     end
     for d = 1, 2 do
@@ -2433,14 +2417,7 @@ local function UpdateGridMember(btn)
             SafeSetAuraTexture(dBtn.icon, debuff.rawIcon, debuff.icon)
             local col = DISPEL_COLORS[debuff.dispelType] or DISPEL_COLORS["none"]
             dBtn:SetBackdropBorderColor(col.r, col.g, col.b, 1)
-            if dBtn.secretOverlay then
-                if not debuff.canDispel and debuff.rawInstanceID ~= nil and dispelCurve and C_UnitAuras and C_UnitAuras.GetAuraDispelTypeColor then
-                    local okC, colObj = pcall(C_UnitAuras.GetAuraDispelTypeColor, unit, debuff.rawInstanceID, dispelCurve)
-                    ApplySecretBorderColor(dBtn.secretOverlay, okC and colObj or nil)
-                else
-                    dBtn.secretOverlay:Hide()
-                end
-            end
+            if dBtn.secretOverlay then dBtn.secretOverlay:Hide() end
             ApplyAuraSlotCooldown(dBtn.cd, debuff)
             local dCount = SafeNumber(debuff.count, 0)
             if dCount > 1 then
