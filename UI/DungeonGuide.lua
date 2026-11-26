@@ -1109,7 +1109,7 @@ local function GetOrCreateBossBtn(idx)
                 local isDef = IsBossDefeated(activeGuide, bData)
                 GameTooltip:SetText(bData.name or "Boss", 1, 1, 1)
                 if isDef then
-                    GameTooltip:AddLine(L["DUNGEON_BOSS_DEFEATED"] or "Sconfitto in questa run", 0.33, 0.93, 0.47)
+                    GameTooltip:AddLine((FP.L and FP.L["DUNGEON_BOSS_DEFEATED"]) or "Sconfitto in questa run", 0.33, 0.93, 0.47)
                 else
                     GameTooltip:AddLine("Non ancora sconfitto", 0.90, 0.75, 0.20)
                 end
