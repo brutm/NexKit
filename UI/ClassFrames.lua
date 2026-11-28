@@ -1042,16 +1042,58 @@ end
 -- neither resurrect passive clutter (e.g. Auras / Find Minerals) nor drop active player buffs.
 local knownAuraMetaByUnit = {}
 local lastGuidByUnit = {}
+local lastNameByUnit = {}
+local lastGuidByName = {}
+
+local function RememberUnitIdentity(unit, guid, name)
+    if not unit then return end
+    if guid then
+        lastGuidByUnit[unit] = guid
+    end
+    if name then
+        lastNameByUnit[unit] = name
+        if guid then
+            lastGuidByName[name] = guid
+        end
+    end
+end
+
+local function SyncGuidCacheOnRosterUpdate()
+    for _, u in ipairs(GRID_UNITS) do
+        if not SafeUnitExists(u) then
+            lastGuidByUnit[u] = nil
+            lastNameByUnit[u] = nil
+        else
+            local liveGuid = SafeUnitGUID(u)
+            local liveName = SafeUnitName(u)
+            if liveGuid then
+                RememberUnitIdentity(u, liveGuid, liveName)
+            elseif liveName then
+                if lastNameByUnit[u] ~= liveName then
+                    lastGuidByUnit[u] = lastGuidByName[liveName]
+                    lastNameByUnit[u] = liveName
+                end
+            elseif u ~= "player" then
+                -- If both GUID and Name are secret and slot count shrank, keep "player" intact
+                -- and retain party slot mapping only if its previous occupant still matches.
+            end
+        end
+    end
+end
 
 local function ClassifyDBMBuff(unit, f, filterPrio, filterCat, isPlayerFilter)
     local rName = f.readableName
     local sid = f.spellId
     local instKey = IsAccessibleVal(f.rawInstanceID) and f.rawInstanceID or nil
     local liveGuid = SafeUnitGUID(unit)
-    if liveGuid and unit then
-        lastGuidByUnit[unit] = liveGuid
+    local liveName = SafeUnitName(unit)
+    if liveGuid then
+        RememberUnitIdentity(unit, liveGuid, liveName)
+    elseif liveName and lastGuidByName[liveName] and not lastGuidByUnit[unit] then
+        lastGuidByUnit[unit] = lastGuidByName[liveName]
+        lastNameByUnit[unit] = liveName
     end
-    local guidKey = liveGuid or (unit and lastGuidByUnit[unit]) or nil
+    local guidKey = liveGuid or (unit and lastGuidByUnit[unit]) or (liveName and lastGuidByName[liveName]) or nil
     local unitMeta = guidKey and knownAuraMetaByUnit[guidKey]
     if not unitMeta and guidKey then
         unitMeta = {}
@@ -1129,20 +1171,17 @@ local function ClassifyDBMBuff(unit, f, filterPrio, filterCat, isPlayerFilter)
     if f.playerVerified == true then
         f.isPlayerBuff = true
         f.isVerifiedMine = true
-    elseif not FP.nkPlayerBuffFilterBroken then
-        if isPlayerFilter then
-            -- Returned by HELPFUL|PLAYER while ownership fields are secret: keep visible
-            -- ONLY as unverified (steel-blue border, sorted after verified green player buffs).
+    elseif isPlayerFilter or (filterPrio and filterPrio >= 75) then
+        -- Brand-new or refreshed combat buff while ownership is hidden as a Midnight Secret Value:
+        -- never drop combat buffs during combat! If |PLAYER filter is intact or broken, show
+        -- it immediately with distinct Steel-Blue/Cyan unverified color sorted after verified green buffs.
+        f.isPlayerBuff = false
+        f.isVerifiedMine = false
+    elseif not FP.nkPlayerBuffFilterBroken and C_UnitAuras and C_UnitAuras.IsAuraFilteredOutByInstanceID and f.rawInstanceID ~= nil then
+        local okP, outPlr = pcall(C_UnitAuras.IsAuraFilteredOutByInstanceID, unit, f.rawInstanceID, "HELPFUL|PLAYER")
+        if okP and IsAccessibleVal(outPlr) and outPlr == false then
             f.isPlayerBuff = false
             f.isVerifiedMine = false
-        elseif C_UnitAuras and C_UnitAuras.IsAuraFilteredOutByInstanceID and f.rawInstanceID ~= nil then
-            local okP, outPlr = pcall(C_UnitAuras.IsAuraFilteredOutByInstanceID, unit, f.rawInstanceID, "HELPFUL|PLAYER")
-            if okP and IsAccessibleVal(outPlr) and outPlr == false then
-                f.isPlayerBuff = false
-                f.isVerifiedMine = false
-            else
-                return nil, nil
-            end
         else
             return nil, nil
         end
@@ -2086,9 +2125,11 @@ for i = 1, 5 do
     powerBg:SetVertexColor(0.05, 0.05, 0.05, 0.9)
     btn.powerBg = powerBg
 
-    -- Name Text (Crisp white with shadow)
+    -- Name Text (Crisp white with shadow; width clamped so secret names in combat render cleanly)
     local nameText = hpBar:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     nameText:SetPoint("TOPLEFT", hpBar, "TOPLEFT", 4, -3)
+    nameText:SetWidth(76)
+    nameText:SetWordWrap(false)
     nameText:SetShadowOffset(1, -1)
     nameText:SetJustifyH("LEFT")
     btn.nameText = nameText
@@ -2260,6 +2301,55 @@ for i = 1, 5 do
 end
 
 local pendingCombatGridSync = false
+local gridDriversActive = false
+local gridDriversSoloState = nil
+
+-- Register Blizzard secure unit visibility drivers (RegisterUnitWatch for party1..4 and
+-- RegisterStateDriver for player) so party members joining or leaving DURING combat appear
+-- and disappear immediately without InCombatLockdown() blocking btn:Show()/btn:Hide().
+local function SyncGridVisibilityDrivers(enabled, showSolo)
+    if not (RegisterUnitWatch and RegisterStateDriver) then
+        return
+    end
+    if InCombatLockdown and InCombatLockdown() then
+        pendingCombatGridSync = true
+        return
+    end
+    local wantSolo = (showSolo == true)
+    if enabled then
+        if gridDriversActive and gridDriversSoloState == wantSolo then
+            return
+        end
+        local pBtn = gridMembers[1]
+        if pBtn then
+            if UnregisterUnitWatch then pcall(UnregisterUnitWatch, pBtn) end
+            if RegisterStateDriver then
+                pcall(RegisterStateDriver, pBtn, "visibility", wantSolo and "show" or "[group] show; hide")
+            end
+        end
+        for i = 2, 5 do
+            local mBtn = gridMembers[i]
+            if mBtn then
+                if UnregisterStateDriver then pcall(UnregisterStateDriver, mBtn, "visibility") end
+                if RegisterUnitWatch then pcall(RegisterUnitWatch, mBtn) end
+            end
+        end
+        gridDriversActive = true
+        gridDriversSoloState = wantSolo
+    else
+        if not gridDriversActive then return end
+        for i = 1, 5 do
+            local mBtn = gridMembers[i]
+            if mBtn then
+                if UnregisterUnitWatch then pcall(UnregisterUnitWatch, mBtn) end
+                if UnregisterStateDriver then pcall(UnregisterStateDriver, mBtn, "visibility") end
+                mBtn:Hide()
+            end
+        end
+        gridDriversActive = false
+        gridDriversSoloState = nil
+    end
+end
 
 local function ReadUnitBarValues(unit, valFn, maxFn)
     local rawVal, rawMax = nil, nil
@@ -2326,29 +2416,43 @@ local function UpdateGridMember(btn)
     local exists = SafeUnitExists(unit)
     local inCombat = InCombatLockdown and InCombatLockdown()
     if not exists then
-        if not inCombat then
-            btn:Hide()
-        else
-            pendingCombatGridSync = true
+        if not gridDriversActive then
+            if not inCombat then
+                btn:Hide()
+            else
+                pendingCombatGridSync = true
+            end
         end
         return
     end
 
-    if not inCombat then
-        btn:Show()
+    if not gridDriversActive then
+        if not inCombat then
+            btn:Show()
+        elseif not btn:IsShown() then
+            pendingCombatGridSync = true
+            return
+        end
     elseif not btn:IsShown() then
-        pendingCombatGridSync = true
         return
     end
 
     local color, class = GetUnitClassColor(unit)
     color = color or { r = 0.6, g = 0.6, b = 0.6 }
 
-    local name = SafeUnitName(unit) or unit
-    if type(name) == "string" and #name > 11 then
-        name = string.sub(name, 1, 9) .. ".."
+    local okName, rawName = pcall(UnitName, unit)
+    if okName and IsSafeStr(rawName) then
+        local dispName = (#rawName > 11) and (string.sub(rawName, 1, 9) .. "..") or rawName
+        btn.lastSafeName = dispName
+        btn.nameText:SetText(dispName)
+    elseif okName and IsSecretVal(rawName) then
+        local okSet = pcall(btn.nameText.SetText, btn.nameText, rawName)
+        if not okSet then
+            btn.nameText:SetText(btn.lastSafeName or unit)
+        end
+    else
+        btn.nameText:SetText(btn.lastSafeName or unit)
     end
-    btn.nameText:SetText(tostring(name or unit))
 
     if btn.levelText then
         local lvl = UnitLevel and SafeNumber(SafeCall(UnitLevel, unit), 0) or 0
@@ -2406,6 +2510,14 @@ local function UpdateGridMember(btn)
                 btn.hpText:SetText(string.format("-%d", deficit))
             end
             btn.hpText:SetTextColor(1.0, 0.35, 0.35, 1.0)
+        elseif not isSafeHp and UnitHealthPercent and CurveConstants and CurveConstants.ScaleTo100 then
+            local okPct, pct100 = pcall(UnitHealthPercent, unit, false, CurveConstants.ScaleTo100)
+            local okFmt = okPct and pct100 ~= nil and pcall(btn.hpText.SetFormattedText, btn.hpText, "%.0f%%", pct100)
+            if okFmt then
+                btn.hpText:SetTextColor(1.0, 0.92, 0.72, 0.90)
+            else
+                btn.hpText:SetText("")
+            end
         else
             btn.hpText:SetText("")
         end
@@ -2569,6 +2681,7 @@ end
 local function UpdatePartyGrid()
     local inCombat = InCombatLockdown and InCombatLockdown()
     if not IsGridPartyEnabled() then
+        SyncGridVisibilityDrivers(false, false)
         if gridContainer:IsShown() then
             if not inCombat then gridContainer:Hide() else pendingCombatGridSync = true end
         end
@@ -2580,6 +2693,9 @@ local function UpdatePartyGrid()
         or (GetNumPartyMembers and SafeNumber(SafeCall(GetNumPartyMembers), 0) > 0)
 
     local s = GetSettings()
+    local showSolo = s.gridPartyShowSolo == true
+    SyncGridVisibilityDrivers(true, showSolo)
+
     local isLocked = (s.gridPartyLocked ~= false)
     if s.gridPartyPos and not gridContainer.posLoaded and not inCombat then
         gridContainer.posLoaded = true
@@ -2587,7 +2703,6 @@ local function UpdatePartyGrid()
         gridContainer:SetPoint(s.gridPartyPos.point, UIParent, s.gridPartyPos.relPoint, s.gridPartyPos.x, s.gridPartyPos.y)
     end
 
-    local showSolo = s.gridPartyShowSolo == true
     if not inGrp and not showSolo then
         if gridContainer:IsShown() then
             if not inCombat then gridContainer:Hide() else pendingCombatGridSync = true end
@@ -2629,10 +2744,12 @@ local function UpdatePartyGrid()
         if exists then
             UpdateGridMember(btn)
             activeCount = activeCount + 1
-        elseif not inCombat then
-            btn:Hide()
-        else
-            pendingCombatGridSync = true
+        elseif not gridDriversActive then
+            if not inCombat then
+                btn:Hide()
+            else
+                pendingCombatGridSync = true
+            end
         end
     end
 
@@ -2657,6 +2774,7 @@ local function UpdateAllPartyMembers()
     if IsGridPartyEnabled() then
         UpdatePartyGrid()
     else
+        SyncGridVisibilityDrivers(false, false)
         if gridContainer and gridContainer:IsShown() then
             if not inCombat then
                 gridContainer:Hide()
@@ -3126,8 +3244,12 @@ evFrame:SetScript("OnEvent", function(self, event, arg1, ...)
         elseif event == "PLAYER_ENTERING_WORLD" or event == "GROUP_ROSTER_UPDATE" or event == "PARTY_MEMBERS_CHANGED"
             or event == "PARTY_LEADER_CHANGED" or event == "PARTY_MEMBER_ENABLE" or event == "PARTY_MEMBER_DISABLE"
             or event == "RAID_ROSTER_UPDATE" or event == "UNIT_CONNECTION" or event == "ZONE_CHANGED_NEW_AREA" then
-            if event == "GROUP_ROSTER_UPDATE" or event == "PARTY_MEMBERS_CHANGED" or event == "RAID_ROSTER_UPDATE" or event == "PLAYER_ENTERING_WORLD" then
+            if event == "PLAYER_ENTERING_WORLD" then
                 lastGuidByUnit = {}
+                lastNameByUnit = {}
+                lastGuidByName = {}
+            elseif event == "GROUP_ROSTER_UPDATE" or event == "PARTY_MEMBERS_CHANGED" or event == "RAID_ROSTER_UPDATE" then
+                SyncGuidCacheOnRosterUpdate()
             end
             UpdateAllPartyMembers()
             UpdateTargetFrame()
@@ -3200,19 +3322,19 @@ evFrame:SetScript("OnEvent", function(self, event, arg1, ...)
     end)
 end)
 
--- Lightweight polling ticker while in party (refreshes party frames every 0.25s so class info, colors, portraits, range, and permanent auras are NEVER delayed or lost)
+-- Lightweight polling ticker while in party (refreshes party frames every 0.25s so class info, colors, portraits, range, and auras are NEVER delayed or lost, including during combat)
 local partyElapsed = 0
 evFrame:SetScript("OnUpdate", function(self, elapsed)
     partyElapsed = partyElapsed + (elapsed or 0)
-    if partyElapsed >= 0.5 then
+    if partyElapsed >= 0.25 then
         partyElapsed = 0
         if IsClassFeaturesEnabled() then
-            local inGroup = (IsInGroup and IsInGroup())
-                or (GetNumGroupMembers and GetNumGroupMembers() > 0)
-                or (GetNumPartyMembers and GetNumPartyMembers() > 0)
+            local inGroup = (IsInGroup and SafeBoolean(SafeCall(IsInGroup), false))
+                or (GetNumGroupMembers and SafeNumber(SafeCall(GetNumGroupMembers), 0) > 0)
+                or (GetNumPartyMembers and SafeNumber(SafeCall(GetNumPartyMembers), 0) > 0)
             local showSolo = GetSettings().gridPartyShowSolo == true
             if inGroup or showSolo then
-                UpdateAllPartyMembers()
+                pcall(UpdateAllPartyMembers)
             end
         end
     end
