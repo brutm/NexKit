@@ -163,6 +163,7 @@ local function SafeReadAuraFields(unit, aura)
     return {
         rawInstanceID  = rawInstanceID,
         safeInstanceID = IsAccessible(rawInstanceID) and rawInstanceID or nil,
+        rawName        = rawName,
         safeName       = IsSafeStr(rawName) and rawName or nil,
         rawIcon        = rawIcon,
         safeIcon       = IsAccessible(rawIcon) and rawIcon or nil,
@@ -175,14 +176,10 @@ local function SafeReadAuraFields(unit, aura)
     }
 end
 
-local knownDebuffSchools = {}
-local NON_DISPELLABLE_DEBUFFS = {
-    ["Weakened Soul"] = true, ["Anima Indebolita"] = true,
-    ["Forbearance"] = true, ["Astinenza"] = true,
-    ["Exhaustion"] = true, ["Sated"] = true, ["Temporal Displacement"] = true,
-    ["Resurrection Sickness"] = true, ["Debolezza da Resurrezione"] = true,
-    ["Deserter"] = true, ["Disertore"] = true,
-}
+local knownDebuffSchools = FP.nkKnownDebuffSchools
+local NON_DISPELLABLE_DEBUFFS = FP.NON_DISPELLABLE_DEBUFFS
+local lastSafeUnitNames = {}
+local lastSafeUnitGUIDs = {}
 
 local function IsInstanceDispellableByPlayer(unit, rawInstanceID)
     if rawInstanceID == nil or not C_UnitAuras or not C_UnitAuras.IsAuraFilteredOutByInstanceID then
@@ -203,10 +200,19 @@ local function ScanUnitDispellables(unit, dispelInfo, outList)
     local isPlayer = (unit == "player") or (UnitIsUnit and SafeBoolean(SafeCall(UnitIsUnit, unit, "player"), false) == true)
     local unitRole = UnitGroupRolesAssigned and SafeCall(UnitGroupRolesAssigned, unit)
     local hpPct = GetUnitHealthPct(unit)
-    local rawName = UnitName and SafeCall(UnitName, unit)
-    local unitName = IsSafeStr(rawName) and rawName or unit
-    local unitGUID = (UnitGUID and SafeCall(UnitGUID, unit))
-    unitGUID = IsSafeStr(unitGUID) and unitGUID or unit
+    local rawGUID = UnitGUID and SafeCall(UnitGUID, unit)
+    local unitGUID = IsSafeStr(rawGUID) and rawGUID or unit
+    if IsSafeStr(rawGUID) and lastSafeUnitGUIDs[unit] ~= rawGUID then
+        lastSafeUnitGUIDs[unit] = rawGUID
+        lastSafeUnitNames[unit] = nil
+    end
+    local okUN, rawName = pcall(UnitName, unit)
+    rawName = okUN and rawName or nil
+    if IsSafeStr(rawName) then
+        lastSafeUnitNames[unit] = rawName
+    end
+    local unitName = (IsSafeStr(rawName) and rawName) or lastSafeUnitNames[unit] or unit
+    local rawUnitName = (not IsSafeStr(rawName) and IsSecret(rawName)) and rawName or nil
     local colorHex = GetClassColorHex(unit)
     local now = (GetTime and SafeCall(GetTime)) or 0
     local fallbackSchool = PickFallbackDispelSchool(dispelInfo)
@@ -251,13 +257,16 @@ local function ScanUnitDispellables(unit, dispelInfo, outList)
             unit              = unit,
             unitGUID          = unitGUID,
             unitName          = unitName,
+            rawUnitName       = rawUnitName,
             isPlayer          = isPlayer,
             colorHex          = colorHex,
             debuffName        = f.safeName or "Debuff",
+            rawDebuffName     = (not f.safeName and IsSecret(f.rawName)) and f.rawName or nil,
             debuffIcon        = f.safeIcon or "Interface\\Icons\\INV_Misc_QuestionMark",
             rawDebuffIcon     = f.rawIcon,
             auraInstanceID    = f.safeInstanceID,
             debuffDurationObj = f.durationObj,
+            secretColorObj    = f.secretColorObj,
             stacks            = stacks,
             remaining         = remSec,
             duration          = f.safeDur or 0,
@@ -272,6 +281,28 @@ local function ScanUnitDispellables(unit, dispelInfo, outList)
             isSpellReady      = isReady,
             score             = score,
         }
+    end
+
+    local function ResolveSecretDebuffSchool(f)
+        local cached = f.safeInstanceID and knownDebuffSchools[f.safeInstanceID] or nil
+        if cached == false then
+            return nil
+        elseif cached and dispelInfo.schools[cached] then
+            return cached
+        end
+        if FP.ProbeAuraDispelColor then
+            local probeStatus, probeSchool, probeColor = FP:ProbeAuraDispelColor(unit, f.rawInstanceID, dispelInfo.schools)
+            if probeStatus == "matched" then
+                if f.safeInstanceID then knownDebuffSchools[f.safeInstanceID] = probeSchool end
+                return probeSchool
+            elseif probeStatus == "none" then
+                if f.safeInstanceID then knownDebuffSchools[f.safeInstanceID] = false end
+                return nil
+            elseif probeStatus == "secret" then
+                f.secretColorObj = probeColor
+            end
+        end
+        return "SECRET_UNVERIFIED"
     end
 
     -- Pass 1 (Combat Midnight Secret-Value Safe): Ask C_UnitAuras directly for HARMFUL|RAID_PLAYER_DISPELLABLE
@@ -297,18 +328,18 @@ local function ScanUnitDispellables(unit, dispelInfo, outList)
                         PushMatch(f.safeDispel, f)
                         filterHitCount = filterHitCount + 1
                     elseif not f.safeDispel then
-                        -- Client ignored RAID_PLAYER_DISPELLABLE and returned a non-dispellable debuff (e.g. Weakened Soul)
+                        -- Client ignored RAID_PLAYER_DISPELLABLE and returned a non-dispellable debuff (e.g. Webs/Physical)
                         FP.nkRaidDispelFilterBroken = true
                     end
                 else
-                    local cached = f.safeInstanceID and knownDebuffSchools[f.safeInstanceID] or nil
-                    if cached == false then
-                        -- Known undispellable from pre-combat
-                    elseif cached and dispelInfo.schools[cached] then
-                        PushMatch(cached, f)
-                        filterHitCount = filterHitCount + 1
-                    elseif not FP.nkRaidDispelFilterBroken then
-                        PushMatch(fallbackSchool, f)
+                    local resolved = ResolveSecretDebuffSchool(f)
+                    if resolved == "SECRET_UNVERIFIED" then
+                        if not FP.nkRaidDispelFilterBroken then
+                            PushMatch(fallbackSchool, f)
+                            filterHitCount = filterHitCount + 1
+                        end
+                    elseif resolved then
+                        PushMatch(resolved, f)
                         filterHitCount = filterHitCount + 1
                     end
                 end
@@ -320,7 +351,7 @@ local function ScanUnitDispellables(unit, dispelInfo, outList)
         return
     end
 
-    -- Pass 2: Full HARMFUL scan (handles readable dispelName, pre-combat cache & RAID_PLAYER_DISPELLABLE)
+    -- Pass 2: Full HARMFUL scan (handles readable dispelName, pre-combat cache, color-curve & RAID_PLAYER_DISPELLABLE)
     if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
         for i = 1, 24 do
             local okC, aura = pcall(C_UnitAuras.GetAuraDataByIndex, unit, i, "HARMFUL")
@@ -331,21 +362,25 @@ local function ScanUnitDispellables(unit, dispelInfo, outList)
             if f.safeName and NON_DISPELLABLE_DEBUFFS[f.safeName] then
                 if f.safeInstanceID then knownDebuffSchools[f.safeInstanceID] = false end
             else
-            if not f.dispelIsSecret and f.safeInstanceID then
-                knownDebuffSchools[f.safeInstanceID] = f.safeDispel or false
-            end
-            local cachedSchool = f.safeInstanceID and knownDebuffSchools[f.safeInstanceID] or nil
-            local matchedSchool = nil
-            if f.safeDispel and dispelInfo.schools[f.safeDispel] then
-                matchedSchool = f.safeDispel
-            elseif f.dispelIsSecret and cachedSchool and cachedSchool ~= false and dispelInfo.schools[cachedSchool] then
-                matchedSchool = cachedSchool
-            elseif f.dispelIsSecret and cachedSchool ~= false and not FP.nkRaidDispelFilterBroken and IsInstanceDispellableByPlayer(unit, f.rawInstanceID) then
-                matchedSchool = fallbackSchool
-            end
-            if matchedSchool then
-                PushMatch(matchedSchool, f)
-            end
+                if not f.dispelIsSecret and f.safeInstanceID then
+                    knownDebuffSchools[f.safeInstanceID] = f.safeDispel or false
+                end
+                local matchedSchool = nil
+                if f.safeDispel and dispelInfo.schools[f.safeDispel] then
+                    matchedSchool = f.safeDispel
+                elseif f.dispelIsSecret then
+                    local resolved = ResolveSecretDebuffSchool(f)
+                    if resolved == "SECRET_UNVERIFIED" then
+                        if not FP.nkRaidDispelFilterBroken and IsInstanceDispellableByPlayer(unit, f.rawInstanceID) then
+                            matchedSchool = fallbackSchool
+                        end
+                    elseif resolved then
+                        matchedSchool = resolved
+                    end
+                end
+                if matchedSchool then
+                    PushMatch(matchedSchool, f)
+                end
             end
         end
     elseif UnitDebuff then
@@ -354,10 +389,13 @@ local function ScanUnitDispellables(unit, dispelInfo, outList)
             if not okD or not dName then
                 break
             end
+            local safeDName = IsSafeStr(dName) and dName or nil
             local safeDispel = IsSafeStr(dDispel) and dDispel or nil
-            if safeDispel and dispelInfo.schools[safeDispel] then
+            if safeDName and NON_DISPELLABLE_DEBUFFS[safeDName] then
+                -- Skip known non-dispellable debuffs
+            elseif safeDispel and dispelInfo.schools[safeDispel] then
                 PushMatch(safeDispel, {
-                    safeName   = IsSafeStr(dName) and dName or nil,
+                    safeName   = safeDName,
                     rawIcon    = dIcon,
                     safeIcon   = IsAccessible(dIcon) and dIcon or nil,
                     safeApps   = SafeNumber(dCount, 0),
@@ -442,6 +480,7 @@ alertFrame:SetBackdrop({
 })
 alertFrame:SetBackdropColor(0.05, 0.06, 0.09, 0.94)
 alertFrame:SetBackdropBorderColor(0.20, 0.65, 1.00, 1.00)
+alertFrame.secretBorder = FP.CreateEdgeBorderOverlay and FP:CreateEdgeBorderOverlay(alertFrame, 2, 0, alertFrame:GetFrameLevel() + 8) or nil
 alertFrame:Hide()
 
 alertFrame:RegisterForDrag("LeftButton")
@@ -471,6 +510,7 @@ debuffBox:SetBackdrop({
     insets = { left = 2, right = 2, top = 2, bottom = 2 }
 })
 debuffBox:SetBackdropColor(0, 0, 0, 0.9)
+debuffBox.secretBorder = FP.CreateEdgeBorderOverlay and FP:CreateEdgeBorderOverlay(debuffBox, 2, 0, debuffBox:GetFrameLevel() + 8) or nil
 
 local debuffIcon = debuffBox:CreateTexture(nil, "ARTWORK")
 debuffIcon:SetPoint("TOPLEFT", 2, -2)
@@ -620,6 +660,10 @@ local function ApplyAlertVisual(entry, totalCount)
     local col = DISPEL_COLORS[entry.school] or DISPEL_COLORS.none
     alertFrame:SetBackdropBorderColor(col.r, col.g, col.b, 1.0)
     debuffBox:SetBackdropBorderColor(col.r, col.g, col.b, 1.0)
+    if FP.ApplySecretBorderColor then
+        FP:ApplySecretBorderColor(alertFrame.secretBorder, entry.secretColorObj)
+        FP:ApplySecretBorderColor(debuffBox.secretBorder, entry.secretColorObj)
+    end
     local okTex = false
     if IsSecret(entry.rawDebuffIcon) then
         okTex = pcall(debuffIcon.SetTexture, debuffIcon, entry.rawDebuffIcon)
@@ -667,7 +711,13 @@ local function ApplyAlertVisual(entry, totalCount)
     titleText:SetText(string.format("|cff%02x%02x%02x%s|r%s", math.floor(col.r * 255), math.floor(col.g * 255), math.floor(col.b * 255), schoolLabel, suffix))
 
     local targetPrefix = entry.isPlayer and (L["DISPEL_YOU"] or "YOU") or entry.unitName
-    targetText:SetText(string.format("|cff%s%s|r — |cffffffff%s|r", entry.colorHex or "ffffff", targetPrefix, entry.debuffName))
+    local targetArg = entry.isPlayer and targetPrefix or (entry.rawUnitName or targetPrefix)
+    local debuffArg = entry.rawDebuffName or entry.debuffName
+    local okFmt = (not entry.isPreview) and (entry.rawUnitName ~= nil or entry.rawDebuffName ~= nil)
+        and pcall(targetText.SetFormattedText, targetText, "|cff%s%s|r — |cffffffff%s|r", entry.colorHex or "ffffff", targetArg, debuffArg)
+    if not okFmt then
+        targetText:SetText(string.format("|cff%s%s|r — |cffffffff%s|r", entry.colorHex or "ffffff", targetPrefix, entry.debuffName))
+    end
 
     spellIcon:SetTexture(entry.spellIcon or "Interface\\Icons\\Spell_Holy_DispelMagic")
     local key = FP.GetSpellKeybind and FP:GetSpellKeybind(entry.spellID)

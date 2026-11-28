@@ -846,12 +846,35 @@ local function GetPartyUnitDebuffs(unit)
     local dispels, playerClass = GetPlayerDispelCapabilities()
     local fallbackSchool = (dispels and dispels["Magic"]) and "Magic" or (next(dispels or {}) or "Magic")
 
-    -- Collect combat-safe dispellable instance IDs from Midnight native filter first
+    -- Collect combat-safe dispellable instance IDs from Midnight native filter, pre-combat cache & ColorCurve probe
     local knownDebuffSchools = FP.nkKnownDebuffSchools
     if not knownDebuffSchools then
         knownDebuffSchools = {}
         FP.nkKnownDebuffSchools = knownDebuffSchools
     end
+    local nonDispellable = FP.NON_DISPELLABLE_DEBUFFS or {}
+    local function ResolveSecretDebuff(f)
+        local cached = f.safeInstanceID and knownDebuffSchools[f.safeInstanceID] or nil
+        if cached == false then
+            return nil, nil
+        elseif cached and dispels and dispels[cached] then
+            return cached, nil
+        end
+        if FP.ProbeAuraDispelColor then
+            local probeStatus, probeSchool, probeColor = FP:ProbeAuraDispelColor(unit, f.rawInstanceID, dispels)
+            if probeStatus == "matched" then
+                if f.safeInstanceID then knownDebuffSchools[f.safeInstanceID] = probeSchool end
+                return probeSchool, nil
+            elseif probeStatus == "none" then
+                if f.safeInstanceID then knownDebuffSchools[f.safeInstanceID] = false end
+                return nil, nil
+            elseif probeStatus == "secret" then
+                return "SECRET_UNVERIFIED", probeColor
+            end
+        end
+        return "SECRET_UNVERIFIED", nil
+    end
+
     local filterDispellableIDs = {}
     local filterEntries = {}
     if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
@@ -859,8 +882,10 @@ local function GetPartyUnitDebuffs(unit)
             local okF, aura = pcall(C_UnitAuras.GetAuraDataByIndex, unit, i, "HARMFUL|RAID_PLAYER_DISPELLABLE")
             if not okF or type(aura) ~= "table" then break end
             local f = SafeReadDebuffAura(unit, aura)
-            if not (f.safeInstanceID and filterDispellableIDs[f.safeInstanceID]) then
-                local dSchool = nil
+            if f.safeName and nonDispellable[f.safeName] then
+                if f.safeInstanceID then knownDebuffSchools[f.safeInstanceID] = false end
+            elseif not (f.safeInstanceID and filterDispellableIDs[f.safeInstanceID]) then
+                local dSchool, secretColObj = nil, nil
                 if not f.dispelIsSecret then
                     if f.safeInstanceID then
                         knownDebuffSchools[f.safeInstanceID] = f.safeType or false
@@ -871,11 +896,14 @@ local function GetPartyUnitDebuffs(unit)
                         FP.nkRaidDispelFilterBroken = true
                     end
                 else
-                    local cached = f.safeInstanceID and knownDebuffSchools[f.safeInstanceID] or nil
-                    if cached and cached ~= false and dispels and dispels[cached] then
-                        dSchool = cached
-                    elseif cached ~= false and not FP.nkRaidDispelFilterBroken then
-                        dSchool = fallbackSchool
+                    local resolved, colObj = ResolveSecretDebuff(f)
+                    secretColObj = colObj
+                    if resolved == "SECRET_UNVERIFIED" then
+                        if not FP.nkRaidDispelFilterBroken then
+                            dSchool = fallbackSchool
+                        end
+                    else
+                        dSchool = resolved
                     end
                 end
                 if dSchool then
@@ -892,6 +920,7 @@ local function GetPartyUnitDebuffs(unit)
                         count = f.count,
                         dispelType = dSchool,
                         canDispel = true,
+                        secretColorObj = secretColObj,
                         duration = f.duration,
                         expirationTime = f.expirationTime,
                         durationObj = f.durationObj,
@@ -908,20 +937,32 @@ local function GetPartyUnitDebuffs(unit)
             local okC, aura = pcall(C_UnitAuras.GetAuraDataByIndex, unit, i, "HARMFUL")
             if not okC or type(aura) ~= "table" then break end
             local f = SafeReadDebuffAura(unit, aura)
-            if not f.dispelIsSecret and f.safeInstanceID then
+            local isNonDispellable = (f.safeName and nonDispellable[f.safeName]) and true or false
+            if isNonDispellable then
+                if f.safeInstanceID then knownDebuffSchools[f.safeInstanceID] = false end
+            elseif not f.dispelIsSecret and f.safeInstanceID then
                 knownDebuffSchools[f.safeInstanceID] = f.safeType or false
             end
-            local cached = f.safeInstanceID and knownDebuffSchools[f.safeInstanceID] or nil
-            local safeType = f.safeType or (cached and cached ~= false and cached or nil)
+            local safeType = (not isNonDispellable) and f.safeType or nil
             local canDispel = (safeType ~= nil and dispels and dispels[safeType] == true) or false
-            if not canDispel and f.dispelIsSecret and f.safeInstanceID and filterDispellableIDs[f.safeInstanceID] then
-                canDispel = true
-                safeType = safeType or filterDispellableIDs[f.safeInstanceID]
-            elseif not canDispel and f.dispelIsSecret and cached ~= false and not FP.nkRaidDispelFilterBroken and f.rawInstanceID ~= nil and C_UnitAuras.IsAuraFilteredOutByInstanceID then
-                local okFo, fo = pcall(C_UnitAuras.IsAuraFilteredOutByInstanceID, unit, f.rawInstanceID, "HARMFUL|RAID_PLAYER_DISPELLABLE")
-                if okFo and not IsSecretVal(fo) and fo == false then
+            local secretColObj = nil
+            if not isNonDispellable and not canDispel and f.dispelIsSecret then
+                local resolved, colObj = ResolveSecretDebuff(f)
+                secretColObj = colObj
+                if resolved and resolved ~= "SECRET_UNVERIFIED" then
                     canDispel = true
-                    safeType = safeType or fallbackSchool
+                    safeType = resolved
+                elseif resolved == "SECRET_UNVERIFIED" then
+                    if f.safeInstanceID and filterDispellableIDs[f.safeInstanceID] then
+                        canDispel = true
+                        safeType = filterDispellableIDs[f.safeInstanceID]
+                    elseif not FP.nkRaidDispelFilterBroken and f.rawInstanceID ~= nil and C_UnitAuras.IsAuraFilteredOutByInstanceID then
+                        local okFo, fo = pcall(C_UnitAuras.IsAuraFilteredOutByInstanceID, unit, f.rawInstanceID, "HARMFUL|RAID_PLAYER_DISPELLABLE")
+                        if okFo and not IsSecretVal(fo) and fo == false then
+                            canDispel = true
+                            safeType = fallbackSchool
+                        end
+                    end
                 end
             end
             if canDispel then anyCanDispelFound = true end
@@ -935,6 +976,7 @@ local function GetPartyUnitDebuffs(unit)
                 count = f.count,
                 dispelType = safeType or "none",
                 canDispel = canDispel,
+                secretColorObj = (not canDispel) and secretColObj or nil,
                 duration = f.duration,
                 expirationTime = f.expirationTime,
                 durationObj = f.durationObj,
@@ -1932,45 +1974,11 @@ end)
 -- Pure C++ 4-edge texture overlay so Blizzard's ColorCurve secret RGBA values can tint borders
 -- via Texture:SetVertexColor() without running Backdrop.lua Lua comparisons.
 local function CreateEdgeBorderOverlay(parent, thickness, outset, frameLevel)
-    local holder = CreateFrame("Frame", nil, parent)
-    holder:SetPoint("TOPLEFT", parent, "TOPLEFT", -outset, outset)
-    holder:SetPoint("BOTTOMRIGHT", parent, "BOTTOMRIGHT", outset, -outset)
-    holder:SetFrameLevel(frameLevel)
-    local t = holder:CreateTexture(nil, "OVERLAY")
-    t:SetTexture("Interface\\Buttons\\WHITE8x8")
-    t:SetPoint("TOPLEFT", holder, "TOPLEFT", 0, 0)
-    t:SetPoint("TOPRIGHT", holder, "TOPRIGHT", 0, 0)
-    t:SetHeight(thickness)
-    local b = holder:CreateTexture(nil, "OVERLAY")
-    b:SetTexture("Interface\\Buttons\\WHITE8x8")
-    b:SetPoint("BOTTOMLEFT", holder, "BOTTOMLEFT", 0, 0)
-    b:SetPoint("BOTTOMRIGHT", holder, "BOTTOMRIGHT", 0, 0)
-    b:SetHeight(thickness)
-    local l = holder:CreateTexture(nil, "OVERLAY")
-    l:SetTexture("Interface\\Buttons\\WHITE8x8")
-    l:SetPoint("TOPLEFT", holder, "TOPLEFT", 0, 0)
-    l:SetPoint("BOTTOMLEFT", holder, "BOTTOMLEFT", 0, 0)
-    l:SetWidth(thickness)
-    local r = holder:CreateTexture(nil, "OVERLAY")
-    r:SetTexture("Interface\\Buttons\\WHITE8x8")
-    r:SetPoint("TOPRIGHT", holder, "TOPRIGHT", 0, 0)
-    r:SetPoint("BOTTOMRIGHT", holder, "BOTTOMRIGHT", 0, 0)
-    r:SetWidth(thickness)
-    holder.edges = { t, b, l, r }
-    holder:Hide()
-    return holder
+    return FP:CreateEdgeBorderOverlay(parent, thickness, outset, frameLevel)
 end
 
 local function ApplySecretBorderColor(overlay, colorObj)
-    if not overlay then return end
-    if colorObj and colorObj.GetRGBA then
-        for _, edge in ipairs(overlay.edges) do
-            pcall(edge.SetVertexColor, edge, colorObj:GetRGBA())
-        end
-        overlay:Show()
-    else
-        overlay:Hide()
-    end
+    FP:ApplySecretBorderColor(overlay, colorObj)
 end
 
 local function CheckUnitRange(unit)
@@ -2627,10 +2635,12 @@ local function UpdateGridMember(btn)
     -- Debuffs (Top right) & Grid Dispel Glow
     local debuffs = GetPartyUnitDebuffs(unit)
     local firstDispellable = nil
+    local secretEntries = {}
     for d = 1, #debuffs do
-        if debuffs[d].canDispel then
+        if debuffs[d].canDispel and not firstDispellable then
             firstDispellable = debuffs[d]
-            break
+        elseif debuffs[d].secretColorObj then
+            secretEntries[#secretEntries + 1] = debuffs[d].secretColorObj
         end
     end
     if btn.dispelBorder then
@@ -2638,11 +2648,16 @@ local function UpdateGridMember(btn)
             local dCol = DISPEL_COLORS[firstDispellable.dispelType] or DISPEL_COLORS["Magic"]
             btn.dispelBorder:SetBackdropBorderColor(dCol.r, dCol.g, dCol.b, 1.0)
             btn.dispelBorder:Show()
+            if btn.secretDispelLayers then
+                for dl = 1, #btn.secretDispelLayers do btn.secretDispelLayers[dl]:Hide() end
+            end
         else
             btn.dispelBorder:Hide()
-        end
-        if btn.secretDispelLayers then
-            for dl = 1, #btn.secretDispelLayers do btn.secretDispelLayers[dl]:Hide() end
+            if btn.secretDispelLayers then
+                for dl = 1, #btn.secretDispelLayers do
+                    ApplySecretBorderColor(btn.secretDispelLayers[dl], secretEntries[dl])
+                end
+            end
         end
     end
     for d = 1, 2 do
@@ -2654,9 +2669,14 @@ local function UpdateGridMember(btn)
             dBtn.auraFilter = debuff.auraFilter
             dBtn.rawInstanceID = debuff.rawInstanceID
             SafeSetAuraTexture(dBtn.icon, debuff.rawIcon, debuff.icon)
-            local col = DISPEL_COLORS[debuff.dispelType] or DISPEL_COLORS["none"]
-            dBtn:SetBackdropBorderColor(col.r, col.g, col.b, 1)
-            if dBtn.secretOverlay then dBtn.secretOverlay:Hide() end
+            if not debuff.canDispel and debuff.secretColorObj then
+                dBtn:SetBackdropBorderColor(0.35, 0.35, 0.40, 0.85)
+                ApplySecretBorderColor(dBtn.secretOverlay, debuff.secretColorObj)
+            else
+                local col = DISPEL_COLORS[debuff.dispelType] or DISPEL_COLORS["none"]
+                dBtn:SetBackdropBorderColor(col.r, col.g, col.b, 1)
+                if dBtn.secretOverlay then dBtn.secretOverlay:Hide() end
+            end
             ApplyAuraSlotCooldown(dBtn.cd, debuff)
             local dCount = SafeNumber(debuff.count, 0)
             if dCount > 1 then

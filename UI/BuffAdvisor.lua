@@ -387,6 +387,10 @@ local function ScanPlayerAurasAndForms()
     end
 
     local globalSecret = (C_Secrets and C_Secrets.ShouldAurasBeSecret and SafeCall(C_Secrets.ShouldAurasBeSecret)) == true
+    state.totalSlots = totalSlots
+    state.readableSlots = readableSlots
+    state.globalSecret = globalSecret
+    state.hadAuraError = hadAuraError
     if globalSecret or hadAuraError then
         state.restricted = true
     elseif totalSlots > 0 and readableSlots < totalSlots and InCombatLockdown and InCombatLockdown() then
@@ -934,6 +938,7 @@ local DUNGEON_ELIXIRS = {
 local dismissedKeys = {}
 local snoozedKeys = {}
 local preCombatMissingKeys = {}
+local trackedBuffStates = {} -- key -> { expAt, duration, minDur, ranks } for combat expiration detection
 local recentCastUntil = {}
 local recentCastSpellIDs = {}
 local recentCastSpellNames = {}
@@ -996,6 +1001,30 @@ local function EvaluateRecommendations()
     local nowCast = (GetTime and SafeCall(GetTime)) or 0
     if type(nowCast) ~= "number" then nowCast = 0 end
 
+    local function IsSuggestionRestrictedForRanks(auraState, rankGroups)
+        if not auraState.restricted then return false end
+        if auraState.globalSecret or auraState.hadAuraError or (auraState.readableSlots or 0) == 0 then
+            return true
+        end
+        if not (C_Secrets and C_Secrets.ShouldSpellAuraBeSecret) then
+            return true
+        end
+        local checkedAny = false
+        for _, item in ipairs(type(rankGroups) == "table" and rankGroups or {}) do
+            local list = (type(item) == "table") and item or { item }
+            for _, sid in ipairs(list) do
+                if type(sid) == "number" then
+                    checkedAny = true
+                    local sec = SafeCall(C_Secrets.ShouldSpellAuraBeSecret, sid)
+                    if sec ~= false then
+                        return true
+                    end
+                end
+            end
+        end
+        return not checkedAny
+    end
+
     local function PushSuggestion(entry)
         if not entry or not entry.key then return end
         if dismissedKeys[entry.key] or snoozedKeys[entry.key] then return end
@@ -1009,24 +1038,72 @@ local function EvaluateRecommendations()
     end
 
     local function CheckBuffSuggestion(opts)
-        if auras.restricted and not preCombatMissingKeys[opts.key] then return end
         if opts.skipIfStealthed and ctx.isStealthed then return end
         if opts.skipIfMounted and (ctx.isMounted or ctx.isFlying) then return end
 
-        local active, activeInfo = IsGroupActive(auras, opts.satisfiedBy or { opts.ranks })
+        local groups = opts.satisfiedBy or { opts.ranks }
+        local active, activeInfo = IsGroupActive(auras, groups)
         local expiring = active and ShouldRecommendExpiring(activeInfo, opts.minDur)
+        local restrictedMissing = false
+        local combatRemSec = nil
+
+        if active then
+            preCombatMissingKeys[opts.key] = nil
+            local dur = (activeInfo and type(activeInfo.duration) == "number") and activeInfo.duration or 0
+            local rem = (activeInfo and type(activeInfo.remaining) == "number") and activeInfo.remaining or nil
+            trackedBuffStates[opts.key] = {
+                expAt    = (rem and rem > 0 and nowCast > 0) and (nowCast + rem) or nil,
+                duration = dur,
+                minDur   = opts.minDur,
+                groups   = groups,
+            }
+        elseif IsSuggestionRestrictedForRanks(auras, groups) then
+            local st = trackedBuffStates[opts.key]
+            if preCombatMissingKeys[opts.key] then
+                restrictedMissing = true
+            elseif st and st.expAt and nowCast > 0 then
+                if nowCast >= st.expAt then
+                    -- Buff active before combat has now expired mid-combat
+                    restrictedMissing = true
+                elseif (not st.duration or st.duration == 0 or st.duration >= (opts.minDur or 120)) then
+                    local rem = st.expAt - nowCast
+                    local thr = GetExpiringThreshold()
+                    if st.duration and st.duration > 0 and thr >= st.duration then
+                        thr = math.max(30, st.duration * 0.5)
+                    end
+                    if rem > 0 and rem <= thr then
+                        active = true
+                        expiring = true
+                        combatRemSec = math.ceil(rem)
+                    else
+                        return
+                    end
+                else
+                    return
+                end
+            else
+                return
+            end
+        else
+            trackedBuffStates[opts.key] = {
+                expAt    = nil,
+                duration = 0,
+                minDur   = opts.minDur,
+                groups   = groups,
+            }
+        end
 
         if active and not expiring and opts.key then
             snoozedKeys[opts.key] = nil
         end
 
-        if not active or expiring then
+        if not active or expiring or restrictedMissing then
             local sid, sName = FindKnownSpell(opts.ranks)
             if not sid then return end
             local usable, noResource = IsSpellUsableCompat(sid)
             local icon = GetSpellTextureCompat(sid) or "Interface\\Icons\\INV_Misc_QuestionMark"
             local displayName = sName or GetSpellNameCompat(sid) or "Buff"
-            local remSec = expiring and math.ceil(activeInfo.remaining) or nil
+            local remSec = combatRemSec or (expiring and activeInfo and activeInfo.remaining and math.ceil(activeInfo.remaining)) or nil
 
             PushSuggestion({
                 key        = opts.key,
@@ -1182,35 +1259,30 @@ local function EvaluateRecommendations()
             key = "MAGE_INT", priority = 20, ranks = CLASS_SPELLS.ARCANE_INTELLECT,
             skipIfStealthed = true, minDur = 120,
         })
-        -- Choose best Armor when none is active
-        local hasArmor, armorInfo = IsGroupActive(auras, {
-            CLASS_SPELLS.FROST_ARMOR, CLASS_SPELLS.ICE_ARMOR, CLASS_SPELLS.MAGE_ARMOR, CLASS_SPELLS.MOLTEN_ARMOR
-        })
-        if not auras.restricted and (not hasArmor or ShouldRecommendExpiring(armorInfo, 120)) then
-            local armorRanks = CLASS_SPELLS.ICE_ARMOR
-            if ((ctx.tabIdx == 2 and ctx.tabPts >= 10) or HasContextTalent(ctx, "molten armor", "pyroblast", "ignite"))
-                and FindKnownSpell(CLASS_SPELLS.MOLTEN_ARMOR)
-            then
+        -- Choose best Armor when none is active (let CheckBuffSuggestion manage restricted combat tracking)
+        local armorRanks = CLASS_SPELLS.ICE_ARMOR
+        if ((ctx.tabIdx == 2 and ctx.tabPts >= 10) or HasContextTalent(ctx, "molten armor", "pyroblast", "ignite"))
+            and FindKnownSpell(CLASS_SPELLS.MOLTEN_ARMOR)
+        then
+            armorRanks = CLASS_SPELLS.MOLTEN_ARMOR
+        elseif (ctx.manaPct < 0.45 or (HasContextTalent(ctx, "arcane meditation") and ctx.manaPct < 0.70))
+            and FindKnownSpell(CLASS_SPELLS.MAGE_ARMOR)
+        then
+            armorRanks = CLASS_SPELLS.MAGE_ARMOR
+        elseif not FindKnownSpell(CLASS_SPELLS.ICE_ARMOR) then
+            if FindKnownSpell(CLASS_SPELLS.FROST_ARMOR) then
+                armorRanks = CLASS_SPELLS.FROST_ARMOR
+            elseif FindKnownSpell(CLASS_SPELLS.MOLTEN_ARMOR) then
                 armorRanks = CLASS_SPELLS.MOLTEN_ARMOR
-            elseif (ctx.manaPct < 0.45 or (HasContextTalent(ctx, "arcane meditation") and ctx.manaPct < 0.70))
-                and FindKnownSpell(CLASS_SPELLS.MAGE_ARMOR)
-            then
+            elseif FindKnownSpell(CLASS_SPELLS.MAGE_ARMOR) then
                 armorRanks = CLASS_SPELLS.MAGE_ARMOR
-            elseif not FindKnownSpell(CLASS_SPELLS.ICE_ARMOR) then
-                if FindKnownSpell(CLASS_SPELLS.FROST_ARMOR) then
-                    armorRanks = CLASS_SPELLS.FROST_ARMOR
-                elseif FindKnownSpell(CLASS_SPELLS.MOLTEN_ARMOR) then
-                    armorRanks = CLASS_SPELLS.MOLTEN_ARMOR
-                elseif FindKnownSpell(CLASS_SPELLS.MAGE_ARMOR) then
-                    armorRanks = CLASS_SPELLS.MAGE_ARMOR
-                end
             end
-            CheckBuffSuggestion({
-                key = "MAGE_ARMOR", priority = 22, ranks = armorRanks,
-                satisfiedBy = { CLASS_SPELLS.FROST_ARMOR, CLASS_SPELLS.ICE_ARMOR, CLASS_SPELLS.MAGE_ARMOR, CLASS_SPELLS.MOLTEN_ARMOR },
-                minDur = 120,
-            })
         end
+        CheckBuffSuggestion({
+            key = "MAGE_ARMOR", priority = 22, ranks = armorRanks,
+            satisfiedBy = { CLASS_SPELLS.FROST_ARMOR, CLASS_SPELLS.ICE_ARMOR, CLASS_SPELLS.MAGE_ARMOR, CLASS_SPELLS.MOLTEN_ARMOR },
+            minDur = 120,
+        })
 
     elseif cls == "PRIEST" then
         CheckBuffSuggestion({
@@ -1381,7 +1453,12 @@ local function EvaluateRecommendations()
             or (auras.activeNames and (auras.activeNames["righteous fury"] or auras.activeNames["furia virtuosa"] or auras.activeNames["furia retta"]))
             or (rfID and auras.activeIDs and auras.activeIDs[rfID])
 
-        if rfID and isProt and not isRFActive and not auras.restricted then
+        local rfRestricted = IsSuggestionRestrictedForRanks(auras, { CLASS_SPELLS.RIGHTEOUS_FURY })
+        if isRFActive then
+            preCombatMissingKeys["PALADIN_RF"] = nil
+            snoozedKeys["PALADIN_RF"] = nil
+        end
+        if rfID and isProt and not isRFActive and (not rfRestricted or preCombatMissingKeys["PALADIN_RF"]) then
             local usable, noResource = IsSpellUsableCompat(rfID)
             local icon = GetSpellTextureCompat(rfID) or "Interface\\Icons\\Spell_Holy_SealOfFury"
             local displayName = rfName or GetSpellNameCompat(rfID) or "Righteous Fury"
@@ -1399,8 +1476,6 @@ local function EvaluateRecommendations()
                 kind       = "buff",
                 reason     = L["BUFF_REASON_RIGHTEOUS_FURY"] or "Righteous Fury is inactive: activates extra Holy threat for tanking.",
             })
-        elseif isRFActive then
-            snoozedKeys["PALADIN_RF"] = nil
         end
 
     elseif cls == "WARRIOR" then
@@ -1412,7 +1487,7 @@ local function EvaluateRecommendations()
             minDur = 9999, -- 2-min rage shout: only warn when actually dropped
         })
         local hasStance = IsGroupActive(auras, { CLASS_SPELLS.BATTLE_STANCE, CLASS_SPELLS.DEF_STANCE, CLASS_SPELLS.BERSERKER_STANCE })
-        if not auras.restricted and auras.numShapeshifts > 0 and auras.shapeshiftIdx == 0 and not hasStance and not ctx.isMounted then
+        if auras.numShapeshifts > 0 and auras.shapeshiftIdx == 0 and not hasStance and not ctx.isMounted then
             local stRanks = (ctx.role == "TANK" and FindKnownSpell(CLASS_SPELLS.DEF_STANCE))
                 and CLASS_SPELLS.DEF_STANCE or CLASS_SPELLS.BATTLE_STANCE
             local sid, sName = FindKnownSpell(stRanks)
@@ -1428,41 +1503,39 @@ local function EvaluateRecommendations()
         end
 
     elseif cls == "HUNTER" then
-        if not auras.restricted then
-            local allAspects = {
-                CLASS_SPELLS.ASPECT_HAWK, CLASS_SPELLS.ASPECT_MONKEY, CLASS_SPELLS.ASPECT_CHEETAH,
-                CLASS_SPELLS.ASPECT_PACK, CLASS_SPELLS.ASPECT_VIPER, CLASS_SPELLS.ASPECT_OTHER,
-            }
-            local hasAspect = IsGroupActive(auras, allAspects)
-            local onCheetah = IsGroupActive(auras, { CLASS_SPELLS.ASPECT_CHEETAH, CLASS_SPELLS.ASPECT_PACK })
-            local onViper = IsGroupActive(auras, { CLASS_SPELLS.ASPECT_VIPER })
+        local allAspects = {
+            CLASS_SPELLS.ASPECT_HAWK, CLASS_SPELLS.ASPECT_MONKEY, CLASS_SPELLS.ASPECT_CHEETAH,
+            CLASS_SPELLS.ASPECT_PACK, CLASS_SPELLS.ASPECT_VIPER, CLASS_SPELLS.ASPECT_OTHER,
+        }
+        local hasAspect = IsGroupActive(auras, allAspects)
+        local onCheetah = IsGroupActive(auras, { CLASS_SPELLS.ASPECT_CHEETAH, CLASS_SPELLS.ASPECT_PACK })
+        local onViper = IsGroupActive(auras, { CLASS_SPELLS.ASPECT_VIPER })
 
-            local dpsRanks = FindKnownSpell(CLASS_SPELLS.ASPECT_HAWK) and CLASS_SPELLS.ASPECT_HAWK or CLASS_SPELLS.ASPECT_MONKEY
-            local dpsID, dpsName = FindKnownSpell(dpsRanks)
+        local dpsRanks = FindKnownSpell(CLASS_SPELLS.ASPECT_HAWK) and CLASS_SPELLS.ASPECT_HAWK or CLASS_SPELLS.ASPECT_MONKEY
+        local dpsID, dpsName = FindKnownSpell(dpsRanks)
 
-            if ctx.inCombat and onCheetah and dpsID then
-                PushSuggestion({
-                    key = "HUNTER_ASPECT_SWAP", priority = 14, actionType = "spell",
-                    spellID = dpsID, castSpell = dpsID, name = dpsName or "Aspect",
-                    icon = GetSpellTextureCompat(dpsID) or "Interface\\Icons\\Spell_Nature_RavenForm",
-                    usable = true, badge = L["BUFF_BADGE_SWITCH"] or "SWAP", kind = "switch",
-                    reason = string.format(L["BUFF_REASON_COMBAT_ASPECT"] or "In combat: switch off %s to avoid daze", GetSpellNameCompat(5118) or "Cheetah"),
-                })
-            elseif onViper and ctx.manaPct >= 0.85 and dpsID then
-                PushSuggestion({
-                    key = "HUNTER_ASPECT_VIPER", priority = 20, actionType = "spell",
-                    spellID = dpsID, castSpell = dpsID, name = dpsName or "Aspect",
-                    icon = GetSpellTextureCompat(dpsID) or "Interface\\Icons\\Spell_Nature_RavenForm",
-                    usable = true, badge = L["BUFF_BADGE_SWITCH"] or "SWAP", kind = "switch",
-                    reason = string.format(L["BUFF_REASON_LOW_MANA_BUFF"] or "Full mana: switch back to %s", dpsName or "Hawk"),
-                })
-            elseif not hasAspect then
-                local pickRanks = (ctx.manaPct < 0.25 and FindKnownSpell(CLASS_SPELLS.ASPECT_VIPER))
-                    and CLASS_SPELLS.ASPECT_VIPER or dpsRanks
-                CheckBuffSuggestion({
-                    key = "HUNTER_ASPECT", priority = 20, ranks = pickRanks, satisfiedBy = allAspects,
-                })
-            end
+        if ctx.inCombat and onCheetah and dpsID then
+            PushSuggestion({
+                key = "HUNTER_ASPECT_SWAP", priority = 14, actionType = "spell",
+                spellID = dpsID, castSpell = dpsID, name = dpsName or "Aspect",
+                icon = GetSpellTextureCompat(dpsID) or "Interface\\Icons\\Spell_Nature_RavenForm",
+                usable = true, badge = L["BUFF_BADGE_SWITCH"] or "SWAP", kind = "switch",
+                reason = string.format(L["BUFF_REASON_COMBAT_ASPECT"] or "In combat: switch off %s to avoid daze", GetSpellNameCompat(5118) or "Cheetah"),
+            })
+        elseif onViper and ctx.manaPct >= 0.85 and dpsID then
+            PushSuggestion({
+                key = "HUNTER_ASPECT_VIPER", priority = 20, actionType = "spell",
+                spellID = dpsID, castSpell = dpsID, name = dpsName or "Aspect",
+                icon = GetSpellTextureCompat(dpsID) or "Interface\\Icons\\Spell_Nature_RavenForm",
+                usable = true, badge = L["BUFF_BADGE_SWITCH"] or "SWAP", kind = "switch",
+                reason = string.format(L["BUFF_REASON_LOW_MANA_BUFF"] or "Full mana: switch back to %s", dpsName or "Hawk"),
+            })
+        elseif not hasAspect then
+            local pickRanks = (ctx.manaPct < 0.25 and FindKnownSpell(CLASS_SPELLS.ASPECT_VIPER))
+                and CLASS_SPELLS.ASPECT_VIPER or dpsRanks
+            CheckBuffSuggestion({
+                key = "HUNTER_ASPECT", priority = 20, ranks = pickRanks, satisfiedBy = allAspects,
+            })
         end
 
         local hasLoneWolf = HasContextTalent(ctx, "lone wolf", "lupo solitario")
@@ -1743,6 +1816,35 @@ buffFrame:SetFrameStrata("MEDIUM")
 buffFrame:Hide()
 
 local pendingRefresh = false
+local preCombatVisibleSlots = 0
+
+-- Non-secure visual mirror shown only when combat lockdown prevents showing/resizing
+-- SecureActionButtonTemplate buffFrame for buffs that drop or expire mid-combat.
+local combatBuffFrame = CreateFrame("Frame", "NexusKitCombatBuffFrame", UIParent, "BackdropTemplate")
+combatBuffFrame:SetSize(MIN_FRAME_W, COMPACT_FRAME_H)
+combatBuffFrame:SetPoint("TOPRIGHT", UIParent, "TOPRIGHT", -370, -40)
+if combatBuffFrame.SetDontSavePosition then
+    combatBuffFrame:SetDontSavePosition(true)
+end
+combatBuffFrame:SetBackdrop({
+    bgFile   = "Interface\\Buttons\\WHITE8x8",
+    edgeFile = "Interface\\Buttons\\WHITE8x8",
+    edgeSize = 1,
+})
+combatBuffFrame:SetBackdropColor(0, 0, 0, 0)
+combatBuffFrame:SetBackdropBorderColor(0, 0, 0, 0)
+combatBuffFrame.lastTransparentMode = true
+combatBuffFrame:SetClampedToScreen(true)
+combatBuffFrame:EnableMouse(false)
+combatBuffFrame:SetFrameStrata("MEDIUM")
+combatBuffFrame:Hide()
+
+local combatHeaderTitle = combatBuffFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+combatHeaderTitle:SetPoint("TOPLEFT", 8, -7)
+combatHeaderTitle:SetPoint("RIGHT", combatBuffFrame, "RIGHT", -8, 0)
+combatHeaderTitle:SetJustifyH("LEFT")
+combatHeaderTitle:SetWordWrap(false)
+combatHeaderTitle:SetTextColor(ACCENT.r, ACCENT.g, ACCENT.b, 1)
 
 local function IsBuffFrameLocked()
     return (NexusKitDB and NexusKitDB.settings and NexusKitDB.settings.locked) and true or false
@@ -1758,29 +1860,30 @@ local function SaveBuffPosition()
     end
 end
 
-local function AnchorBuffFrameDefault(frameH)
-    if InCombatLockdown() then return end
+local function AnchorBuffFrameDefault(frameH, targetFrame)
+    local frame = targetFrame or buffFrame
+    if frame == buffFrame and InCombatLockdown() then return end
     local savedPos = NexusKitDB and NexusKitDB.settings and NexusKitDB.settings.buffPos
     if savedPos and savedPos.x and savedPos.y then
-        buffFrame:ClearAllPoints()
-        buffFrame:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", savedPos.x, savedPos.y)
+        frame:ClearAllPoints()
+        frame:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", savedPos.x, savedPos.y)
         return
     end
 
     local h = frameH or COMPACT_FRAME_H
     local tracker = _G["NexusKitTrackerFrame"]
     if tracker and tracker.IsShown and tracker:IsShown() then
-        buffFrame:ClearAllPoints()
+        frame:ClearAllPoints()
         local trackerTop = tracker:GetTop() or 0
         local screenTop = (UIParent and UIParent:GetTop()) or 1000
         if trackerTop > (screenTop - h - 20) then
-            buffFrame:SetPoint("TOPRIGHT", tracker, "BOTTOMRIGHT", 0, -6)
+            frame:SetPoint("TOPRIGHT", tracker, "BOTTOMRIGHT", 0, -6)
         else
-            buffFrame:SetPoint("BOTTOMRIGHT", tracker, "TOPRIGHT", 0, 6)
+            frame:SetPoint("BOTTOMRIGHT", tracker, "TOPRIGHT", 0, 6)
         end
     else
-        buffFrame:ClearAllPoints()
-        buffFrame:SetPoint("TOPRIGHT", UIParent, "TOPRIGHT", -370, -40)
+        frame:ClearAllPoints()
+        frame:SetPoint("TOPRIGHT", UIParent, "TOPRIGHT", -370, -40)
     end
 end
 
@@ -1858,6 +1961,7 @@ end)
 
 -- Slot button pool (SecureActionButtonTemplate so single left-click casts buffs/items)
 local slotPool = {}
+local combatSlotPool = {}
 
 local KIND_BORDER_COLORS = {
     tracking   = { 1.00, 0.84, 0.12 },
@@ -1901,17 +2005,7 @@ local function UpdateSlotVisuals(slot, item)
     end
 end
 
-local function GetOrCreateSlot(index)
-    if slotPool[index] then
-        return slotPool[index]
-    end
-
-    local btn = CreateFrame("Button", "NexusKitBuffSlot" .. index, buffFrame, "SecureActionButtonTemplate")
-    btn:SetSize(SLOT_W, SLOT_H)
-    btn:RegisterForClicks("LeftButtonUp", "RightButtonUp")
-    btn:SetAttribute("useOnKeyDown", false)
-    btn:Hide()
-
+local function CreateSlotVisualWidgets(btn)
     local iconBox = CreateFrame("Frame", nil, btn, "BackdropTemplate")
     iconBox:SetSize(34, 34)
     iconBox:SetPoint("TOP", btn, "TOP", 0, -2)
@@ -1943,7 +2037,7 @@ local function GetOrCreateSlot(index)
 
     local badgeText = iconBox:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     badgeText:SetPoint("CENTER", badgeBg, "CENTER", 0, 0)
-    local bFont, bSize, bFlags = badgeText:GetFont()
+    local bFont, bSize = badgeText:GetFont()
     if bFont then
         badgeText:SetFont(bFont, math.max(8, (bSize or 10) - 1), "OUTLINE")
     end
@@ -1993,6 +2087,33 @@ local function GetOrCreateSlot(index)
     fadeIn:SetOrder(2)
     btn.pulseAnim = anim
     anim:Play()
+end
+
+local function GetOrCreateCombatSlot(index)
+    if combatSlotPool[index] then
+        return combatSlotPool[index]
+    end
+    local frm = CreateFrame("Frame", "NexusKitCombatBuffSlot" .. index, combatBuffFrame)
+    frm:SetSize(SLOT_W, SLOT_H)
+    frm:EnableMouse(false)
+    frm:Hide()
+    CreateSlotVisualWidgets(frm)
+    combatSlotPool[index] = frm
+    return frm
+end
+
+local function GetOrCreateSlot(index)
+    if slotPool[index] then
+        return slotPool[index]
+    end
+
+    local btn = CreateFrame("Button", "NexusKitBuffSlot" .. index, buffFrame, "SecureActionButtonTemplate")
+    btn:SetSize(SLOT_W, SLOT_H)
+    btn:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+    btn:SetAttribute("useOnKeyDown", false)
+    btn:Hide()
+
+    CreateSlotVisualWidgets(btn)
 
     btn:SetScript("PostClick", function(self, mouseButton)
         local item = self.itemData
@@ -2092,18 +2213,17 @@ end
 -------------------------------------------------------------------------------
 -- Public API
 -------------------------------------------------------------------------------
-local function ApplyBuffFrameAppearance()
-    local transparent = IsTransparentBar()
-    if buffFrame.lastTransparentMode ~= transparent then
-        buffFrame.lastTransparentMode = transparent
+local function ApplyFrameBackdropStyle(frame, transparent, titleFS, optLockBtn, optCloseBtn)
+    if frame.lastTransparentMode ~= transparent then
+        frame.lastTransparentMode = transparent
         if transparent then
-            buffFrame:SetBackdrop({
+            frame:SetBackdrop({
                 bgFile   = "Interface\\Buttons\\WHITE8x8",
                 edgeFile = "Interface\\Buttons\\WHITE8x8",
                 edgeSize = 1,
             })
         else
-            buffFrame:SetBackdrop({
+            frame:SetBackdrop({
                 bgFile   = "Interface\\Buttons\\WHITE8x8",
                 edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
                 edgeSize = 12,
@@ -2113,20 +2233,27 @@ local function ApplyBuffFrameAppearance()
     end
 
     if transparent then
-        buffFrame:SetBackdropColor(0, 0, 0, 0)
-        buffFrame:SetBackdropBorderColor(0, 0, 0, 0)
-        headerTitle:Hide()
-        lockBtn:Hide()
-        closeBtn:Hide()
+        frame:SetBackdropColor(0, 0, 0, 0)
+        frame:SetBackdropBorderColor(0, 0, 0, 0)
+        if titleFS then titleFS:Hide() end
+        if optLockBtn then optLockBtn:Hide() end
+        if optCloseBtn then optCloseBtn:Hide() end
         return COMPACT_FRAME_H, -5, true
     end
 
-    buffFrame:SetBackdropColor(0.06, 0.06, 0.09, 0.90)
-    buffFrame:SetBackdropBorderColor(0.25, 0.25, 0.30, 1)
-    headerTitle:Show()
-    lockBtn:Show()
-    closeBtn:Show()
+    frame:SetBackdropColor(0.06, 0.06, 0.09, 0.90)
+    frame:SetBackdropBorderColor(0.25, 0.25, 0.30, 1)
+    if titleFS then titleFS:Show() end
+    if optLockBtn then optLockBtn:Show() end
+    if optCloseBtn then optCloseBtn:Show() end
     return FRAME_H, -28, false
+end
+
+local function ApplyBuffFrameAppearance()
+    local transparent = IsTransparentBar()
+    local h, topY, trans = ApplyFrameBackdropStyle(buffFrame, transparent, headerTitle, lockBtn, closeBtn)
+    ApplyFrameBackdropStyle(combatBuffFrame, transparent, combatHeaderTitle, nil, nil)
+    return h, topY, trans
 end
 
 function FP:ApplyBuffAdvisorScale()
@@ -2135,6 +2262,9 @@ function FP:ApplyBuffAdvisorScale()
     if buffFrame and buffFrame.SetScale and not InCombatLockdown() then
         buffFrame:SetScale(scale)
     end
+    if combatBuffFrame and combatBuffFrame.SetScale then
+        combatBuffFrame:SetScale(scale)
+    end
 end
 
 function FP:RefreshBuffAdvisor()
@@ -2142,6 +2272,8 @@ function FP:RefreshBuffAdvisor()
     if FP.SyncAccentTable then FP:SyncAccentTable(ACCENT) end
     headerTitle:SetTextColor(ACCENT.r, ACCENT.g, ACCENT.b, 1)
     headerTitle:SetText(L["BUFF_ADVISOR_TITLE"] or "Buffs & Tracking")
+    combatHeaderTitle:SetTextColor(ACCENT.r, ACCENT.g, ACCENT.b, 1)
+    combatHeaderTitle:SetText(L["BUFF_ADVISOR_TITLE"] or "Buffs & Tracking")
     UpdateBuffLockVisual()
     self:ApplyBuffAdvisorScale()
 
@@ -2149,10 +2281,15 @@ function FP:RefreshBuffAdvisor()
 
     if not IsAdvisorEnabled() then
         currentSuggestions = {}
+        combatBuffFrame:Hide()
         if not InCombatLockdown() then
+            preCombatVisibleSlots = 0
             buffFrame:Hide()
         else
             pendingRefresh = true
+            if buffFrame:IsShown() then
+                pcall(buffFrame.SetAlpha, buffFrame, 0)
+            end
         end
         return
     end
@@ -2169,12 +2306,16 @@ function FP:RefreshBuffAdvisor()
         end
     end
 
-    -- Defer structural Show/Hide/Size/SetAttribute mutations cleanly if locked down in combat,
-    -- while still fading out applied/dismissed buffs visually via SetAlpha (allowed in combat).
+    -- In combat lockdown we cannot Show/Hide/Size/SetAttribute SecureActionButtonTemplate
+    -- slots. If every current suggestion already matches a pre-bound slot on buffFrame, keep
+    -- buffFrame visible and clickable; otherwise display non-secure combatBuffFrame so new
+    -- mid-combat missing/expiring buff alerts appear immediately without action blocking.
     if InCombatLockdown() then
         pendingRefresh = true
-        if buffFrame:IsShown() then
-            if #currentSuggestions == 0 then
+        local visibleCount = math.min(MAX_SLOTS, #currentSuggestions)
+        if visibleCount <= 0 then
+            combatBuffFrame:Hide()
+            if buffFrame:IsShown() then
                 pcall(buffFrame.SetAlpha, buffFrame, 0)
                 for i = 1, MAX_SLOTS do
                     local slot = slotPool[i]
@@ -2183,38 +2324,90 @@ function FP:RefreshBuffAdvisor()
                         pcall(slot.SetAlpha, slot, 0)
                     end
                 end
-            else
-                pcall(buffFrame.SetAlpha, buffFrame, 1)
-                local byKey = {}
-                for _, item in ipairs(currentSuggestions) do
-                    byKey[item.key] = item
+            end
+            return
+        end
+
+        local byKey = {}
+        for _, item in ipairs(currentSuggestions) do
+            byKey[item.key] = item
+        end
+
+        local allCoveredByBoundSlots = buffFrame:IsShown() and (visibleCount <= preCombatVisibleSlots)
+        if allCoveredByBoundSlots then
+            local boundMatched = 0
+            for i = 1, preCombatVisibleSlots do
+                local slot = slotPool[i]
+                if slot and slot:IsShown() and slot.itemData and byKey[slot.itemData.key] then
+                    boundMatched = boundMatched + 1
                 end
-                for i = 1, MAX_SLOTS do
-                    local slot = slotPool[i]
-                    if slot and slot:IsShown() and slot.itemData then
-                        local updated = byKey[slot.itemData.key]
-                        if updated then
-                            pcall(slot.SetAlpha, slot, 1.0)
-                            if slot.pulseAnim and slot.pulseAnim.IsPlaying and not slot.pulseAnim:IsPlaying() then
-                                slot.pulseAnim:Play()
-                            end
-                            UpdateSlotVisuals(slot, updated)
-                        else
-                            if slot.pulseAnim and slot.pulseAnim.Stop then slot.pulseAnim:Stop() end
-                            if slot.badgeText then slot.badgeText:SetText("OK") end
-                            pcall(slot.SetAlpha, slot, 0.16)
+            end
+            if boundMatched < visibleCount then
+                allCoveredByBoundSlots = false
+            end
+        end
+
+        if allCoveredByBoundSlots then
+            combatBuffFrame:Hide()
+            pcall(buffFrame.SetAlpha, buffFrame, 1)
+            for i = 1, MAX_SLOTS do
+                local slot = slotPool[i]
+                if slot and slot:IsShown() and slot.itemData then
+                    local updated = byKey[slot.itemData.key]
+                    if updated then
+                        pcall(slot.SetAlpha, slot, 1.0)
+                        if slot.pulseAnim and slot.pulseAnim.IsPlaying and not slot.pulseAnim:IsPlaying() then
+                            slot.pulseAnim:Play()
                         end
+                        UpdateSlotVisuals(slot, updated)
+                    else
+                        if slot.pulseAnim and slot.pulseAnim.Stop then slot.pulseAnim:Stop() end
+                        if slot.badgeText then slot.badgeText:SetText("OK") end
+                        pcall(slot.SetAlpha, slot, 0.16)
                     end
                 end
             end
+            return
         end
+
+        if buffFrame:IsShown() then
+            pcall(buffFrame.SetAlpha, buffFrame, 0)
+        end
+        local rowW = visibleCount * SLOT_W + math.max(0, visibleCount - 1) * SLOT_GAP
+        local frameW = transparent and math.max(90, rowW + 24) or math.max(MIN_FRAME_W, rowW + 16)
+        combatBuffFrame:SetSize(frameW, frameH)
+        AnchorBuffFrameDefault(frameH, combatBuffFrame)
+        local startX = math.floor((frameW - rowW) / 2)
+        for i = 1, visibleCount do
+            local item = currentSuggestions[i]
+            local slot = GetOrCreateCombatSlot(i)
+            pcall(slot.SetAlpha, slot, 1.0)
+            if slot.pulseAnim and slot.pulseAnim.IsPlaying and not slot.pulseAnim:IsPlaying() then
+                slot.pulseAnim:Play()
+            end
+            UpdateSlotVisuals(slot, item)
+            slot:ClearAllPoints()
+            slot:SetPoint("TOPLEFT", combatBuffFrame, "TOPLEFT", startX + (i - 1) * (SLOT_W + SLOT_GAP), slotTopY)
+            slot:Show()
+        end
+        for i = visibleCount + 1, #combatSlotPool do
+            combatSlotPool[i].itemData = nil
+            combatSlotPool[i]:Hide()
+        end
+        combatBuffFrame:Show()
         return
     end
 
     pendingRefresh = false
+    combatBuffFrame:Hide()
+    for i = 1, #combatSlotPool do
+        combatSlotPool[i].itemData = nil
+        combatSlotPool[i]:Hide()
+    end
     pcall(buffFrame.SetAlpha, buffFrame, 1.0)
     local visibleCount = math.min(MAX_SLOTS, #currentSuggestions)
     if visibleCount <= 0 then
+        preCombatVisibleSlots = 0
         for i = 1, MAX_SLOTS do
             if slotPool[i] then
                 slotPool[i].itemData = nil
@@ -2226,10 +2419,11 @@ function FP:RefreshBuffAdvisor()
         return
     end
 
+    preCombatVisibleSlots = visibleCount
     local rowW = visibleCount * SLOT_W + math.max(0, visibleCount - 1) * SLOT_GAP
     local frameW = transparent and math.max(90, rowW + 24) or math.max(MIN_FRAME_W, rowW + 16)
     buffFrame:SetSize(frameW, frameH)
-    AnchorBuffFrameDefault(frameH)
+    AnchorBuffFrameDefault(frameH, buffFrame)
 
     local startX = math.floor((frameW - rowW) / 2)
     for i = 1, visibleCount do
@@ -2364,6 +2558,22 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1, arg2, arg3, arg4, arg5)
                         preCombatMissingKeys[item.key] = nil
                     end
                 end
+                for key, st in pairs(trackedBuffStates) do
+                    if type(st.groups) == "table" then
+                        for _, g in ipairs(st.groups) do
+                            local list = (type(g) == "table") and g or { g }
+                            for _, gid in ipairs(list) do
+                                if gid == sid then
+                                    recentCastUntil[key] = nowT + 2.5
+                                    preCombatMissingKeys[key] = nil
+                                    local dur = (st.duration and st.duration > 0) and st.duration or 600
+                                    st.expAt = nowT + dur
+                                    break
+                                end
+                            end
+                        end
+                    end
+                end
             end
             if sName and sName ~= "" then
                 local low = string.lower(sName)
@@ -2372,6 +2582,23 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1, arg2, arg3, arg4, arg5)
                     if item.key and type(item.name) == "string" and string.lower(item.name) == low then
                         recentCastUntil[item.key] = nowT + 2.5
                         preCombatMissingKeys[item.key] = nil
+                    end
+                end
+                for key, st in pairs(trackedBuffStates) do
+                    if type(st.groups) == "table" then
+                        for _, g in ipairs(st.groups) do
+                            local list = (type(g) == "table") and g or { g }
+                            for _, gid in ipairs(list) do
+                                local gn = (type(gid) == "number") and GetSpellNameCompat(gid) or nil
+                                if gn and string.lower(gn) == low then
+                                    recentCastUntil[key] = nowT + 2.5
+                                    preCombatMissingKeys[key] = nil
+                                    local dur = (st.duration and st.duration > 0) and st.duration or 600
+                                    st.expAt = nowT + dur
+                                    break
+                                end
+                            end
+                        end
                     end
                 end
             end
@@ -2406,9 +2633,9 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1, arg2, arg3, arg4, arg5)
     end
 end)
 
--- Lightweight ticker to detect <90s expiring buffs or weapon enchant expiry cleanly
+-- Lightweight ticker to detect expiring buffs, combat expiration & weapon enchant expiry cleanly
 if C_Timer and C_Timer.NewTicker then
-    C_Timer.NewTicker(8, function()
+    C_Timer.NewTicker(2, function()
         if IsAdvisorEnabled() then
             FP:RefreshBuffAdvisor()
         end

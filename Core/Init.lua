@@ -1064,6 +1064,107 @@ function FP:GetDispelColorCurve()
     return curve
 end
 
+FP.nkKnownDebuffSchools = FP.nkKnownDebuffSchools or {}
+FP.NON_DISPELLABLE_DEBUFFS = FP.NON_DISPELLABLE_DEBUFFS or {
+    ["Weakened Soul"] = true, ["Anima Indebolita"] = true,
+    ["Forbearance"] = true, ["Astinenza"] = true,
+    ["Exhaustion"] = true, ["Sated"] = true, ["Temporal Displacement"] = true,
+    ["Resurrection Sickness"] = true, ["Debolezza da Resurrezione"] = true,
+    ["Deserter"] = true, ["Disertore"] = true,
+}
+
+local function MatchColorObjToSchool(r, g, b)
+    local bestSchool, bestDist = nil, 999
+    for _, school in ipairs({ "Magic", "Curse", "Disease", "Poison" }) do
+        local c = DISPEL_COLORS[school]
+        if c then
+            local dr, dg, db = (r - c.r), (g - c.g), (b - c.b)
+            local dist = dr * dr + dg * dg + db * db
+            if dist < bestDist then
+                bestDist = dist
+                bestSchool = school
+            end
+        end
+    end
+    return (bestDist <= 0.25) and bestSchool or nil
+end
+
+function FP:ProbeAuraDispelColor(unit, rawInstanceID, allowedSchools)
+    if rawInstanceID == nil or not C_UnitAuras or not C_UnitAuras.GetAuraDispelTypeColor then
+        return nil, nil, nil
+    end
+    local curve = self.GetDispelColorCurve and self:GetDispelColorCurve()
+    if not curve then return nil, nil, nil end
+
+    local okC, colObj = pcall(C_UnitAuras.GetAuraDispelTypeColor, unit, rawInstanceID, curve)
+    if not okC or colObj == nil then
+        return nil, nil, nil
+    end
+
+    local okRGBA, r, g, b, a = pcall(function() return colObj:GetRGBA() end)
+    if not okRGBA then
+        return nil, nil, nil
+    end
+    if IsSafeNum(a) then
+        if a <= 0.25 then
+            return "none", nil, nil
+        end
+        if IsSafeNum(r) and IsSafeNum(g) and IsSafeNum(b) then
+            local matched = MatchColorObjToSchool(r, g, b)
+            if matched and (not allowedSchools or allowedSchools[matched]) then
+                return "matched", matched, colObj
+            end
+        end
+        return "none", nil, nil
+    end
+    if IsSecret(a) or IsSecret(r) or IsSecret(colObj) then
+        return "secret", nil, colObj
+    end
+    return nil, nil, nil
+end
+
+-- Pure C++ 4-edge texture overlay so Blizzard's ColorCurve secret RGBA values can tint borders
+-- via Texture:SetVertexColor() without triggering Backdrop.lua Lua secret-value comparisons.
+function FP:CreateEdgeBorderOverlay(parent, thickness, outset, frameLevel)
+    local holder = CreateFrame("Frame", nil, parent)
+    holder:SetPoint("TOPLEFT", parent, "TOPLEFT", -outset, outset)
+    holder:SetPoint("BOTTOMRIGHT", parent, "BOTTOMRIGHT", outset, -outset)
+    if frameLevel then holder:SetFrameLevel(frameLevel) end
+    local edges = {}
+    for idx, pts in ipairs({
+        { "TOPLEFT", "TOPRIGHT", "height" },
+        { "BOTTOMLEFT", "BOTTOMRIGHT", "height" },
+        { "TOPLEFT", "BOTTOMLEFT", "width" },
+        { "TOPRIGHT", "BOTTOMRIGHT", "width" },
+    }) do
+        local tex = holder:CreateTexture(nil, "OVERLAY")
+        tex:SetTexture("Interface\\Buttons\\WHITE8x8")
+        tex:SetPoint(pts[1], holder, pts[1], 0, 0)
+        tex:SetPoint(pts[2], holder, pts[2], 0, 0)
+        if pts[3] == "height" then
+            tex:SetHeight(thickness)
+        else
+            tex:SetWidth(thickness)
+        end
+        edges[idx] = tex
+    end
+    holder.edges = edges
+    holder:Hide()
+    return holder
+end
+
+function FP:ApplySecretBorderColor(overlay, colorObj)
+    if not overlay then return end
+    if colorObj and colorObj.GetRGBA then
+        for _, edge in ipairs(overlay.edges) do
+            pcall(edge.SetVertexColor, edge, colorObj:GetRGBA())
+        end
+        overlay:Show()
+    else
+        overlay:Hide()
+    end
+end
+
 function FP:AreAllHUDsUnlocked()
     local s = NexusKitDB and NexusKitDB.settings
     if not s then return false end
